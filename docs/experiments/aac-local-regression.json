@@ -1,0 +1,18 @@
+{
+  "suite": "unittest_discover_tests",
+  "tests": 737,
+  "seconds": 101.744,
+  "passed": true,
+  "new_aac_tests": 21,
+  "environment": "existing_python_env_with_process_only_Cairo_and_Node_search_paths",
+  "live_accounts_or_models_used_by_regression": false,
+  "initial_environment_failure": {
+    "executed_tests": 714,
+    "failures": 2,
+    "import_errors": 2,
+    "causes": [
+      "Cairo_library_search_path",
+      "Node_jsdom_search_path"
+    ]
+  }
+}

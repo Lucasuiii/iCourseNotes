@@ -1,0 +1,280 @@
+{
+  "schema": 1,
+  "prior_attempts": [
+    {
+      "success": false,
+      "phase": "index",
+      "error_code": "index_byte_limit",
+      "wall_seconds": 3.7758,
+      "transport": {
+        "range_requests": 4,
+        "range_verified": 4,
+        "signature_renewals": 4,
+        "retries": 0,
+        "upstream_bytes": 32,
+        "multipart_requests": 0,
+        "multipart_body_bytes": 0,
+        "retry_bytes": 0,
+        "index_bytes": 32,
+        "index_seconds": 0.0,
+        "range_count": 4,
+        "session_refresh_attempts": 0,
+        "session_refresh_successes": 0,
+        "session_identity_verifications": 0,
+        "terminal_error_code": null
+      }
+    },
+    {
+      "success": false,
+      "phase": "index",
+      "error_code": "edit_list_unsupported",
+      "wall_seconds": 18.4347,
+      "transport": {
+        "range_requests": 24,
+        "range_verified": 24,
+        "signature_renewals": 24,
+        "retries": 0,
+        "upstream_bytes": 9197834,
+        "multipart_requests": 0,
+        "multipart_body_bytes": 0,
+        "retry_bytes": 0,
+        "index_bytes": 9197834,
+        "index_seconds": 0.0,
+        "range_count": 24,
+        "session_refresh_attempts": 0,
+        "session_refresh_successes": 0,
+        "session_identity_verifications": 0,
+        "terminal_error_code": null
+      }
+    },
+    {
+      "success": false,
+      "phase": "index",
+      "error_code": "edit_list_unsupported",
+      "wall_seconds": 19.6092,
+      "transport": {
+        "range_requests": 24,
+        "range_verified": 24,
+        "signature_renewals": 24,
+        "retries": 0,
+        "upstream_bytes": 9197834,
+        "multipart_requests": 0,
+        "multipart_body_bytes": 0,
+        "retry_bytes": 0,
+        "index_bytes": 9197834,
+        "index_seconds": 0.0,
+        "range_count": 24,
+        "session_refresh_attempts": 0,
+        "session_refresh_successes": 0,
+        "session_identity_verifications": 0,
+        "terminal_error_code": null
+      }
+    },
+    {
+      "success": false,
+      "phase": "index",
+      "error_code": "edit_list_unsupported",
+      "wall_seconds": 10.7447,
+      "transport": {
+        "range_requests": 24,
+        "range_verified": 24,
+        "signature_renewals": 24,
+        "retries": 0,
+        "upstream_bytes": 9197834,
+        "multipart_requests": 0,
+        "multipart_body_bytes": 0,
+        "retry_bytes": 0,
+        "index_bytes": 9197834,
+        "index_seconds": 0.0,
+        "range_count": 24,
+        "session_refresh_attempts": 0,
+        "session_refresh_successes": 0,
+        "session_identity_verifications": 0,
+        "terminal_error_code": null,
+        "format_observations": {
+          "edit_entries": 2
+        }
+      }
+    },
+    {
+      "success": false,
+      "phase": "index",
+      "error_code": "audio_timeline_or_encryption_unsupported",
+      "wall_seconds": 11.9546,
+      "transport": {
+        "range_requests": 24,
+        "range_verified": 24,
+        "signature_renewals": 24,
+        "retries": 0,
+        "upstream_bytes": 9197834,
+        "multipart_requests": 0,
+        "multipart_body_bytes": 0,
+        "retry_bytes": 0,
+        "index_bytes": 9197834,
+        "index_seconds": 0.0,
+        "range_count": 24,
+        "session_refresh_attempts": 0,
+        "session_refresh_successes": 0,
+        "session_identity_verifications": 0,
+        "terminal_error_code": null,
+        "format_observations": {
+          "edit_entries": 2,
+          "edit_media_ticks": [
+            -1,
+            0
+          ],
+          "edit_segment_movie_ticks": [
+            21,
+            13377451
+          ],
+          "movie_timescale": 1000,
+          "track_timescale": 48000,
+          "track_duration_ticks": 642117616
+        }
+      }
+    },
+    {
+      "success": false,
+      "phase": "window_60",
+      "error_code": "invalid_multipart_boundary",
+      "wall_seconds": 3.795,
+      "transport": {
+        "range_requests": 25,
+        "range_verified": 24,
+        "signature_renewals": 25,
+        "retries": 0,
+        "upstream_bytes": 9228248,
+        "multipart_requests": 1,
+        "multipart_body_bytes": 0,
+        "retry_bytes": 30414,
+        "index_bytes": 9197834,
+        "index_seconds": 2.4020323749864474,
+        "range_count": 88,
+        "session_refresh_attempts": 0,
+        "session_refresh_successes": 0,
+        "session_identity_verifications": 0,
+        "terminal_error_code": "invalid_multipart_boundary",
+        "format_observations": {
+          "edit_entries": 2,
+          "edit_media_ticks": [
+            -1,
+            0
+          ],
+          "edit_segment_movie_ticks": [
+            21,
+            13377451
+          ],
+          "movie_timescale": 1000,
+          "track_timescale": 48000,
+          "track_duration_ticks": 642117616,
+          "roll_distance": -1,
+          "prefix_only": true
+        }
+      }
+    },
+    {
+      "success": false,
+      "phase": "window_60",
+      "error_code": "reference_packet_count_mismatch",
+      "wall_seconds": 12.0967,
+      "transport": {
+        "range_requests": 92,
+        "range_verified": 3781,
+        "signature_renewals": 92,
+        "retries": 1,
+        "upstream_bytes": 43573234,
+        "multipart_requests": 60,
+        "multipart_body_bytes": 1791876,
+        "retry_bytes": 0,
+        "index_bytes": 9197834,
+        "index_seconds": 2.0289685419993475,
+        "range_count": 3782,
+        "session_refresh_attempts": 0,
+        "session_refresh_successes": 0,
+        "session_identity_verifications": 0,
+        "terminal_error_code": null,
+        "format_observations": {
+          "edit_entries": 2,
+          "edit_media_ticks": [
+            -1,
+            0
+          ],
+          "edit_segment_movie_ticks": [
+            21,
+            13377451
+          ],
+          "movie_timescale": 1000,
+          "track_timescale": 48000,
+          "track_duration_ticks": 642117616,
+          "roll_distance": -1,
+          "prefix_only": true
+        }
+      },
+      "failed_window": {
+        "requested_seconds": 60,
+        "expected_samples": 2812,
+        "packet_equivalence": true,
+        "runs": [
+          {
+            "mode": "multipart",
+            "fetch_seconds": 1.2688,
+            "range_requests": 30,
+            "upstream_bytes": 895938,
+            "multipart_requests": 30,
+            "multipart_body_bytes": 895938,
+            "retry_bytes": 0
+          },
+          {
+            "mode": "continuous",
+            "fetch_seconds": 0.9085,
+            "range_requests": 1,
+            "upstream_bytes": 16291734,
+            "multipart_requests": 0,
+            "multipart_body_bytes": 0,
+            "retry_bytes": 0
+          },
+          {
+            "mode": "continuous",
+            "fetch_seconds": 1.1542,
+            "range_requests": 1,
+            "upstream_bytes": 16291734,
+            "multipart_requests": 0,
+            "multipart_body_bytes": 0,
+            "retry_bytes": 0
+          },
+          {
+            "mode": "multipart",
+            "fetch_seconds": 0.8202,
+            "range_requests": 30,
+            "upstream_bytes": 895938,
+            "multipart_requests": 30,
+            "multipart_body_bytes": 895938,
+            "retry_bytes": 0
+          }
+        ]
+      }
+    }
+  ],
+  "actual_credential_flows": 9,
+  "total_media_body_bytes": 695794294,
+  "total_range_requests": 1317,
+  "aggregate_media_body_budget": 700000000,
+  "all_test_media_removed": true,
+  "measurements_exclude_http_tls_and_authentication_bytes": true,
+  "derived_window_metrics": [
+    {
+      "seconds": 60,
+      "body_reduction_percent": 94.50065904586951,
+      "pcm_end_difference_seconds": 0.021,
+      "pcm_end_match": false,
+      "timeline_alignment_complete": false
+    },
+    {
+      "seconds": 900,
+      "body_reduction_percent": 94.52123256184056,
+      "pcm_end_difference_seconds": 0.021,
+      "pcm_end_match": false,
+      "timeline_alignment_complete": false
+    }
+  ]
+}

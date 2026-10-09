@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "access_mode": "campus_direct",
+  "concurrent_cloud_run": true,
+  "media_retained": false,
+  "windows": [
+    {
+      "requested_seconds": 60,
+      "expected_samples": 2812,
+      "verified_samples": 2812,
+      "native_timeline_seconds": 59.989333333333335,
+      "presentation_start_seconds": 0.021,
+      "presentation_end_seconds": 60.010333333333335,
+      "audio_payload_bytes": 700098,
+      "packet_equivalence": true,
+      "runs": [
+        {
+          "mode": "multipart",
+          "fetch_seconds": 1.3163,
+          "range_requests": 30,
+          "upstream_bytes": 895938,
+          "multipart_requests": 30,
+          "multipart_body_bytes": 895938,
+          "retry_bytes": 0
+        },
+        {
+          "mode": "continuous",
+          "fetch_seconds": 0.8883,
+          "range_requests": 1,
+          "upstream_bytes": 16291734,
+          "multipart_requests": 0,
+          "multipart_body_bytes": 0,
+          "retry_bytes": 0
+        },
+        {
+          "mode": "continuous",
+          "fetch_seconds": 0.9244,
+          "range_requests": 1,
+          "upstream_bytes": 16291734,
+          "multipart_requests": 0,
+          "multipart_body_bytes": 0,
+          "retry_bytes": 0
+        },
+        {
+          "mode": "multipart",
+          "fetch_seconds": 0.9595,
+          "range_requests": 30,
+          "upstream_bytes": 895938,
+          "multipart_requests": 30,
+          "multipart_body_bytes": 895938,
+          "retry_bytes": 0
+        }
+      ],
+      "reference_packets": 2812,
+      "packet_hashes_equal": true,
+      "native_pts_dts_duration_equal": true,
+      "original_pcm_seconds": 59.9893125,
+      "adts_pcm_seconds": 60.0103125,
+      "pcm_prefix_equal_excluding_last_32_samples": true,
+      "decode_seconds": 0.9814,
+      "temporary_media_removed": true,
+      "timeline_preserved": false,
+      "reference_decode_container": "verified_prefix_tables_with_original_edit_list"
+    },
+    {
+      "requested_seconds": 900,
+      "expected_samples": 42187,
+      "verified_samples": 42187,
+      "native_timeline_seconds": 899.9893333333333,
+      "presentation_start_seconds": 0.021,
+      "presentation_end_seconds": 900.0103333333333,
+      "audio_payload_bytes": 10504572,
+      "packet_equivalence": true,
+      "runs": [
+        {
+          "mode": "multipart",
+          "fetch_seconds": 17.2711,
+          "range_requests": 440,
+          "upstream_bytes": 13480349,
+          "multipart_requests": 440,
+          "multipart_body_bytes": 13480349,
+          "retry_bytes": 0
+        },
+        {
+          "mode": "continuous",
+          "fetch_seconds": 14.4261,
+          "range_requests": 15,
+          "upstream_bytes": 246047111,
+          "multipart_requests": 0,
+          "multipart_body_bytes": 0,
+          "retry_bytes": 0
+        },
+        {
+          "mode": "continuous",
+          "fetch_seconds": 14.9759,
+          "range_requests": 15,
+          "upstream_bytes": 246047111,
+          "multipart_requests": 0,
+          "multipart_body_bytes": 0,
+          "retry_bytes": 0
+        },
+        {
+          "mode": "multipart",
+          "fetch_seconds": 455.5661,
+          "range_requests": 440,
+          "upstream_bytes": 13480349,
+          "multipart_requests": 440,
+          "multipart_body_bytes": 13480349,
+          "retry_bytes": 0
+        }
+      ],
+      "reference_packets": 42187,
+      "packet_hashes_equal": true,
+      "native_pts_dts_duration_equal": true,
+      "original_pcm_seconds": 899.9893125,
+      "adts_pcm_seconds": 900.0103125,
+      "pcm_prefix_equal_excluding_last_32_samples": true,
+      "decode_seconds": 3.4286,
+      "temporary_media_removed": true,
+      "timeline_preserved": false,
+      "reference_decode_container": "verified_prefix_tables_with_original_edit_list"
+    }
+  ],
+  "success": true,
+  "baseline": "contiguous_AV_span_not_full_AudioDownloader",
+  "budgets": {
+    "network_bytes": 700000000,
+    "range_requests": 2000,
+    "total_seconds": 600,
+    "authentication_seconds": 90,
+    "window_seconds": 900
+  },
+  "index": {
+    "bytes": 9197834,
+    "seconds": 2.2537,
+    "samples": 627068,
+    "native_duration_seconds": 13377.450333333334,
+    "sample_rate": 48000,
+    "channels": 2,
+    "identity_edit": false,
+    "presentation_offset_seconds": 0.021
+  },
+  "transport": {
+    "range_requests": 1008,
+    "range_verified": 60066,
+    "signature_renewals": 1008,
+    "retries": 2,
+    "upstream_bytes": 562628210,
+    "multipart_requests": 940,
+    "multipart_body_bytes": 28752574,
+    "retry_bytes": 0,
+    "index_bytes": 9197834,
+    "index_seconds": 2.253673416998936,
+    "range_count": 60068,
+    "session_refresh_attempts": 0,
+    "session_refresh_successes": 0,
+    "session_identity_verifications": 0,
+    "terminal_error_code": null,
+    "format_observations": {
+      "edit_entries": 2,
+      "edit_media_ticks": [
+        -1,
+        0
+      ],
+      "edit_segment_movie_ticks": [
+        21,
+        13377451
+      ],
+      "movie_timescale": 1000,
+      "track_timescale": 48000,
+      "track_duration_ticks": 642117616,
+      "roll_distance": -1,
+      "prefix_only": true
+    }
+  },
+  "wall_seconds": 514.6825
+}

@@ -9,7 +9,7 @@ Handles:
 import html as html_mod
 import re
 from binascii import hexlify, unhexlify
-from urllib.parse import urlparse, urlencode, quote, urljoin, urlsplit
+from urllib.parse import urlparse, urlencode, quote, urljoin, urlsplit, parse_qsl
 
 import requests
 from Crypto.Cipher import AES
@@ -28,6 +28,7 @@ class AuthenticationError(RuntimeError):
 
 
 AUTH_PHASES = frozenset(('login_service_probe', 'credentials', 'webvpn_context',
+    'login_sso_probe',
     'webvpn_auth_methods', 'webvpn_public_key', 'webvpn_password_encrypt',
     'webvpn_auth_execute', 'webvpn_ticket', 'webvpn_ticket_follow',
     'webvpn_session_probe', 'icourse_portal_warmup', 'icourse_cas_context',
@@ -84,6 +85,15 @@ def authentication_failure(error, phase='unknown', vpn=None):
     # Only the whitelisted snapshot is carried out of a discarded login Session.
     inherited = getattr(error, 'auth_failure_diagnostics', None)
     if isinstance(inherited, dict):
+        for key in ('precredential_failure', 'sso_probe_attempted', 'sso_probe_succeeded'):
+            if type(inherited.get(key)) is bool: result[key] = inherited[key]
+        portal_failure = inherited.get('portal_probe_failure')
+        if isinstance(portal_failure, str) and portal_failure in AUTH_FAILURE_CODES:
+            result['portal_probe_failure'] = portal_failure
+        for key, limit in (('preflight_recovery_rounds', 3),
+                           ('preflight_recovery_wait_seconds', 90)):
+            value = inherited.get(key)
+            if type(value) is int and 0 <= value <= limit: result[key] = value
         for key, allowed in (('failure_phase',AUTH_PHASES), ('error_type',AUTH_ERROR_TYPES),
                              ('failure',AUTH_FAILURE_CODES)):
             value = inherited.get(key)
@@ -107,11 +117,24 @@ def authentication_failure(error, phase='unknown', vpn=None):
                 for name in ('probe_attempts', 'probe_transient_failures'):
                     value = row.get(name)
                     if type(value) is int and 0 <= value <= 3: clean[name] = value
+                if type(row.get('precredential_failure')) is bool:
+                    clean['precredential_failure'] = row['precredential_failure']
+                for key in ('sso_probe_attempted', 'sso_probe_succeeded'):
+                    if type(row.get(key)) is bool: clean[key] = row[key]
+                value = row.get('portal_probe_failure')
+                if isinstance(value, str) and value in AUTH_FAILURE_CODES:
+                    clean['portal_probe_failure'] = value
                 response = safe_auth_response(row.get('response'))
                 if response: clean['response'] = response
                 safe_history.append(clean)
             result['attempt_failures'] = safe_history
     if vpn is not None:
+        for key in ('sso_probe_attempted', 'sso_probe_succeeded'):
+            value = getattr(vpn, 'auth_'+key, None)
+            if type(value) is bool: result[key] = value
+        value = getattr(vpn, 'auth_portal_probe_failure', None)
+        if isinstance(value, str) and value in AUTH_FAILURE_CODES:
+            result['portal_probe_failure'] = value
         for key, attribute in (('probe_attempts','auth_probe_attempts'),
                                ('probe_transient_failures','auth_probe_transient_failures')):
             value = getattr(vpn,attribute,None)
@@ -242,6 +265,7 @@ class WebVPNSession:
         self.logged_in = False
         self.auth_diagnostics = []
         self.auth_phase = 'unknown'
+        self._preflight_context = None
 
     @property
     def requires_webvpn_login(self):
@@ -278,7 +302,32 @@ class WebVPNSession:
             raise
 
     def probe_login_service(self):
-        """Reachability before sending credentials; HTTP 200 is not login proof."""
+        """A transient homepage failure may use trusted SSO context instead."""
+        self._preflight_context = None
+        for name in ('auth_portal_probe_failure', 'auth_sso_probe_attempted',
+                     'auth_sso_probe_succeeded'):
+            self.__dict__.pop(name, None)
+        try:
+            self._probe_portal()
+        except Exception as error:
+            temporary = (isinstance(error, AuthenticationError)
+                         and error.reason == 'service_unavailable'
+                         or isinstance(error, (requests.exceptions.Timeout,
+                                               requests.exceptions.ConnectionError))
+                         and not isinstance(error, requests.exceptions.SSLError))
+            if not temporary or not self.requires_webvpn_login:
+                raise
+            self.auth_portal_probe_failure = authentication_failure(error, vpn=self)['failure']
+            self.auth_sso_probe_attempted = True
+            self.auth_sso_probe_succeeded = False
+            context = self._probe_sso_context()
+            # Context is private, bound to this Session, and consumed once.
+            self._preflight_context = (self.session, *context)
+            self.auth_sso_probe_succeeded = True
+            print('[Auth] Homepage unavailable; trusted SSO context obtained. Continuing login.')
+
+    def _probe_portal(self):
+        """Reachability only; HTTP 200 is not login proof."""
         from src.runtime.media_protocol import redirect_kind, redirect_observation
         self.auth_phase = 'login_service_probe'
         response = self.session.get(self.portal_url, allow_redirects=False,
@@ -301,6 +350,59 @@ class WebVPNSession:
             raise AuthenticationError('service_http_rejected')
         finally:
             response.close()
+
+    def _probe_sso_context(self):
+        """Credential-free GETs only; never follow foreign or ticket redirects."""
+        self.auth_phase = 'login_sso_probe'
+        service = config.WEBVPN_BASE+'/login?cas_login=true'
+        url = config.IDP_BASE+'/idp/authCenter/authenticate?service='+quote(service, safe='')
+        base = urlsplit(config.IDP_BASE)
+        def trusted(target):
+            parsed = urlsplit(target)
+            try:
+                return (parsed.scheme == base.scheme and parsed.hostname == base.hostname
+                    and (parsed.port or (443 if parsed.scheme == 'https' else 80))
+                        == (base.port or (443 if base.scheme == 'https' else 80))
+                    and not parsed.username and not parsed.password
+                    and (not parsed.fragment or parsed.path == '/ac/'
+                         and parsed.fragment.partition('?')[0] == '/index'
+                         and bool(parsed.fragment.partition('?')[2]))
+                    and (parsed.path.startswith('/ac/') or parsed.path.startswith('/idp/authCenter/')))
+            except ValueError:
+                return False
+        for _ in range(3):
+            response = self.session.get(url, allow_redirects=False, timeout=(5, 10), stream=True)
+            try:
+                status = response.status_code
+                if status in (408, 429, 500, 502, 503, 504):
+                    raise AuthenticationError('service_unavailable')
+                if status not in (301, 302, 303, 307, 308):
+                    raise AuthenticationError('cas_context_missing' if status == 200
+                                              else 'service_http_rejected')
+                location = response.headers.get('Location', '')
+                target = urljoin(url, location)
+                if not location or not trusted(target):
+                    raise AuthenticationError('service_redirect_untrusted')
+                parsed = urlsplit(target)
+                # Fudan's SSO SPA supplies lck in /ac/#/index?... . Only this
+                # known fragment route is trusted, alongside native query URLs.
+                query = parsed.query
+                if parsed.fragment:
+                    query += '&'+parsed.fragment.partition('?')[2]
+                parameters = parse_qsl(query, keep_blank_values=True)
+                if any(name.lower() == 'ticket' for name, _ in parameters):
+                    raise AuthenticationError('service_redirect_untrusted')
+                contexts = [value for name, value in parameters if name == 'lck']
+                if contexts:
+                    if len(contexts) != 1 or not 0 < len(contexts[0]) <= 4096:
+                        raise AuthenticationError('cas_context_missing')
+                    self.auth_diagnostics.append({'stage':'login_sso_probe', 'http_status':status,
+                                                  'context_found':True})
+                    return contexts[0], config.WEBVPN_BASE
+                url = target
+            finally:
+                response.close()
+        raise AuthenticationError('cas_context_missing')
 
     def login(self, student_id: str = None, password: str = None) -> bool:
         """Execute the full 7-step IDP authentication flow.
@@ -612,6 +714,9 @@ class WebVPNSession:
     def _get_auth_context(self) -> tuple[str, str]:
         """Step 1: GET authenticate endpoint, extract lck from redirect."""
         self.auth_phase = 'webvpn_context'
+        context, self._preflight_context = self._preflight_context, None
+        if context is not None and context[0] is self.session:
+            return context[1], context[2]
         service_url = f"{config.WEBVPN_BASE}/login?cas_login=true"
         url = (
             f"{config.IDP_BASE}/idp/authCenter/authenticate"

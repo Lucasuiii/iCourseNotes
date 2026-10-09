@@ -137,6 +137,17 @@ def safe_transport_diagnostics(value):
                     'identity_verified', 'media_resumed', 'media_resume_failed')
                     and type(elapsed) in (int, float) and math.isfinite(elapsed) and 0 <= elapsed <= 1_000_000):
                 clean['session_recovery_events'].append({'event':event, 'elapsed_seconds':elapsed})
+    auth = value.get('media_auth')
+    if type(auth) is dict:
+        from src.api.webvpn import (AUTH_PHASES, AUTH_ERROR_TYPES, AUTH_FAILURE_CODES,
+                                    authentication_failure)
+        if all(isinstance(auth.get(key), str) and auth[key] in allowed
+               for key, allowed in (('failure_phase', AUTH_PHASES),
+                                    ('error_type', AUTH_ERROR_TYPES),
+                                    ('failure', AUTH_FAILURE_CODES))):
+            error = RuntimeError()
+            error.auth_failure_diagnostics = auth
+            clean['media_authentication'] = authentication_failure(error)
     return clean
 
 

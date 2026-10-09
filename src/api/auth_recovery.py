@@ -1,4 +1,5 @@
 """Bounded fresh-session authentication; never replay tickets or retain credentials."""
+import math
 import time
 
 import requests
@@ -8,6 +9,8 @@ from src.api.webvpn import AuthenticationError, WebVPNSession, authentication_fa
 
 RETRYABLE_AUTH_REASONS = frozenset(('service_unavailable', 'cold_session',
                                   'cas_context_missing', 'api_verification_failed'))
+PREFLIGHT_TRANSIENT_CODES = frozenset(('service_unavailable', 'auth_read_timeout',
+    'auth_connect_timeout', 'auth_timeout', 'auth_connection_error'))
 
 
 def retryable_auth_response(error):
@@ -26,14 +29,20 @@ def retryable_auth_response(error):
 
 
 def authenticated_session(*, max_attempts=3, student_id=None, password=None,
-                          factory=WebVPNSession, sleep=time.sleep, probe_attempts=1):
+                          factory=WebVPNSession, sleep=time.sleep, probe_attempts=1,
+                          probe_backoff=(1, 1)):
     if type(max_attempts) is not int or not 1 <= max_attempts <= 10:
         raise ValueError('Invalid bounded authentication attempts')
     if type(probe_attempts) is not int or not 1 <= probe_attempts <= 3:
         raise ValueError('Invalid bounded preflight attempts')
+    if (type(probe_backoff) is not tuple or len(probe_backoff) != 2
+            or any(type(delay) not in (int, float) or not math.isfinite(delay)
+                   or not 0 < delay <= 30 for delay in probe_backoff)):
+        raise ValueError('Invalid bounded preflight backoff')
     history = []
     for attempt in range(max_attempts):
         vpn = factory()
+        probe_completed = False
         try:
             # This retry is only a credential-free portal probe. It never
             # repeats password submission or follows a consumed CAS ticket.
@@ -51,12 +60,17 @@ def authenticated_session(*, max_attempts=3, student_id=None, password=None,
                                  and not isinstance(error, requests.exceptions.SSLError))
                     if temporary: vpn.auth_probe_transient_failures = probe+1
                     if not temporary or probe == probe_attempts-1: raise
+                    delay = probe_backoff[probe]
+                    print(f'[Auth] Credential-free portal probe {probe+1}/{probe_attempts} '
+                          f'failed temporarily; waiting up to {delay}s before retry.')
                     session = vpn.session
                     if isinstance(session, DeadlineSession):
                         remaining = session.deadline-time.monotonic()
-                        if remaining <= 0 or session.cancelled.wait(min(1,remaining)):
+                        if (remaining <= 0 or session.cancelled.wait(min(delay, remaining))
+                                or time.monotonic() >= session.deadline):
                             raise AuthenticationError('media_auth_cancelled')
-                    else: sleep(1)
+                    else: sleep(delay)
+            probe_completed = True
             if student_id is None and password is None:
                 if getattr(vpn, 'requires_webvpn_login', True): vpn.login()
                 verified = vpn.authenticate_icourse(strict=True)
@@ -68,10 +82,13 @@ def authenticated_session(*, max_attempts=3, student_id=None, password=None,
             return vpn
         except Exception as error:
             error.auth_failure_diagnostics = authentication_failure(error, vpn=vpn)
+            # Local control-flow proof, independent of an exception's phase.
+            error.auth_failure_diagnostics['precredential_failure'] = not probe_completed
             history.append({k: v for k, v in error.auth_failure_diagnostics.items()
                             if k not in ('auth_attempts', 'attempt_failures')})
             error.auth_failure_diagnostics.update(auth_attempts=attempt+1,
                                                   attempt_failures=list(history))
+            vpn._preflight_context = None
             vpn.session.close()
             retryable = (isinstance(error, AuthenticationError)
                          and error.reason in RETRYABLE_AUTH_REASONS
@@ -84,6 +101,48 @@ def authenticated_session(*, max_attempts=3, student_id=None, password=None,
             # The next attempt gets a new Session and a new one-use ticket.
             # Outage probes run before credentials are submitted.
             sleep(min(5*(attempt+1), 10))
+
+
+def initial_authenticated_session(*, max_attempts=3, student_id=None, password=None,
+                                  factory=WebVPNSession, sleep=time.sleep):
+    """Two delayed rounds only when every previous failure preceded login.
+
+    At the default limit: nine portal probes at most, with 30/60-second
+    cooldowns between three ordinary rounds. No extra round after any login
+    flow begins; media reauthentication deliberately does not use this entry.
+    """
+    if type(max_attempts) is not int or not 1 <= max_attempts <= 10:
+        raise ValueError('Invalid bounded authentication attempts')
+    rounds = min(3, 10 // max_attempts)
+    history, waited = [], 0
+    for recovery in range(rounds):
+        try:
+            vpn = authenticated_session(max_attempts=max_attempts,
+                student_id=student_id, password=password, factory=factory, sleep=sleep)
+            if recovery:
+                print(f'[Auth] iCourse identity verified after portal recovery '
+                      f'round {recovery+1}/{rounds}.')
+            return vpn
+        except Exception as error:
+            audit = authentication_failure(error)
+            failures = audit.get('attempt_failures', [])
+            eligible = (len(failures) == max_attempts
+                and all(row.get('precredential_failure') is True
+                    and row.get('failure_phase') in ('login_service_probe', 'login_sso_probe')
+                    and row.get('failure') in PREFLIGHT_TRANSIENT_CODES
+                    for row in failures))
+            history.extend(failures)
+            audit.update(auth_attempts=len(history), attempt_failures=list(history),
+                         preflight_recovery_rounds=recovery+1,
+                         preflight_recovery_wait_seconds=waited)
+            error.auth_failure_diagnostics = audit
+            if not eligible or recovery == rounds-1:
+                raise
+            delay = 30 * (recovery+1)
+            print(f'[Auth] Portal unavailable before login; cooling down {delay}s '
+                  f'before recovery round {recovery+2}/{rounds}.')
+            sleep(delay)
+            waited += delay
 
 
 class DeadlineSession(requests.Session):
@@ -112,6 +171,7 @@ def fresh_media_session(cancelled, deadline):
         from src.runtime import config
         vpn.session.headers.update({'User-Agent': config.USER_AGENT})
         return vpn
-    # One fresh login, with one bounded retry of the no-credential preflight
-    # inside the existing 75-second deadline; no retry after login begins.
-    return authenticated_session(max_attempts=1, factory=factory, probe_attempts=2)
+    # Three credential-free probes with cooldowns, within the same 75-second
+    # deadline. Still one fresh login only, no retry after login begins.
+    return authenticated_session(max_attempts=1, factory=factory, probe_attempts=3,
+                                 probe_backoff=(5, 15))

@@ -34,9 +34,9 @@ from src.api.webvpn import WebVPNSession
 
 def login_with_retry(max_attempts: int = 3) -> WebVPNSession:
     """Verify iCourse using bounded fresh sessions and outage probes."""
-    from src.api.auth_recovery import authenticated_session
-    return authenticated_session(max_attempts=max_attempts, factory=WebVPNSession,
-                                 sleep=time.sleep)
+    from src.api.auth_recovery import initial_authenticated_session
+    return initial_authenticated_session(max_attempts=max_attempts, factory=WebVPNSession,
+                                         sleep=time.sleep)
 
 
 def _check_session(client: ICourseClient) -> None:

@@ -17,12 +17,17 @@ from src.runtime.media_transport import SignedRangeRelay, MediaTransportError
 class SessionOrigin:
     DATA = bytes(range(256))*256
 
-    def __init__(self, mode='rotate'):
+    def __init__(self, mode='rotate', *, connection_bound=False):
         self.mode=mode; self.token='first'; self.calls=[]; self.cookies=[]
+        self.connection_bound=connection_bound; self.connection_mismatches=0
 
     def __enter__(self):
         owner=self
         class Handler(BaseHTTPRequestHandler):
+            protocol_version='HTTP/1.1' if owner.connection_bound else 'HTTP/1.0'
+            def handle(self):
+                try: super().handle()
+                except (ConnectionResetError,BrokenPipeError): pass
             def log_message(self,*args): pass
             def reply(self,status,body=b'',headers=()):
                 self.send_response(status)
@@ -45,6 +50,11 @@ class SessionOrigin:
                     self.reply(500);return
                 cookie=self.headers.get('Cookie','')
                 owner.cookies.append(cookie)
+                if owner.connection_bound:
+                    if not hasattr(self,'bound_cookie'): self.bound_cookie=cookie
+                    if cookie != self.bound_cookie:
+                        owner.connection_mismatches+=1
+                        self.reply(302,headers=[('Location','/login?private-ticket')]);return
                 match=re.fullmatch(r'bytes=(\d+)-(\d*)',self.headers.get('Range',''))
                 if not match: self.reply(400);return
                 start=int(match[1]);end=min(int(match[2]) if match[2] else len(owner.DATA)-1,len(owner.DATA)-1)
@@ -139,6 +149,8 @@ class MediaSessionTests(unittest.TestCase):
             audit=relay.audit()
             self.assertEqual(audit['session_refresh_attempts'],1)
             self.assertEqual(audit['session_refresh_successes'],1)
+            self.assertEqual(audit['session_identity_verifications'],1)
+            self.assertEqual(audit['session_resume_attempts'],1)
             self.assertEqual(audit['redirect_counts'],{'login':1})
             self.assertEqual(audit['last_failure_offset'],4096)
             self.assertEqual(audit['upstream_bytes'],len(origin.DATA))
@@ -318,7 +330,37 @@ class MediaSessionTests(unittest.TestCase):
                     with self.assertRaises(requests.RequestException):requests.get(relay.url,timeout=15)
                     self.assertEqual(relay.audit()['terminal_error_code'],code)
                     self.assertEqual(relay.audit()['upstream_bytes'],4096)
+                    self.assertEqual(relay.audit()['session_identity_verifications'],1)
+                    self.assertEqual(relay.audit()['session_refresh_successes'],0)
+                    self.assertEqual(relay.audit()['session_recovery_events'][-1]['event'],'media_resume_failed')
                     origin.client._media_reauth_factory.assert_called_once()
+
+    def test_fresh_login_replaces_connection_bound_pool_and_resumes_exact_bytes(self):
+        with SessionOrigin('cold',connection_bound=True) as origin:
+            old=origin.client.vpn
+            def factory(cancelled,deadline):
+                candidate=type(old)()
+                origin.mode='connection_bound';origin.token='refreshed'
+                candidate.session.cookies.set('media_token','refreshed',domain='127.0.0.1',path='/')
+                return candidate
+            origin.client._media_reauth_factory=MagicMock(side_effect=factory)
+            pools=[]
+            def pool_factory():
+                pool=requests.Session();pool.close=MagicMock(wraps=pool.close)
+                pools.append(pool);return pool
+            with self.relay(origin,allow_session_refresh=True,session_factory=pool_factory) as relay:
+                self.assertEqual(requests.get(relay.url,timeout=15).content,origin.DATA)
+                self.assertEqual(len(pools),2);pools[0].close.assert_called_once()
+                self.assertEqual(origin.connection_mismatches,0)
+                audit=relay.audit()
+                self.assertEqual(audit['last_failure_offset'],4096)
+                self.assertEqual(audit['session_identity_verifications'],1)
+                self.assertEqual(audit['session_refresh_successes'],1)
+                self.assertEqual(audit['session_recovery_events'][-1]['event'],'media_resumed')
+                self.assertEqual(audit['session_recovery_events'][-1]['offset'],4096)
+                self.assertIs(origin.client.vpn,old)
+                origin.client._media_reauth_factory.assert_called_once()
+            pools[1].close.assert_called_once()
 
     def test_unknown_redirect_never_submits_credentials_even_with_factory(self):
         with SessionOrigin('foreign') as origin:

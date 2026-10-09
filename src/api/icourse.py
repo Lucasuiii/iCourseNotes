@@ -589,11 +589,8 @@ class ICourseClient:
         Use get_sub_info() instead for a signed/downloadable URL.
         """
         url = f"{self.base_url}/courseapi/v3/multi-search/get-sub-detail"
-        resp = self.vpn.get(url, params={
-            "course_id": course_id, "sub_id": sub_id
-        })
-        resp.raise_for_status()
-        data = resp.json()
+        from src.api.playback_diagnostics import playback_json
+        data = playback_json(self.vpn, url, {"course_id":course_id, "sub_id":sub_id})
 
         if data.get("code") != 0:
             error = RuntimeError(
@@ -602,7 +599,9 @@ class ICourseClient:
             error.playback_api_code = data.get('code')
             raise error
 
-        return data.get("data", {})
+        payload = data.get("data") or {}
+        if not isinstance(payload, dict): raise ValueError('Invalid playback payload')
+        return payload
 
     def get_sub_info(self, course_id: str, sub_id: str) -> dict:
         """Get lecture info including video URLs and timestamp.
@@ -620,12 +619,10 @@ class ICourseClient:
             f"{self.base_url}"
             f"/courseapi/v3/portal-home-setting/get-sub-info"
         )
-        resp = self.vpn.get(url, params={
-            "course_id": course_id, "sub_id": sub_id
-        })
-        resp.raise_for_status()
-        data = resp.json()
+        from src.api.playback_diagnostics import playback_json
+        data = playback_json(self.vpn, url, {"course_id":course_id, "sub_id":sub_id})
         payload = data.get("data") or {}
+        if not isinstance(payload, dict): raise ValueError('Invalid playback payload')
 
         if data.get("code") != 0 and not payload:
             error = RuntimeError(
@@ -653,17 +650,11 @@ class ICourseClient:
 
         Returns the signed video URL string, or None if no source yields one.
         """
-        from src.api.playback_diagnostics import lookup_error
+        from src.api.playback_diagnostics import lookup_error, load_source
         audit = {'sources': [], 'url_found': False}
         self._record_video_lookup(course_id, sub_id, audit)
-        try:
-            info = self.get_sub_info(course_id, sub_id)
-            audit['sources'].append({'source': 'sub_info', 'result': 'payload'})
-        except Exception as e:
-            audit['sources'].append({'source': 'sub_info', **lookup_error(e)})
-            print(f"    Sub-info unavailable ({type(e).__name__}); "
-                  "falling back to sub-detail")
-            info = {}
+        info, row = load_source(lambda:self.get_sub_info(course_id, sub_id), 'sub_info')
+        audit['sources'].append(row)
         self._record_video_lookup(course_id, sub_id, audit)
 
         # Get server timestamp for signing
@@ -709,15 +700,15 @@ class ICourseClient:
 
         # Last resort: hit get-sub-detail (gate-free) directly.
         if not base_url:
+            detail, row = load_source(lambda:self.get_sub_detail(course_id, sub_id), 'sub_detail')
+            audit['sources'].append(row)
             try:
-                detail = self.get_sub_detail(course_id, sub_id)
-                audit['sources'].append({'source': 'sub_detail', 'result': 'payload'})
                 content = detail.get("content", {})
                 playback = content.get("playback", {})
                 if playback and playback.get("url"):
                     base_url = playback["url"]
             except Exception as error:
-                audit['sources'].append({'source': 'sub_detail', **lookup_error(error)})
+                audit['sources'][-1] = {'source':'sub_detail', **lookup_error(error)}
 
         audit['url_found'] = bool(base_url)
         self._record_video_lookup(course_id, sub_id, audit)

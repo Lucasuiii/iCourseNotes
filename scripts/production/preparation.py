@@ -183,6 +183,7 @@ def preparation_failure_audit(runtime, specification, files, error, *, saved=Fal
               'audio_download', 'vad', 'audio_validation', 'chunk_encoding', 'ppt_drain',
               'snapshot', 'initial_publish', 'queue_initialize', 'checkpoint_write', 'outputs'}
     diagnostics = specification.get('audio_diagnostics', {})
+    from src.runtime.audio_preparation import safe_transport_diagnostics, ERROR_PATTERNS
     audit = {'phase': phase if phase in phases else 'unknown',
         'error_type': type(error).__name__, 'error_code': runtime.failure_code(error),
         'secondary_error_types': [type(e).__name__ for e in secondary],
@@ -193,7 +194,10 @@ def preparation_failure_audit(runtime, specification, files, error, *, saved=Fal
         'planned_blocks': len(specification.get('plan', {}).get('blocks', [])),
         'planned_workers': len(specification.get('plan', {}).get('shards', []))}
     if specification.get('audio_startup_diagnostics'):
-        audit['audio_startup_diagnostics'] = specification['audio_startup_diagnostics']
+        startup = dict(specification['audio_startup_diagnostics'])
+        if 'source_transport' in startup:
+            startup['source_transport'] = safe_transport_diagnostics(startup['source_transport'])
+        audit['audio_startup_diagnostics'] = startup
     if phase == 'login':
         from src.api.webvpn import authentication_failure
         audit['authentication'] = authentication_failure(error)
@@ -215,6 +219,12 @@ def preparation_failure_audit(runtime, specification, files, error, *, saved=Fal
             import math
             if math.isfinite(value): audit[name] = value
         elif isinstance(value, bool): audit[name] = value
+    transport = safe_transport_diagnostics(diagnostics.get('source_transport'))
+    if transport: audit['source_transport'] = transport
+    counts = diagnostics.get('decode_error_counts')
+    if type(counts) is dict:
+        audit['decode_error_counts'] = {code:count for code, count in counts.items()
+            if code in {*ERROR_PATTERNS, 'stderr_read_error'} and type(count) is int and 0 < count <= 1_000_000}
     bundle.atomic_write(runtime.out('prepare-failure.json'), runtime.shards.encoded(audit))
 
 

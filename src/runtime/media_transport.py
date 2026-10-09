@@ -38,6 +38,8 @@ class SignedRangeRelay:
         self._recovery = RangeRecoveryPolicy(attempts)
         self._buffer = VerifiedRangeBuffer(cache_bytes)
         self._session_refreshed = False
+        self._resume_pending = False
+        self._started = time.monotonic()
         self._prefix = b''
         self._stop = threading.Event()
         self._fetch_lock = threading.Lock()
@@ -57,6 +59,8 @@ class SignedRangeRelay:
                            upstream_status_counts={}, range_rejections=0,
                            redirect_counts={}, cookie_updates=0,
                            session_refresh_attempts=0, session_refresh_successes=0,
+                           session_identity_verifications=0, session_resume_attempts=0,
+                           session_recovery_events=[],
                            last_failure_offset=None, last_error_code=None, state='idle',
                            cache_hits=0, cached_bytes_served=0, cache_bytes=0,
                            last_failure_stage=None, last_redirect={}, media_auth={})
@@ -83,13 +87,24 @@ class SignedRangeRelay:
                         upstream_status_counts=dict(self._audit['upstream_status_counts']),
                         redirect_counts=dict(self._audit['redirect_counts']),
                         last_redirect=dict(self._audit['last_redirect']),
-                        media_auth=dict(self._audit['media_auth']))
+                        media_auth=dict(self._audit['media_auth']),
+                        session_recovery_events=[dict(row) for row in self._audit['session_recovery_events']])
+
+    def _session_event(self, event, offset=None):
+        with self._audit_lock:
+            events = self._audit['session_recovery_events']
+            if len(events) < 8:
+                events.append({'event':event, 'elapsed_seconds':round(time.monotonic()-self._started, 3),
+                               'offset':offset if offset is not None else self._audit['last_failure_offset']})
 
     def _count(self, key, amount=1):
         with self._audit_lock:
             self._audit[key] += amount
 
     def _fail(self, code):
+        if self._resume_pending:
+            self._session_event('media_resume_failed')
+            self._resume_pending = False
         if not self._stop.is_set():
             with self._audit_lock:
                 self._audit['terminal_error_code'] = self._audit['terminal_error_code'] or code
@@ -146,6 +161,7 @@ class SignedRangeRelay:
             self._fail('media_session_unavailable')
         self._session_refreshed = True
         self._count('session_refresh_attempts')
+        self._session_event('authentication_started')
         if self._stop.is_set(): raise MediaTransportError('stopped')
         try:
             success = refresh() is True
@@ -159,7 +175,15 @@ class SignedRangeRelay:
         if self._stop.is_set(): raise MediaTransportError('stopped')
         if self._audit['media_auth'].get('failure') == 'auth_tls_error': self._fail('upstream_tls_error')
         if not success: self._fail('media_session_unavailable')
-        self._count('session_refresh_successes')
+        self._count('session_identity_verifications')
+        self._session_event('identity_verified')
+        # A verified new cookie jar must not inherit an upstream connection
+        # authenticated under the old session. Keep the immutable source,
+        # validator, buffered bytes and offset; only replace the HTTP pool.
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+        self._resume_pending = True
 
     def _verify_response(self, response, start, end, *, open_ended=False):
         with self._audit_lock:
@@ -182,6 +206,7 @@ class SignedRangeRelay:
                     counts[kind] = counts.get(kind,0)+1
                     self._audit['last_redirect'] = dict(redirect_observation(response), classification=kind)
                 if kind == 'login':
+                    self._session_event('login_redirect', start)
                     raise MediaTransportError('media_session_refresh_needed')
                 observed = redirect_observation(response)
                 if (self.allow_session_refresh and not self._session_refreshed
@@ -243,6 +268,7 @@ class SignedRangeRelay:
                     session, headers = self._request_session(headers)
                     before_cookies = [(c.domain,c.path,c.name,c.value,c.expires) for c in session.cookies]
                     self._count('range_requests')
+                    if self._resume_pending: self._count('session_resume_attempts')
                     open_ended = initial_probe and offset == 0
                     range_value = f'bytes={offset}-'+('' if open_ended else str(end))
                     self._transition('requesting')
@@ -257,6 +283,10 @@ class SignedRangeRelay:
                     self._transition('reading')
                     self._read_verified_body(response, remaining, data)
                     if self._stop.is_set(): raise MediaTransportError('stopped')
+                    if self._resume_pending:
+                        self._count('session_refresh_successes')
+                        self._session_event('media_resumed', offset)
+                        self._resume_pending = False
                     result = bytes(data)
                     self._buffer.put(start, result)
                     with self._audit_lock: self._audit['cache_bytes'] = self._buffer.bytes

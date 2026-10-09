@@ -111,6 +111,35 @@ STARTUP_ERROR_CODES = frozenset({
     'cas_ticket_missing', 'ticket_destination_untrusted', 'media_auth_cancelled'})
 
 
+def safe_transport_diagnostics(value):
+    """Public failure evidence excludes URLs, cookies, validators and source identity."""
+    if type(value) is not dict: return {}
+    clean = {}
+    code = value.get('terminal_error_code')
+    if isinstance(code, str) and code in STARTUP_ERROR_CODES: clean['terminal_error_code'] = code
+    for key in ('range_requests', 'range_verified', 'retries', 'range_rejections',
+                'session_refresh_attempts', 'session_identity_verifications',
+                'session_resume_attempts', 'session_refresh_successes'):
+        count = value.get(key)
+        if type(count) is int and 0 <= count <= 1_000_000: clean[key] = count
+    statuses = value.get('upstream_status_counts')
+    if type(statuses) is dict:
+        clean['upstream_status_counts'] = {key:count for key, count in statuses.items()
+            if type(key) is str and re.fullmatch(r'[1-5][0-9]{2}', key)
+            and type(count) is int and 0 <= count <= 1_000_000}
+    events = value.get('session_recovery_events')
+    if type(events) is list and len(events) <= 8:
+        clean['session_recovery_events'] = []
+        for row in events:
+            if type(row) is not dict: continue
+            event, elapsed = row.get('event'), row.get('elapsed_seconds')
+            if (type(event) is str and event in ('login_redirect', 'authentication_started',
+                    'identity_verified', 'media_resumed', 'media_resume_failed')
+                    and type(elapsed) in (int, float) and math.isfinite(elapsed) and 0 <= elapsed <= 1_000_000):
+                clean['session_recovery_events'].append({'event':event, 'elapsed_seconds':elapsed})
+    return clean
+
+
 def startup_diagnostics(phase, error=None, transport=None):
     """Keep pre-PCM failures without storing exception text or a traceback."""
     from src.runtime.media_protocol import MediaTransportError

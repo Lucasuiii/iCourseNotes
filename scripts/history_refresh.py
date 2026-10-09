@@ -23,7 +23,7 @@ def isolated_flags():
     if os.environ.get('SHARD_MODE') != 'shared':
         raise ValueError('Historical preview requires the shared pool')
     if any(os.environ.get(k, '').strip() for k in ('VALIDATION_COURSE_ID', 'VALIDATION_LECTURE_RANKS',
-            'VALIDATION_BEFORE_DATE', 'VALIDATION_SOURCE_RUN_ID', 'VALIDATION_SELECTION_RUN_ID')):
+            'VALIDATION_BEFORE_DATE', 'VALIDATION_ON_DATE', 'VALIDATION_SOURCE_RUN_ID', 'VALIDATION_SELECTION_RUN_ID')):
         raise ValueError('Historical and validation selections cannot be combined')
     if os.environ.get('VALIDATION_LECTURE_RANK', '1') != '1':
         raise ValueError('Historical preview cannot use a recording rank')

@@ -1,4 +1,5 @@
 """Bounded fresh-session authentication; never replay tickets or retain credentials."""
+import math
 import time
 
 import requests
@@ -28,11 +29,16 @@ def retryable_auth_response(error):
 
 
 def authenticated_session(*, max_attempts=3, student_id=None, password=None,
-                          factory=WebVPNSession, sleep=time.sleep, probe_attempts=1):
+                          factory=WebVPNSession, sleep=time.sleep, probe_attempts=1,
+                          probe_backoff=(1, 1)):
     if type(max_attempts) is not int or not 1 <= max_attempts <= 10:
         raise ValueError('Invalid bounded authentication attempts')
     if type(probe_attempts) is not int or not 1 <= probe_attempts <= 3:
         raise ValueError('Invalid bounded preflight attempts')
+    if (type(probe_backoff) is not tuple or len(probe_backoff) != 2
+            or any(type(delay) not in (int, float) or not math.isfinite(delay)
+                   or not 0 < delay <= 30 for delay in probe_backoff)):
+        raise ValueError('Invalid bounded preflight backoff')
     history = []
     for attempt in range(max_attempts):
         vpn = factory()
@@ -54,12 +60,16 @@ def authenticated_session(*, max_attempts=3, student_id=None, password=None,
                                  and not isinstance(error, requests.exceptions.SSLError))
                     if temporary: vpn.auth_probe_transient_failures = probe+1
                     if not temporary or probe == probe_attempts-1: raise
+                    delay = probe_backoff[probe]
+                    print(f'[Auth] Credential-free portal probe {probe+1}/{probe_attempts} '
+                          f'failed temporarily; waiting up to {delay}s before retry.')
                     session = vpn.session
                     if isinstance(session, DeadlineSession):
                         remaining = session.deadline-time.monotonic()
-                        if remaining <= 0 or session.cancelled.wait(min(1,remaining)):
+                        if (remaining <= 0 or session.cancelled.wait(min(delay, remaining))
+                                or time.monotonic() >= session.deadline):
                             raise AuthenticationError('media_auth_cancelled')
-                    else: sleep(1)
+                    else: sleep(delay)
             probe_completed = True
             if student_id is None and password is None:
                 if getattr(vpn, 'requires_webvpn_login', True): vpn.login()
@@ -160,6 +170,7 @@ def fresh_media_session(cancelled, deadline):
         from src.runtime import config
         vpn.session.headers.update({'User-Agent': config.USER_AGENT})
         return vpn
-    # One fresh login, with one bounded retry of the no-credential preflight
-    # inside the existing 75-second deadline; no retry after login begins.
-    return authenticated_session(max_attempts=1, factory=factory, probe_attempts=2)
+    # Three credential-free probes with cooldowns, within the same 75-second
+    # deadline. Still one fresh login only, no retry after login begins.
+    return authenticated_session(max_attempts=1, factory=factory, probe_attempts=3,
+                                 probe_backoff=(5, 15))

@@ -153,7 +153,7 @@ class InitialAuthRecoveryTests(unittest.TestCase):
 
 
 @contextlib.contextmanager
-def slow_headers_portal():
+def slow_headers_portal(failures=3):
     state = {'requests':0, 'methods':[], 'credentials':0}
     lock = threading.Lock()
     class Handler(BaseHTTPRequestHandler):
@@ -164,7 +164,7 @@ def slow_headers_portal():
                 number = state['requests']
                 state['methods'].append(self.command)
                 state['credentials'] += int(bool(self.headers.get('Cookie') or self.headers.get('Authorization')))
-            if number <= 3: time.sleep(.15)
+            if number <= failures: time.sleep(.15)
             self.send_response(200); self.send_header('Content-Length', '0'); self.end_headers()
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=lambda:server.serve_forever(poll_interval=.01), daemon=True)

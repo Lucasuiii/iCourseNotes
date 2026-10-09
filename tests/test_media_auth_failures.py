@@ -106,11 +106,12 @@ class AuthFailureTests(unittest.TestCase):
                 with self.assertRaises(requests.exceptions.ReadTimeout) as raised:getattr(vpn,method)(*args)
                 self.assertEqual(authentication_failure(raised.exception,vpn=vpn)['failure_phase'],phase)
 
-    def test_fresh_factory_keeps_one_login_and_two_bounded_preflights(self):
+    def test_fresh_factory_keeps_one_login_and_three_delayed_bounded_preflights(self):
         with patch('src.api.auth_recovery.authenticated_session') as authenticate:
             fresh_media_session(threading.Event(),time.monotonic()+75)
             self.assertEqual(authenticate.call_args.kwargs['max_attempts'],1)
-            self.assertEqual(authenticate.call_args.kwargs['probe_attempts'],2)
+            self.assertEqual(authenticate.call_args.kwargs['probe_attempts'],3)
+            self.assertEqual(authenticate.call_args.kwargs['probe_backoff'],(5,15))
 
     def test_failure_is_carried_out_of_discarded_factory_and_no_session_is_adopted(self):
         failure=requests.exceptions.ReadTimeout('private-ticket')

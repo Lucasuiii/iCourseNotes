@@ -11,6 +11,9 @@ Ubuntu Runner 配置；先阅读[迁移说明](docs/standalone-migration.md)，�
 - GitHub Pages 前端仅在当前标签页的 `sessionStorage` 中保存 PAT 和
   `DB_ENCRYPTION_KEY`，关闭标签页后失效；不要在公共电脑上使用。
 - 前端 PAT 只授予当前仓库的 Actions/Secrets 读写和 Contents 只读权限。
+- 查看本公开仓库的笔记只需输入原数据库密钥，不需要 PAT。也可选择只包含一行密钥的 `.key` 或 `.txt` 文件；文件在本机读取，不上传，不要选择包含其他凭证的 `.env` 文件。
+- 密钥输入支持密码管理器填充；是否保存及生物识别确认由浏览器/系统管理，网页不把密钥持久写入 localStorage。此功能不等于网页直接使用 Touch ID 解密。
+- 保存订阅、删除数据、导出邮件或启动任务仍需在设置中填写 PAT。私有仓库或匿名 API 读取限流时，可在可选授权中填写令牌；仅输入数据库密钥不会获得 GitHub 管理权限。
 - 不公开或转发录播、转录、PPT OCR 与课程摘要。
 - 上游更新不会自动进入本独立仓库；合并前应人工审查网络请求和 workflow 变更。
 

@@ -6,7 +6,7 @@
 
 当前 `main` 已包含 Qwen 本地识别、共享识别队列、作业多帧读图和课程术语库，并保留本地执行及 GitHub Actions 工作流配置。**Actions 仅开放代码检查和前端部署，课堂处理及每日任务保持暂停。** 代码迁移不会解除平台对运行用途的限制；运行位置、凭据与恢复边界见[独立仓库迁移说明](docs/standalone-migration.md)。
 
-个人加密数据查看器：[打开 iCourseNotes](https://lucasuiii.github.io/iCourseNotes/)。页面会识别当前仓库，数据库密钥仅在浏览器中用于解密；管理操作使用仅授权本仓库的个人访问令牌。
+个人加密数据查看器：[打开 iCourseNotes](https://lucasuiii.github.io/iCourseNotes/)。页面会识别当前仓库，查看公开仓库的加密笔记只需数据库密钥，也可选择本机密钥文件；密钥仅在浏览器中用于解密。管理操作另行填写仅授权本仓库的个人访问令牌。
 
 仅用于本人有权访问的课程和个人学习。账号、模型密钥、邮箱信息及数据库密钥通过 Actions Secrets 配置；不要公开传播录播、转录或课程笔记。部署前请阅读 [个人部署说明](PERSONAL_DEPLOYMENT.md)。
 

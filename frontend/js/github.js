@@ -10,10 +10,16 @@ window.ICS = window.ICS || {};
 const _GH_API = "https://api.github.com";
 
 function _ghHeaders(token) {
-  return {
-    Authorization: `token ${token}`,
-    Accept: "application/vnd.github+json",
-  };
+  const headers = { Accept: "application/vnd.github+json" };
+  const value = String(token || "").trim();
+  if (value) headers.Authorization = `token ${value}`;
+  return headers;
+}
+
+function _requireManagementToken(token) {
+  if (!String(token || "").trim()) {
+    throw new Error("此操作需要管理授权。请在设置中填写 GitHub PAT；查看笔记无需填写。");
+  }
 }
 
 function _detectRepo() {
@@ -48,7 +54,7 @@ async function _fetchBlobBytes(owner, repo, blobSha, token) {
     `${_GH_API}/repos/${owner}/${repo}/git/blobs/${blobSha}`,
     {
       headers: {
-        Authorization: `token ${token}`,
+        ..._ghHeaders(token),
         Accept: "application/vnd.github.raw",
       },
     }
@@ -142,6 +148,7 @@ function _ensureSodium() {
 }
 
 async function _getRepoPublicKey(owner, repo, token) {
+  _requireManagementToken(token);
   // Returns { key, key_id } where key is base64-encoded libsodium public key.
   const res = await fetch(
     `${_GH_API}/repos/${owner}/${repo}/actions/secrets/public-key`,
@@ -165,6 +172,7 @@ async function _getRepoPublicKey(owner, repo, token) {
 
 async function _putRepoSecret(owner, repo, token, secretName,
                               encryptedB64, keyId) {
+  _requireManagementToken(token);
   // PUT /repos/{owner}/{repo}/actions/secrets/{secret_name}
   // 201 = created, 204 = updated.  Anything else is fatal.
   const res = await fetch(
@@ -190,6 +198,7 @@ async function _putRepoSecret(owner, repo, token, secretName,
 }
 
 async function _setRepoSecrets(owner, repo, token, values) {
+  _requireManagementToken(token);
   // Encrypt several values with one repository-public-key lookup.  The
   // plaintext is sent only inside GitHub's sealed-box secret payload and is
   // never included in workflow_dispatch inputs (which are public run
@@ -245,6 +254,7 @@ async function _setCourseIdsSecret(owner, repo, token, courseIds) {
 }
 
 async function _triggerSingleRunWorkflow(owner, repo, ref, token, courseIds, useOfficial) {
+  _requireManagementToken(token);
   const url = `${_GH_API}/repos/${owner}/${repo}/actions/workflows/single_run.yml/dispatches`;
   const ids = (Array.isArray(courseIds) ? courseIds : [])
     .map(String).map((s) => s.trim()).filter(Boolean).join(",");
@@ -286,6 +296,7 @@ async function _triggerSingleRunWorkflow(owner, repo, ref, token, courseIds, use
 }
 
 async function _triggerDeleteWorkflow(owner, repo, ref, token, courseIds, subIds) {
+  _requireManagementToken(token);
   const url = `${_GH_API}/repos/${owner}/${repo}/actions/workflows/delete_course.yml/dispatches`;
   const ids = (Array.isArray(courseIds) ? courseIds : [])
     .map(String).map((s) => s.trim()).filter(Boolean).join(",");
@@ -323,6 +334,7 @@ async function _triggerDeleteWorkflow(owner, repo, ref, token, courseIds, subIds
 async function _triggerExportWorkflow(
   owner, repo, ref, token, courseId, exportType, subIds
 ) {
+  _requireManagementToken(token);
   // Fires the existing .github/workflows/export.yml workflow_dispatch.
   // The workflow runs scripts/export_course.py (WeasyPrint) and emails
   // the resulting PDF to the configured receiver list — same output the user gets when

@@ -488,7 +488,7 @@ document.addEventListener("alpine:init", () => {
       }
       const creds = _loadCreds();
       if (!creds?.token) {
-        this._toast("Not authenticated", "error");
+        this._toast("此操作需要管理授权，请在设置中填写 GitHub PAT", "error");
         return;
       }
       this.exportingPdf = true;
@@ -584,7 +584,7 @@ document.addEventListener("alpine:init", () => {
       }
       const creds = _loadCreds();
       if (!creds?.token) {
-        this._toast("未登录或 PAT 缺失", "error");
+        this._toast("此操作需要管理授权，请在设置中填写 GitHub PAT", "error");
         return;
       }
       this.deletingCourses = true;
@@ -669,6 +669,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     async testAndSave() {
+      if (this.setupTesting) return;
       this.setupTesting = true; this.setupError = "";
       try {
         var manifest = await ICS.github.fetchShardManifest(
@@ -707,6 +708,25 @@ document.addEventListener("alpine:init", () => {
         await this._loadDB({ ...this.setup });
       } catch (e) { this.setupError = e.message; }
       finally { this.setupTesting = false; }
+    },
+
+    async unlockWithKeyFile(event) {
+      const input = event.target;
+      const file = input.files?.[0];
+      input.value = "";
+      if (!file || this.setupTesting) return;
+      this.setupError = "";
+      try {
+        if (file.size > 4096) throw new Error("请选择只包含数据库密钥的 .key 或 .txt 文件。");
+        const key = (await file.text()).trim();
+        if (key.length < 32 || key.length > 1024 || /[\r\n]/.test(key) || /^[A-Z_][A-Z_0-9]*\s*=/i.test(key)) {
+          throw new Error("密钥文件应只包含一行数据库密钥，不支持 .env 配置文件。");
+        }
+        this.setup.dbkey = key;
+        await this.testAndSave();
+      } catch (e) {
+        this.setupError = e.message;
+      }
     },
 
     openSettings() {
@@ -923,7 +943,7 @@ document.addEventListener("alpine:init", () => {
       if (this.subsSaving) return;
       var creds = _loadCreds();
       if (!creds?.token) {
-        this.subsError = "未登录或 PAT 缺失。";
+        this.subsError = "此操作需要管理授权，请在设置中填写 GitHub PAT。";
         return;
       }
       if (!this.repoOwner || !this.repoName) {
@@ -961,7 +981,7 @@ document.addEventListener("alpine:init", () => {
       }
       var creds = _loadCreds();
       if (!creds?.token) {
-        this.subsError = "未登录或 PAT 缺失。";
+        this.subsError = "此操作需要管理授权，请在设置中填写 GitHub PAT。";
         return;
       }
       this.singleRunTriggering = true;

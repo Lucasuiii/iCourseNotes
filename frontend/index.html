@@ -185,66 +185,68 @@
   <!-- ─── SETUP WIZARD ─── -->
   <div x-show="view === 'setup'" class="max-w-md mx-auto p-6 mt-8">
     <h2 class="text-xl font-bold text-gray-800 mb-1">iCourseNotes</h2>
-    <p class="text-sm text-gray-500 mb-6">Enter your credentials to connect to your encrypted database.</p>
+    <p class="text-sm text-gray-500 mb-6">输入密钥，解锁你的课程笔记。</p>
 
-    <div class="space-y-4">
-      <!-- Repo info -->
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="block text-xs text-gray-500 mb-1">Repo Owner</label>
-          <input x-model="repoOwner" type="text" placeholder="username"
-                 class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        </div>
-        <div>
-          <label class="block text-xs text-gray-500 mb-1">Repo Name</label>
-          <input x-model="repoName" type="text" placeholder="iCourseNotes"
-                 class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        </div>
+    <form @submit.prevent="testAndSave()" class="space-y-4">
+      <input type="text" name="username" autocomplete="username" readonly tabindex="-1"
+             :value="repoOwner + '/' + repoName + '/' + dataBranch" class="sr-only" aria-hidden="true">
+      <div>
+        <label for="database-key" class="block text-xs text-gray-500 mb-1">数据库密钥</label>
+        <input id="database-key" name="password" x-model="setup.dbkey" type="password"
+               autocomplete="current-password" placeholder="输入原数据库密钥"
+               class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        <p class="text-xs text-gray-400 mt-1">在本机解密，密钥不会上传。可使用系统密码管理器填充。</p>
       </div>
 
-      <!-- GitHub PAT -->
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">
-          GitHub Fine-grained PAT
-          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank"
-             class="text-blue-500 underline ml-1">Create</a>
+      <button type="submit" :disabled="setupTesting"
+              class="w-full bg-blue-500 text-white py-2.5 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2">
+        <div x-show="setupTesting" class="spinner !w-4 !h-4 !border-2 !border-white/30 !border-t-white"></div>
+        <span x-text="setupTesting ? '正在解锁…' : '解锁笔记'"></span>
+      </button>
+
+      <div class="text-center">
+        <label class="text-sm text-blue-500 cursor-pointer hover:text-blue-600">
+          使用本机密钥文件
+          <input type="file" accept=".key,.txt" @change="unlockWithKeyFile($event)"
+                 :disabled="setupTesting" class="sr-only" aria-label="选择本机密钥文件">
         </label>
-        <input x-model="setup.token" type="password" autocomplete="off" placeholder="github_pat_..."
-               class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        <p class="text-xs text-gray-400 mt-1">Scope: this repo only; Contents: Read; Actions and Secrets: Read and Write</p>
+        <p class="text-xs text-gray-400 mt-1">选择仅含密钥的文件，不要选择 .env 配置。</p>
       </div>
+      <p x-show="setupError" x-text="setupError" role="alert" class="text-sm text-red-600 bg-red-50 rounded-lg p-3"></p>
 
-      <!-- Database key -->
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">DB_ENCRYPTION_KEY</label>
-        <input x-model="setup.dbkey" type="password" autocomplete="off"
-               placeholder="The same value configured in GitHub Actions"
-               class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        <p class="text-xs text-gray-400 mt-1">PAT and database key are kept only for this browser-tab session.</p>
-      </div>
-
-      <!-- Advanced -->
       <details class="text-sm">
-        <summary class="text-gray-400 cursor-pointer">Advanced</summary>
-        <div class="mt-2">
+        <summary class="text-gray-400 cursor-pointer">仓库与管理授权（可选）</summary>
+        <div class="mt-3 space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Repo Owner</label>
+              <input x-model="repoOwner" type="text" placeholder="username"
+                     class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">Repo Name</label>
+              <input x-model="repoName" type="text" placeholder="iCourseNotes"
+                     class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            </div>
+          </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">Data Branch</label>
-            <input x-model="dataBranch" type="text"
-                   class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            <input x-model="dataBranch" type="text" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">
+              GitHub PAT（管理操作）
+              <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer"
+                 class="text-blue-500 underline ml-1">创建</a>
+            </label>
+            <input x-model="setup.token" type="password" autocomplete="off" placeholder="github_pat_..."
+                   class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            <p class="text-xs text-gray-400 mt-1">公开仓库查看笔记无需填写。保存订阅、导出邮件、删除或启动任务时需要管理授权。私有仓库或读取限流时也可填写。</p>
+            <p class="text-xs text-gray-400 mt-1">仅授权本仓库：Contents 只读，Actions 和 Secrets 读写。凭据仅保留在当前标签页会话。</p>
           </div>
         </div>
       </details>
-
-      <!-- Error -->
-      <p x-show="setupError" x-text="setupError" class="text-sm text-red-600 bg-red-50 rounded-lg p-3"></p>
-
-      <!-- Submit -->
-      <button @click="testAndSave()" :disabled="setupTesting"
-              class="w-full bg-blue-500 text-white py-2.5 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2">
-        <div x-show="setupTesting" class="spinner !w-4 !h-4 !border-2 !border-white/30 !border-t-white"></div>
-        <span x-text="setupTesting ? 'Testing connection…' : 'Connect'"></span>
-      </button>
-    </div>
+    </form>
   </div>
 
   <!-- ─── COURSES ─── -->
@@ -731,7 +733,7 @@
 
     <div class="space-y-3">
       <template x-for="field in [
-        {key: 'token', label: 'GitHub PAT'},
+        {key: 'token', label: 'GitHub PAT（可选管理授权）'},
         {key: 'dbkey', label: 'DB_ENCRYPTION_KEY'},
       ]" :key="field.key">
         <div>

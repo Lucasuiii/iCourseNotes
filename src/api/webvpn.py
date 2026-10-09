@@ -84,6 +84,12 @@ def authentication_failure(error, phase='unknown', vpn=None):
     # Only the whitelisted snapshot is carried out of a discarded login Session.
     inherited = getattr(error, 'auth_failure_diagnostics', None)
     if isinstance(inherited, dict):
+        for key in ('precredential_failure',):
+            if type(inherited.get(key)) is bool: result[key] = inherited[key]
+        for key, limit in (('preflight_recovery_rounds', 3),
+                           ('preflight_recovery_wait_seconds', 90)):
+            value = inherited.get(key)
+            if type(value) is int and 0 <= value <= limit: result[key] = value
         for key, allowed in (('failure_phase',AUTH_PHASES), ('error_type',AUTH_ERROR_TYPES),
                              ('failure',AUTH_FAILURE_CODES)):
             value = inherited.get(key)
@@ -107,6 +113,8 @@ def authentication_failure(error, phase='unknown', vpn=None):
                 for name in ('probe_attempts', 'probe_transient_failures'):
                     value = row.get(name)
                     if type(value) is int and 0 <= value <= 3: clean[name] = value
+                if type(row.get('precredential_failure')) is bool:
+                    clean['precredential_failure'] = row['precredential_failure']
                 response = safe_auth_response(row.get('response'))
                 if response: clean['response'] = response
                 safe_history.append(clean)

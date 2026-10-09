@@ -390,7 +390,7 @@ class LectureRunner:
         # previous lecture already kicked it off (Phase C), but for the
         # first lecture in the batch we still need to fire it ourselves.
         downloader = self._scheduler.audio_downloader
-        downloader.schedule(self._client, course_id, sub_id)
+        downloader.schedule(self._client, course_id, sub_id, preserve_timestamps=True)
         try:
             handle = downloader.get(sub_id, timeout=120)
         except TimeoutError as e:

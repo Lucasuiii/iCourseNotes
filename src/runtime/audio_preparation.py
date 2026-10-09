@@ -57,6 +57,11 @@ def collect_decode_diagnostics(handle, *, media_seconds=None, interrupted=False,
     pcm = Path(handle.path)
     size = pcm.stat().st_size if pcm.exists() else 0
     if media_seconds is None:
+        transport = getattr(handle, 'media_transport', None)
+        source = transport.audit() if transport is not None else {}
+        if source.get('mode') == 'aac_ranges':
+            media_seconds = source.get('aac_media_seconds')
+    if media_seconds is None:
         stderr = b''.join(handle.stderr_chunks).decode(errors='replace')
         match = re.search(r'Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)', stderr)
         if match:
@@ -79,6 +84,19 @@ def collect_decode_diagnostics(handle, *, media_seconds=None, interrupted=False,
 def validate_prepared_audio(specification):
     """Decoder exit zero alone is never evidence of complete input."""
     diagnostics = specification['audio_diagnostics']
+    source = diagnostics.get('source_transport', {})
+    if source.get('mode') == 'aac_ranges':
+        expected, actual = source.get('aac_expected_samples'), source.get('aac_verified_samples')
+        if (type(expected) is not int or expected <= 0 or type(actual) is not int
+                or actual != expected or source.get('aac_full_packet_coverage') is not True
+                or source.get('aac_timeline_complete') is not True):
+            raise ValueError('Production AAC packet coverage is incomplete')
+        duration = specification['audio_seconds']
+        endpoint = source.get('aac_media_seconds')
+        if (type(duration) not in (int, float) or not math.isfinite(duration)
+                or type(endpoint) not in (int, float) or not math.isfinite(endpoint)
+                or abs(duration-endpoint) > .001):
+            raise ValueError('Production AAC timeline is incomplete')
     if not diagnostics.get('stderr_complete', True):
         raise ValueError('Production audio diagnostics are incomplete')
     if (diagnostics.get('decode_error_counts') or diagnostics.get('decode_return_code') != 0
@@ -108,13 +126,31 @@ STARTUP_ERROR_CODES = frozenset({
     'cold_session', 'cas_context_missing', 'api_verification_failed',
     'authentication_rejected', 'password_method_missing', 'service_redirect_untrusted',
     'service_http_rejected', 'public_key_missing', 'login_token_missing',
-    'cas_ticket_missing', 'ticket_destination_untrusted', 'media_auth_cancelled'})
+    'cas_ticket_missing', 'ticket_destination_untrusted', 'media_auth_cancelled',
+    'aac_deadline', 'request_limit', 'index_byte_limit', 'index_memory_limit',
+    'full_track_payload_limit', 'packet_coverage_incomplete', 'aac_decoder_failed',
+    'aac_pcm_endpoint_mismatch', 'aac_producer_failed', 'multipart_unsupported',
+    'missing_or_extra_part', 'unexpected_or_duplicate_part', 'invalid_multipart_boundary'})
 
 
 def safe_transport_diagnostics(value):
     """Public failure evidence excludes URLs, cookies, validators and source identity."""
     if type(value) is not dict: return {}
     clean = {}
+    from src.runtime.aac_audio import FALLBACK_CODES
+    if value.get('mode') in ('aac_ranges', 'aac_mp4_fallback', 'signed_range_relay'):
+        clean['mode'] = value['mode']
+    if isinstance(value.get('aac_fallback_reason'), str) and value['aac_fallback_reason'] in FALLBACK_CODES:
+        clean['aac_fallback_reason'] = value['aac_fallback_reason']
+    for key in ('aac_expected_samples', 'aac_verified_samples', 'aac_payload_bytes',
+                'multipart_requests', 'upstream_bytes'):
+        number = value.get(key)
+        if type(number) is int and 0 <= number <= 1_000_000_000: clean[key] = number
+    for key in ('aac_full_packet_coverage', 'aac_timeline_complete'):
+        if type(value.get(key)) is bool: clean[key] = value[key]
+    seconds = value.get('aac_media_seconds')
+    if type(seconds) in (int, float) and math.isfinite(seconds) and 0 <= seconds <= 1_000_000:
+        clean['aac_media_seconds'] = seconds
     code = value.get('terminal_error_code')
     if isinstance(code, str) and code in STARTUP_ERROR_CODES: clean['terminal_error_code'] = code
     for key in ('range_requests', 'range_verified', 'retries', 'range_rejections',

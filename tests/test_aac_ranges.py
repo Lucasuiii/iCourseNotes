@@ -96,7 +96,8 @@ class Origin:
             def log_message(self,*args):pass
             def do_GET(self):
                 owner.calls+=1
-                ranges=[tuple(map(int,p.split('-'))) for p in self.headers['Range'][6:].split(',')]
+                ranges=[(int(p.split('-')[0]), int(p.split('-')[1]) if p.split('-')[1] else len(owner.data)-1)
+                        for p in self.headers['Range'][6:].split(',')]
                 owner.rows.append((ranges,self.headers.get('If-Match'),self.headers.get('Accept-Encoding')))
                 multi=len(ranges)>1;mode=owner.mode
                 if multi and (mode=='auth' and owner.refresh==0 or mode=='auth_persistent' or mode=='auth_change' and owner.refresh==0):

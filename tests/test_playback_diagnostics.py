@@ -27,7 +27,7 @@ class PlaybackDiagnosticTests(unittest.TestCase):
         client.get_sub_info = MagicMock(side_effect=requests.exceptions.HTTPError('private-body', response=response))
         client.get_sub_detail = MagicMock(side_effect=requests.exceptions.JSONDecodeError('private', 'private-body', 0))
         with tempfile.TemporaryDirectory() as tmp, patch('sys.stdout', io.StringIO()), patch('src.runtime.scheduler.subprocess.Popen') as spawn:
-            downloader = AudioDownloader(tmp, max_concurrent=1); pending = _PendingSpawn(); downloader._active['1'] = pending
+            downloader = AudioDownloader(tmp, max_concurrent=1, audio_mode="mp4"); pending = _PendingSpawn(); downloader._active['1'] = pending
             downloader._spawn_when_ready(client, '10', '1', pending, True)
             audit = downloader.startup_failure('1'); spawn.assert_not_called()
             self.assertIsNone(downloader.get('1'))

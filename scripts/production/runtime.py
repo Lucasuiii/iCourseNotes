@@ -84,6 +84,8 @@ def failure_code(error):
         'Required recovery artifact is absent': 'recovery_missing',
         'No playable production audio': 'audio_startup_failed',
         'Production audio is incomplete': 'incomplete_audio',
+        'Production AAC packet coverage is incomplete': 'incomplete_audio',
+        'Production AAC timeline is incomplete': 'incomplete_audio',
         'Production audio has read or decode errors': 'audio_decode_errors',
         'Production audio diagnostics are incomplete': 'audio_diagnostics_incomplete',
         'Production audio has invalid sample metadata': 'audio_sample_metadata_invalid',

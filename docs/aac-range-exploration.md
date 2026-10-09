@@ -2,7 +2,7 @@
 
 2026-10-09；基线为本地 `60746ee`，仅在 `codex/aac-range-exploration` 工作树开发。
 
-入口是 `src/runtime/aac_ranges.py` 和显式 CLI `scripts/explore_aac_ranges.py`。正式 `AudioDownloader`、配置、Actions、ASR、完整性门禁及数据库均未接入或修改。模块只有显式调用才访问网络；不是生产开关，也不会自动切换正式获取路径。
+初始探索入口是 `src/runtime/aac_ranges.py` 和显式 CLI `scripts/explore_aac_ranges.py`。本文前缀部分记录初始实验方法。用户后续授权接入正式流程后，本分支新增 `src/runtime/aac_audio.py`，并在 `AudioDownloader` 的时间轴保留路径默认优先使用 AAC；具体行为见[正式接入说明](aac-production-integration.md)。Actions 未派发，数据库及模型实现未修改。
 
 ## 协议与提交边界
 
@@ -35,9 +35,9 @@
 3. FFprobe 核验后，仅为解码参考裁短 sample tables，保留原 packet 偏移/时长、AAC config、roll 信息和原 edit list，使参考解码器不会读取尚未获取的整堂尾部。该文件是前缀证据夹具，不是完整媒体。
 4. MP4 参考解码使用 `-copyts`，避免禁用视频后音轨首时间被自动归零；ADTS 探针显式加入已解析的简单起点偏移，再使用 `aresample=async=1:first_pts=0`。对比 16 kHz 单声道 f32le PCM，排除较短结果末端 32 个样本的重采样滤波差异，并单独检查两边时长与 packet 覆盖。
 
-这是受支持前缀的 native 时间轴验证。脚本故意报告 `timeline_preserved=false`：ADTS 没有 MP4 edit/sample timing，当前没有正式时间容器输出或 `AudioDownloader` 接入。连续跨度基线也不是正式整堂下载端到端耗时；不能据此声称生产整堂提速。认证和索引、包装与重试的成本单列。
+这是受支持前缀的 native 时间轴验证。探索脚本仍报告 `timeline_preserved=false`：ADTS 没有 MP4 edit/sample timing。后续正式接入通过已验证索引恢复偏移、裁去末帧填充并检查 PCM 终点，不把 ADTS 本身当作时间容器。连续跨度基线也不是正式整堂下载端到端耗时；不能据此声称生产整堂提速。认证和索引、包装与重试的成本单列。
 
-不支持格式目前由固定错误码交给调用者处理，未实现自动生产回退。未来接入应在任何输出前选择旧路径；输出后若要重建，须使用独立输出并重新通过原完整性门禁。
+探索 CLI 的不支持格式由固定错误码交给调用者处理；后续正式接入只在输出前按明确格式／资源形态允许列表回退，并继续绑定同一来源与会话恢复预算。输出后不切换路径。
 
 ## 复现
 
@@ -59,7 +59,7 @@ PYTHONDONTWRITEBYTECODE=1 /path/to/test-env/bin/python scripts/explore_aac_range
 
 在后续明确授权“尝试获取全量音频”后增加 `scripts/explore_full_aac.py`。此前的 900 秒内存窗口限制保留；整堂使用单独流式计划，每批仍至多 64 范围、256 KiB AAC 载荷、4,096 个 packet，不将整轨 packet/PCM 展开到内存。每个批次验证完毕才写入调用者拥有的私密临时文件。整轨必须具备全部索引 packet、载荷字节数和最后一帧终点，否则不标成功。
 
-整堂入口预算为 30 分钟、400 MB 媒体 body、10,000 次范围请求、200 MB AAC 载荷。请求上限的可选最大值扩到 10,000；原默认 2,000 不变，生产仍未接入。已获取数据写入原偏移的 sparse MP4 音轨参考文件、ADTS 和临时逐包哈希表。Sparse 文件虽只写音频，文件系统实际占用还含稀疏块分配，不能把它的磁盘占用等同于 AAC 载荷大小。
+整堂探索 CLI 预算为 30 分钟、400 MB 媒体 body、10,000 次范围请求、200 MB AAC 载荷。请求上限的可选最大值扩到 10,000；原默认 2,000 不变。这些探索预算与后续正式获取预算分开。探索数据写入原偏移的 sparse MP4 音轨参考文件、ADTS 和临时逐包哈希表。Sparse 文件虽只写音频，文件系统实际占用还含稀疏块分配，不能把它的磁盘占用等同于 AAC 载荷大小。
 
 FFprobe 流式逐包检查整堂原生 PTS/DTS/duration 与 SHA-256，不将整个 JSON 存入内存。MP4 和 ADTS 分别流式解码，PCM 只做字节数和散列计算，不落盘，也不保留解码散列值。所有参考媒体、ADTS、逐包哈希及 stderr 文件均在本次 0700 临时目录内，并在成功/失败后删除。真实 ASR/LLM、WebVPN、Actions、正式数据和发布仍不在范围内。
 

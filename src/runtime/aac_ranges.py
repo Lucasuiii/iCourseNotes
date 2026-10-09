@@ -1,7 +1,7 @@
-"""Opt-in, bounded non-fragmented MP4/AAC exploration. No scheduler integration.
+"""Bounded non-fragmented MP4/AAC acquisition and independent exploration.
 
 Only complete validated batches are returned. Packet timestamps are native track
- ticks; ADTS is a decode probe, never evidence of preserved presentation timing.
+ ticks; ADTS alone never represents preserved presentation timing.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class Limits:
             value = getattr(self, name)
             if type(value) is not int or not 1 <= value <= cap:
                 raise ValueError('invalid_aac_limits')
-        for name, cap in [('seconds', 1800), ('window_seconds', 900)]:
+        for name, cap in [('seconds', 5400), ('window_seconds', 900)]:
             v = getattr(self, name)
             if type(v) not in (int, float) or not math.isfinite(v) or not 0 < v <= cap:
                 raise ValueError('invalid_aac_limits')
@@ -142,6 +142,19 @@ class AACRangeTransport(SignedRangeRelay):
     def close(self):
         self._deadline_timer.cancel()
         super().close()
+
+    def start_mp4_fallback(self, reason):
+        """Before output only: retain frozen source/session and use the old relay.
+
+        The caller admits only known unsupported formats. No terminal failure
+        is cleared and the once-only authentication budget is not reset.
+        """
+        self.check()
+        self._deadline_timer.cancel()
+        self.max_bytes = None
+        with self._audit_lock:
+            self._audit.update(mode='aac_mp4_fallback', aac_fallback_reason=reason)
+        return super().start()
 
     def check(self):
         if time.monotonic() >= self.deadline: fail('aac_deadline')

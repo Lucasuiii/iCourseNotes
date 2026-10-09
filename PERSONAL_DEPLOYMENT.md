@@ -1,8 +1,9 @@
-# 个人部署说明（GitHub Actions）
+# 个人部署说明（保留的 GitHub Actions 配置）
 
-本项目默认运行在 GitHub 提供的临时 Ubuntu runner 上，不需要让本地电脑持续
-开机。仓库是公开 Fork，因此 Actions 日志和 `data` 分支中的加密文件也是公开
-可访问的；任何凭证都只能存入 GitHub Actions Secrets，不能写入代码或提交。
+本独立仓库迁移时已关闭 Actions，尚未启用每日课堂处理。本文介绍保留的
+Ubuntu Runner 配置；先阅读[迁移说明](docs/standalone-migration.md)，确认执行位置
+和平台允许的用途，再考虑运行。仓库及 `data` 分支中的加密文件公开可访问，
+凭证只能存入对应运行环境的私密配置，不能写入代码或提交。
 
 ## 部署前边界
 
@@ -11,7 +12,7 @@
   `DB_ENCRYPTION_KEY`，关闭标签页后失效；不要在公共电脑上使用。
 - 前端 PAT 只授予当前仓库的 Actions/Secrets 读写和 Contents 只读权限。
 - 不公开或转发录播、转录、PPT OCR 与课程摘要。
-- 上游更新不会自动进入本 Fork；合并前应人工审查网络请求和 workflow 变更。
+- 上游更新不会自动进入本独立仓库；合并前应人工审查网络请求和 workflow 变更。
 
 ## 需要配置的 Secrets
 
@@ -26,7 +27,7 @@
 | `COURSE_SESSION_EXCLUSIONS` | 可选；固定排除时段，例如 `12345=周一第6-10节`；优先于白名单、日期例外和定向重跑 |
 | `COURSE_SESSION_OVERRIDE_DATES` | 可选；调课/补课日期例外，逗号分隔，例如 `2026-09-20,2026-10-01` |
 | `DEEPSEEK_API_KEY` | DeepSeek API Key；首次只配置这一个模型服务即可 |
-| `DOUBAO_ASR_API_KEY` | 可选；豆包语音新版控制台的 API Key。仅复核 Qwen 疑难短片段，整课共享 600 秒／20 段；按服务规则消耗额度或计费。 |
+| `DOUBAO_ASR_API_KEY` | 可选；豆包语音新版控制台的 API Key。仅复核 Qwen 疑难短片段，整课共享 900 秒／40 段；按服务规则消耗额度或计费。 |
 | `TAVILY_API_KEY` | 可选。仅当笔记标出可公开核查的术语缺口时使用；每节课最多 2 次基础搜索，不上传整段课堂材料。未配置时不联网检索。 |
 | `SMTP_EMAIL` | QQ 发件邮箱 |
 | `SMTP_PASSWORD` | QQ 邮箱 SMTP 授权码，不是邮箱登录密码 |
@@ -48,8 +49,8 @@ openssl rand -hex 32
 API Key，并将它仅填入 `DOUBAO_ASR_API_KEY` Secret。体验中心的试用额度不等于
 API 已开通或 API 账单一定免费；首次运行后请在控制台核对用量与费用。
 
-Fork 的 Actions 如处于禁用状态，进入 `Actions` 页面，阅读提示后为该 Fork 启用
-workflows。先不要运行任何 workflow，等下面的 Secrets 全部配置完成。
+当前迁移库的 Actions 保持关闭。迁移代码或改为独立仓库不等于获得继续原负载的许可；
+确认平台允许的用途及运行方式后，再配置对应环境，不能通过换仓库绕过暂停。
 
 `COURSE_SESSION_RULES` 支持每行一个课程。没有出现在该 Secret 中的课程会处理全部
 可播放课次；出现的课程只处理列出的星期和节次。多条规则使用 `|` 分隔，也可填写
@@ -61,8 +62,8 @@ workflows。先不要运行任何 workflow，等下面的 Secrets 全部配置�
 这个日期也不会重复生成摘要。日期例外不绕过 `COURSE_SESSION_EXCLUSIONS`。
 
 每日任务统一使用 Qwen3-ASR-1.7B 在 Runner 本地识别。Silero VAD 跳过长时间无讲话区间，
-保留原时间戳后切为约两分钟块，默认两路识别；共享队列及自动术语通过手动选项启用。
-豆包仅接收选中的疑难短音频，整课共享 600 秒／20 段，不上传整个录播或登录签名 URL。
+保留原时间戳后切为约两分钟块，默认共享队列识别；自动术语默认关闭。
+豆包仅接收选中的疑难短音频，整课共享 900 秒／40 段，不上传整个录播或登录签名 URL。
 未配置豆包或复核失败时保留本地转写；官方字幕仅作辅助。
 正式分片链在识别前校验媒体获取、解码错误及实际时长，不能把显著截断的输入当作整课成功。
 每门课程单独发送邮件，正文为 HTML，附件默认 PDF，PDF 生成失败时回退 `.md`。

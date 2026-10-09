@@ -1,8 +1,10 @@
-# Fudan iCourse Subscriber
+# iCourseNotes
+
+> **项目来源与作者许可**：本项目基于 [LeafCreeper/Fudan_iCourse_Subscriber](https://github.com/LeafCreeper/Fudan_iCourse_Subscriber) 独立维护。原作者已许可保留显著来源链接后迁移；请遵守其传播限制，不在树洞、班级群、大群或社交媒体等可能引起校方注意的渠道发布或推广。详情见[上游许可说明](docs/upstream-permission.md)。
 
 自动检查复旦大学 iCourse 的课程更新，将录播语音、课件和板书整理成中文课程笔记，按课程发送邮件，并提供加密数据查看器。
 
-项目运行在 GitHub Actions 上，不需要让本地电脑持续开机。当前 `main` 已包含 Qwen 本地识别、单堂课跨 Runner 并行、共享识别队列、作业多帧读图和课程术语库。
+当前 `main` 已包含 Qwen 本地识别、共享识别队列、作业多帧读图和课程术语库，并保留本地执行及 GitHub Actions 工作流配置。**本独立仓库迁移时已关闭 Actions，定时课堂处理尚未运行。** 代码迁移不会解除平台对运行用途的限制；运行位置、凭据与恢复边界见[独立仓库迁移说明](docs/standalone-migration.md)。
 
 仅用于本人有权访问的课程和个人学习。账号、模型密钥、邮箱信息及数据库密钥通过 Actions Secrets 配置；不要公开传播录播、转录或课程笔记。部署前请阅读 [个人部署说明](PERSONAL_DEPLOYMENT.md)。
 
@@ -40,9 +42,9 @@ flowchart LR
 
 ## 快速开始
 
-### 1. Fork 并启用 Actions
+### 1. 获取代码并确认运行方式
 
-Fork 本仓库，在自己的仓库中启用 GitHub Actions。先配置下列 Secrets，再手动运行工作流；首次处理可能包括所有符合筛选条件且尚未处理的历史录播，建议先只订阅一门课程。
+本仓库是独立维护版本，可克隆用于本地开发。以下配置说明介绍保留的 Actions 接口，**不表示本仓库已启用运行**；先阅读[迁移说明](docs/standalone-migration.md)，确定运行位置和平台允许的用途，再配置凭据。首次处理可能包括所有符合筛选条件且尚未处理的历史录播，建议先只订阅一门课程。
 
 ### 2. 配置凭据和课程
 

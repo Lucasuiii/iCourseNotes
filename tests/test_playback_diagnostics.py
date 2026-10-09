@@ -22,7 +22,7 @@ class PlaybackDiagnosticTests(unittest.TestCase):
         self.assertTrue(audit['url_found']); self.assertEqual(audit['sources'][0]['failure'], 'timeout')
         self.assertNotIn('private', json.dumps(audit)); client.get_sub_detail.assert_called_once()
 
-    def test_two_failed_sources_reach_downloader_startup_without_retries_or_ffmpeg(self):
+    def test_two_failed_sources_bound_transient_retries_and_never_start_ffmpeg(self):
         client = self.client(); response = MagicMock(status_code=503)
         client.get_sub_info = MagicMock(side_effect=requests.exceptions.HTTPError('private-body', response=response))
         client.get_sub_detail = MagicMock(side_effect=requests.exceptions.JSONDecodeError('private', 'private-body', 0))
@@ -32,10 +32,11 @@ class PlaybackDiagnosticTests(unittest.TestCase):
             audit = downloader.startup_failure('1'); spawn.assert_not_called()
             self.assertIsNone(downloader.get('1'))
         self.assertEqual(audit['error_code'], 'media_url_unavailable')
-        self.assertEqual(audit['playback_lookup']['sources'], [
-            {'source': 'sub_info', 'result': 'failed', 'failure': 'http_error', 'http_status': 503},
-            {'source': 'sub_detail', 'result': 'failed', 'failure': 'invalid_json'}])
-        client.get_sub_info.assert_called_once(); client.get_sub_detail.assert_called_once()
+        info,detail=audit['playback_lookup']['sources']
+        self.assertEqual(info['attempt_count'],3)
+        self.assertEqual(info['attempts'],[{'result':'failed','failure':'http_error','http_status':503}]*3)
+        self.assertEqual(detail,{'source':'sub_detail','result':'failed','failure':'invalid_json'})
+        self.assertEqual(client.get_sub_info.call_count,3); client.get_sub_detail.assert_called_once()
         self.assertNotIn('private', json.dumps(audit)); client.sign_video_url.assert_not_called()
 
     def test_api_code_and_empty_valid_payload_are_distinguishable(self):

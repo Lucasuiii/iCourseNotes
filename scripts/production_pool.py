@@ -15,7 +15,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from scripts.asr_queue_store import GitHubQueueStore
-from scripts.coordination_transport import CoordinationError, diagnostic, read_json, read_with_retry
+from scripts.coordination_transport import CoordinationError, RETRYABLE, diagnostic, read_json, read_with_retry
 from scripts.pool_progress import PoolProgress, show_progress
 
 from src.pipeline.runner_budget import (MAX_TOTAL, MAX_JOBS, MAX_COURSES, MAX_WORKERS,
@@ -359,6 +359,31 @@ def refresh_phases(state, works):
         elif phase == 'publish': course['phase'] = 'done'; course.pop('plan', None)
 
 
+def reconcile_dispatch(store, actions, nonce, *, sleep=time.sleep):
+    """Discover an accepted POST without ever replaying it or freeing its slot.
+
+    Register every visible child, including earlier successful dispatches that
+    are waiting for controller confirmation. Identity and CAS checks still fail
+    closed; temporary read outages consume the same six-query budget.
+    """
+    for query in range(6):
+        revision, state = read_state(store)
+        before = copy.deepcopy(state)
+        try:
+            actions.poll(state)
+        except CoordinationError as error:
+            if error.operation != 'github_read' or error.code not in RETRYABLE:
+                raise
+        else:
+            save_if_changed(store, revision, state, before)
+            ticket = next(t for t in state['tickets'] if t['nonce'] == nonce)
+            if ticket.get('run'):
+                return True
+        if query < 5:
+            sleep(5)
+    return False
+
+
 def controller(store, actions, *, attempt, clock=time.monotonic, sleep=time.sleep, timeout=5.5*3600,
                get_work=workload, acquire=acquire_owner, progress=None):
     _, identity = read_state(store)
@@ -419,6 +444,13 @@ def controller(store, actions, *, attempt, clock=time.monotonic, sleep=time.slee
                 rejected.update(status='completed', conclusion='failure', dispatch_rejected_http=error.status)
                 save(store, revision, state)
                 raise
+            except CoordinationError as error:
+                if error.operation != 'github_dispatch' or error.code not in RETRYABLE:
+                    raise
+                print('派发响应暂不可确认；查询已预约 Worker，保留票据且不重复派发。', flush=True)
+                if not reconcile_dispatch(store, actions, ticket['nonce'], sleep=sleep):
+                    raise
+                print('已确认 Worker 运行身份，控制器继续调度。', flush=True)
             # Successful response still leaves a reservation until discoverable.
         show_progress(progress, state, works)
         sleep(30)

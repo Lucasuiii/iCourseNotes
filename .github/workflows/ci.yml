@@ -3,7 +3,7 @@ name: CI
   workflow_dispatch:
   pull_request:
   push:
-    branches: [main, codex/history-refresh]
+    branches: [main]
 permissions:
   contents: read
 jobs:

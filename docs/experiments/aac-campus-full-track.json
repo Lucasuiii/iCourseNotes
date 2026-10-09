@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "access_mode": "campus_direct",
+  "success": true,
+  "media_retained": false,
+  "budgets": {
+    "total_seconds": 1800,
+    "media_body_bytes": 400000000,
+    "range_requests": 10000,
+    "audio_payload_bytes": 200000000
+  },
+  "baseline_full_mp4_downloaded": false,
+  "progress": {
+    "phase": "full_packet_reference_verified",
+    "reference_packets": 627068
+  },
+  "full_track": {
+    "expected_samples": 627068,
+    "verified_samples": 627068,
+    "audio_payload_bytes": 156139918,
+    "batches": 6532,
+    "full_packet_coverage": true,
+    "native_seconds": 13377.450333333334,
+    "presentation_end_seconds": 13377.471333333333,
+    "reference_packets": 627068,
+    "all_packet_hashes_equal": true,
+    "all_native_pts_dts_durations_equal": true,
+    "probe_seconds": 8.554,
+    "mp4_decode": {
+      "seconds": 13377.4716875,
+      "pcm_bytes": 856158188,
+      "decode_seconds": 7.483,
+      "decode_return_code": 0,
+      "decode_stderr_empty": true
+    },
+    "adts_decode": {
+      "seconds": 13377.4716875,
+      "pcm_bytes": 856158188,
+      "decode_seconds": 6.07,
+      "decode_return_code": 0,
+      "decode_stderr_empty": true
+    },
+    "full_pcm_hash_equal": true,
+    "pcm_end_difference_seconds": 0.0,
+    "timeline_alignment_complete": true,
+    "timeline_preserved": false
+  },
+  "index": {
+    "samples": 627068,
+    "audio_payload_bytes": 156139918,
+    "native_seconds": 13377.450333333334,
+    "presentation_offset_seconds": 0.021
+  },
+  "fetch_evidence": {
+    "phase": "full_payload_verified",
+    "expected_samples": 627068,
+    "verified_samples": 627068,
+    "audio_payload_bytes": 156139918,
+    "batches": 6532,
+    "full_packet_coverage": true,
+    "native_seconds": 13377.450333333334,
+    "presentation_end_seconds": 13377.471333333333
+  },
+  "reference_evidence": {
+    "phase": "full_packet_reference_verified",
+    "reference_packets": 627068
+  },
+  "transport": {
+    "range_requests": 6561,
+    "range_verified": 418074,
+    "signature_renewals": 6561,
+    "retries": 0,
+    "upstream_bytes": 210428459,
+    "multipart_requests": 6532,
+    "multipart_body_bytes": 201230569,
+    "retry_bytes": 0,
+    "index_bytes": 9197834,
+    "index_seconds": 2.4194774589850567,
+    "range_count": 418074,
+    "session_refresh_attempts": 0,
+    "session_refresh_successes": 0,
+    "session_identity_verifications": 0,
+    "terminal_error_code": null,
+    "format_observations": {
+      "edit_entries": 2,
+      "edit_media_ticks": [
+        -1,
+        0
+      ],
+      "edit_segment_movie_ticks": [
+        21,
+        13377451
+      ],
+      "movie_timescale": 1000,
+      "track_timescale": 48000,
+      "track_duration_ticks": 642117616,
+      "roll_distance": -1,
+      "prefix_only": true
+    }
+  },
+  "wall_seconds": 383.531,
+  "temporary_media_removed": true
+}

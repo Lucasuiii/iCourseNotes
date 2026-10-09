@@ -26,7 +26,7 @@
 | 无 edit list；一个 rate=1、media_time=0 的区间；可在前面有一个 empty edit，偏移必须为整数音轨 tick | priming/非零 media_time、媒体剪接、多段音频编辑、非 1 播放率、非整数偏移 |
 | 已知 roll sample group，distance=-1/0，计数完整；有 preroll 时仅从时间零获取前缀 | 需要 preroll 的中途随机起点、其他 sample group/distance |
 
-简单编辑的窗口必须落在音轨与 edit 覆盖范围内；未获取整堂，不声称 edit 尾部、跨堂字幕、VAD、PPT 或生产时间轴已验证。真实课堂媒体含 **21 ms 前置空白**，忽略它的 ADTS 拼接不能代表保留原时间轴。
+简单编辑的窗口必须落在音轨与 edit 覆盖范围内。早期前缀阶段未获取整堂；后续授权的整堂参考验证见文末扩展，不声称跨堂字幕、VAD、PPT 或生产时间轴已验证。真实课堂媒体含 **21 ms 前置空白**，忽略它的 ADTS 拼接不能代表保留原时间轴。
 
 ## 独立验证方式与证据边界
 
@@ -54,3 +54,13 @@ PYTHONDONTWRITEBYTECODE=1 /path/to/test-env/bin/python scripts/explore_aac_range
 `--maximum-seconds 900` 必须先通过 60 秒获取、packet 独立参考、解码与时间检查才进入 900 秒；失败退出码为 1，不自动更换源、不调用模型、不发布。凭据加载复用本机 0600/O_NOFOLLOW 加载器，不 source shell，不输出原异常、URL、validator、Cookie、用户名、课号或日期。
 
 所有课堂媒体与 PCM 仅在内存和私密临时目录，退出后清理；仅保留代码、匿名 body 字节/请求/时间/固定错误与结构统计。离线测试使用自生成数据和回环 HTTP，绝不代表账号真实恢复已通过。
+
+## 用户授权的整堂探索扩展
+
+在后续明确授权“尝试获取全量音频”后增加 `scripts/explore_full_aac.py`。此前的 900 秒内存窗口限制保留；整堂使用单独流式计划，每批仍至多 64 范围、256 KiB AAC 载荷、4,096 个 packet，不将整轨 packet/PCM 展开到内存。每个批次验证完毕才写入调用者拥有的私密临时文件。整轨必须具备全部索引 packet、载荷字节数和最后一帧终点，否则不标成功。
+
+整堂入口预算为 30 分钟、400 MB 媒体 body、10,000 次范围请求、200 MB AAC 载荷。请求上限的可选最大值扩到 10,000；原默认 2,000 不变，生产仍未接入。已获取数据写入原偏移的 sparse MP4 音轨参考文件、ADTS 和临时逐包哈希表。Sparse 文件虽只写音频，文件系统实际占用还含稀疏块分配，不能把它的磁盘占用等同于 AAC 载荷大小。
+
+FFprobe 流式逐包检查整堂原生 PTS/DTS/duration 与 SHA-256，不将整个 JSON 存入内存。MP4 和 ADTS 分别流式解码，PCM 只做字节数和散列计算，不落盘，也不保留解码散列值。所有参考媒体、ADTS、逐包哈希及 stderr 文件均在本次 0700 临时目录内，并在成功/失败后删除。真实 ASR/LLM、WebVPN、Actions、正式数据和发布仍不在范围内。
+
+整堂实测获取全部 627,068 个 packet，原始 AAC 156.14 MB，总媒体响应体 210.43 MB，总墙钟 383.531 秒。保留原整轨元数据的参考与显式补前置偏移的 ADTS 完整解码 PCM 一致，整堂时长差为 0；先前前缀参考的 21 ms 尾差此次未复现，具体裁短原因仍未定位。未下载完整 MP4 性能基线。详见[整堂实测报告](experiments/aac-full-result-zh.md)。

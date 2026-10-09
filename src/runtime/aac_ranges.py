@@ -43,7 +43,7 @@ class Limits:
     source_bytes: int = 64 * 1024 * 1024 * 1024
 
     def __post_init__(self):
-        caps = {'network_bytes': 1_000_000_000, 'requests': 5000,
+        caps = {'network_bytes': 1_000_000_000, 'requests': 10000,
                 'batch_ranges': 64, 'header_bytes': 16384,
                 'body_bytes': 32*1024*1024, 'index_bytes': 32*1024*1024,
                 'samples': 1_000_000, 'packet_bytes': 64*1024*1024, 'index_memory_bytes': 256*1024*1024, 'source_bytes': 64*1024*1024*1024}
@@ -689,3 +689,71 @@ def fetch_packets(reader,index,packets):
             if cursor!=len(data):fail('packet_coverage_incomplete')
     if packet_cursor!=len(packets):fail('packet_coverage_incomplete')
     return VerifiedPackets(packets,tuple(payloads),index.timescale)
+
+
+def iter_track_packets(index):
+    """Full native track plan without expanding a full-track PacketWindow."""
+    count=0;dts=0
+    if (index.presentation_end is not None and
+            index.presentation_end<index.presentation_offset+index.duration):
+        fail('full_edit_coverage_unsupported')
+    for n,delta in index.timing:
+        for _ in range(n):
+            if count>=len(index.sizes):fail('packet_coverage_incomplete')
+            yield Packet(count,index.offsets[count],index.sizes[count],
+                         dts+index.presentation_offset,delta,dts)
+            count+=1;dts+=delta
+    if count!=len(index.sizes) or dts!=index.duration:fail('packet_coverage_incomplete')
+
+
+def track_batches(index, *, max_ranges=64, max_payload=256*1024, max_packets=4096):
+    """Keep only a bounded batch plan, including contiguous audio-only media."""
+    if (type(max_ranges) is not int or not 1<=max_ranges<=64 or
+            type(max_payload) is not int or not 8184<=max_payload<=1024*1024 or
+            type(max_packets) is not int or not 1<=max_packets<=4096):
+        raise ValueError('invalid_full_track_batch_limits')
+    pending=[];payload=0;ranges=0;last_end=-1
+    for packet in iter_track_packets(index):
+        new_range=packet.offset!=last_end
+        if pending and (ranges+new_range>max_ranges or payload+packet.size>max_payload or len(pending)>=max_packets):
+            yield tuple(pending)
+            pending=[];payload=0;ranges=0;last_end=-1;new_range=True
+        pending.append(packet);payload+=packet.size;ranges+=new_range;last_end=packet.offset+packet.size
+    if pending:yield tuple(pending)
+
+
+def stream_full_track(reader,index,commit_packet,*,max_payload_bytes=200_000_000,progress=None):
+    """Commit validated batches only to caller-owned temporary output.
+
+    No durable resume or production publication. On failure the caller discards
+    all temporary sinks. Completion requires every index sample and final tick.
+    """
+    expected_bytes=sum(index.sizes)
+    if not 0<expected_bytes<=max_payload_bytes:fail('full_track_payload_limit')
+    verified=0;payload_bytes=0;last_tick=None;batches=0
+    for packets in track_batches(index,max_ranges=reader.limits.batch_ranges):
+        reader.check();ranges=packet_ranges(packets)
+        checked=reader.fetch(ranges)
+        cursor=0
+        for (first,last),data in zip(ranges,checked):
+            offset=0
+            while cursor<len(packets) and packets[cursor].offset<=last:
+                p=packets[cursor]
+                if p.number!=verified or p.offset!=first+offset:fail('packet_coverage_incomplete')
+                payload=data[offset:offset+p.size]
+                if len(payload)!=p.size:fail('packet_coverage_incomplete')
+                commit_packet(p,payload)
+                verified+=1;payload_bytes+=p.size;offset+=p.size;cursor+=1
+                last_tick=p.dts+p.duration
+            if offset!=len(data):fail('packet_coverage_incomplete')
+        if cursor!=len(packets):fail('packet_coverage_incomplete')
+        batches+=1
+        if progress:progress(dict(verified_samples=verified,expected_samples=len(index.sizes),
+                                  audio_payload_bytes=payload_bytes,batches=batches))
+    if (verified!=len(index.sizes) or payload_bytes!=expected_bytes or
+            last_tick!=index.presentation_offset+index.duration):
+        fail('packet_coverage_incomplete')
+    return dict(expected_samples=len(index.sizes),verified_samples=verified,
+                audio_payload_bytes=payload_bytes,batches=batches,full_packet_coverage=True,
+                native_seconds=index.duration/index.timescale,
+                presentation_end_seconds=last_tick/index.timescale)

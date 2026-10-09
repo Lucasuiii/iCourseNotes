@@ -92,7 +92,7 @@ class AuthFailureTests(unittest.TestCase):
 
     def test_webvpn_network_steps_are_marked_before_request_failure(self):
         for method,phase,args in (
-            ('probe_login_service','login_service_probe',()),('_get_auth_context','webvpn_context',()),
+            ('probe_login_service','login_sso_probe',()),('_get_auth_context','webvpn_context',()),
             ('_query_auth_methods','webvpn_auth_methods',('private','private')),
             ('_get_public_key','webvpn_public_key',()),
             ('_auth_execute','webvpn_auth_execute',('private',)*6),

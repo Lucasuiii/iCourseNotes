@@ -88,6 +88,7 @@ def authenticated_session(*, max_attempts=3, student_id=None, password=None,
                             if k not in ('auth_attempts', 'attempt_failures')})
             error.auth_failure_diagnostics.update(auth_attempts=attempt+1,
                                                   attempt_failures=list(history))
+            vpn._preflight_context = None
             vpn.session.close()
             retryable = (isinstance(error, AuthenticationError)
                          and error.reason in RETRYABLE_AUTH_REASONS
@@ -127,7 +128,7 @@ def initial_authenticated_session(*, max_attempts=3, student_id=None, password=N
             failures = audit.get('attempt_failures', [])
             eligible = (len(failures) == max_attempts
                 and all(row.get('precredential_failure') is True
-                    and row.get('failure_phase') == 'login_service_probe'
+                    and row.get('failure_phase') in ('login_service_probe', 'login_sso_probe')
                     and row.get('failure') in PREFLIGHT_TRANSIENT_CODES
                     for row in failures))
             history.extend(failures)

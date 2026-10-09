@@ -52,6 +52,7 @@ class AuthRecoveryTests(unittest.TestCase):
     def test_probe_closes_response_and_does_not_treat_200_as_authenticated(self):
         for status in (200,502):
             vpn=WebVPNSession();vpn.session.close();vpn.session=MagicMock()
+            vpn._probe_sso_context=MagicMock(side_effect=AuthenticationError('service_unavailable'))
             response=MagicMock(status_code=status,text='',history=[])
             vpn.session.get.return_value=response
             if status==502:

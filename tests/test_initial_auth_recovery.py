@@ -172,6 +172,9 @@ def slow_headers_portal(failures=3):
     base = f'http://127.0.0.1:{server.server_port}/'
     sessions = []
     class LocalVPN(WebVPNSession):
+        def _probe_sso_context(self):
+            # This fixture isolates full-service outages, never real campus SSO.
+            raise requests.exceptions.ReadTimeout('synthetic-sso-outage')
         @property
         def portal_url(self): return base
         def __init__(self):

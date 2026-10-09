@@ -123,11 +123,90 @@ class SchedulerTests(unittest.TestCase):
         with self.assertRaises(ValueError): pool.recover(store.state, 2)
         simulation.dispatch.assert_called_once()
 
+    def test_accepted_third_dispatch_with_lost_reply_registers_all_and_finishes(self):
+        store = MemoryStore(journal(1)); simulation = Simulation(store)
+        dispatch = simulation.dispatch
+        def accepted_then_error(ticket, ref):
+            dispatch(ticket, ref)
+            if len(simulation.events) == 3:
+                raise pool.CoordinationError('github_dispatch', 'service_unavailable', 1)
+        simulation.dispatch = accepted_then_error
+        result = simulation.run()
+        self.assertEqual(result['courses']['0']['phase'], 'done')
+        self.assertEqual(len(simulation.events), len({tuple(e[1:]) for e in simulation.events}))
+        self.assertTrue(all(t['run'] and t['status'] == 'completed' for t in result['tickets']))
+
     def test_compare_and_swap_conflict_stops_before_dispatch(self):
         store = MemoryStore(journal(1)); simulation = Simulation(store)
         store.compare_and_swap = MagicMock(return_value=False)
         with self.assertRaises(ValueError): simulation.run()
         self.assertEqual(simulation.events, [])
+
+    def test_unknown_post_queries_are_bounded_and_never_replay_or_release(self):
+        for code in pool.RETRYABLE:
+            with self.subTest(code=code):
+                store = MemoryStore(journal(1)); simulation = Simulation(store)
+                error = pool.CoordinationError('github_dispatch', code, 1)
+                simulation.dispatch = MagicMock(side_effect=error)
+                with patch.object(pool, 'reconcile_dispatch', wraps=pool.reconcile_dispatch) as confirm:
+                    with self.assertRaises(pool.CoordinationError) as caught:
+                        simulation.run()
+                self.assertIs(caught.exception, error)
+                simulation.dispatch.assert_called_once(); confirm.assert_called_once()
+                self.assertEqual(simulation.tick, 5)
+                self.assertEqual(store.state['tickets'][0]['status'], 'reserved')
+                self.assertIsNone(store.state['tickets'][0]['run'])
+                with self.assertRaises(ValueError): pool.recover(store.state, 2)
+
+    def test_reconcile_registers_earlier_children_while_current_run_is_delayed(self):
+        state = journal(2)
+        pool.reserve(state, 0, 'prepare', 1)
+        later = pool.reserve(state, 1, 'prepare', 1)
+        store = MemoryStore(state); polls = []
+        def poll(current):
+            polls.append(None)
+            current['tickets'][0].update(run='101', status='queued')
+            if len(polls) == 3: current['tickets'][1].update(run='102', status='queued')
+        actions = MagicMock(); actions.poll.side_effect = poll
+        sleep = MagicMock()
+        self.assertTrue(pool.reconcile_dispatch(store, actions, later['nonce'], sleep=sleep))
+        self.assertEqual(len(polls), 3); self.assertEqual(sleep.call_count, 2)
+        self.assertEqual([t['run'] for t in store.state['tickets']], ['101', '102'])
+        actions.dispatch.assert_not_called()
+
+    def test_reconcile_temporary_reads_recover_but_identity_and_cas_fail_closed(self):
+        state = journal(1); ticket = pool.reserve(state, 0, 'prepare', 1)
+        def accepted(current): current['tickets'][0].update(run='101', status='queued')
+        store = MemoryStore(state); actions = MagicMock(); sleep = MagicMock()
+        def poll(current):
+            if actions.poll.call_count == 1:
+                raise pool.CoordinationError('github_read', 'service_unavailable', 3)
+            accepted(current)
+        actions.poll.side_effect = poll
+        self.assertTrue(pool.reconcile_dispatch(store, actions, ticket['nonce'], sleep=sleep))
+        sleep.assert_called_once_with(5)
+        for error in (ValueError('Stage workflow source mismatch'),
+                      ValueError('Duplicate stage dispatch; manual resolution required'),
+                      pool.CoordinationError('github_read', 'authorization', 1),
+                      pool.CoordinationError('github_read', 'tls', 1)):
+            with self.subTest(error=str(error)):
+                actions.poll.side_effect = error; sleep.reset_mock()
+                with self.assertRaises(type(error)):
+                    pool.reconcile_dispatch(MemoryStore(state), actions, ticket['nonce'], sleep=sleep)
+                sleep.assert_not_called()
+        store = MemoryStore(state); store.compare_and_swap = MagicMock(return_value=False)
+        actions.poll.side_effect = accepted
+        with self.assertRaisesRegex(ValueError, 'Another controller'):
+            pool.reconcile_dispatch(store, actions, ticket['nonce'], sleep=sleep)
+
+    def test_definite_dispatch_rejection_does_not_enter_unknown_reconciliation(self):
+        store = MemoryStore(journal(1)); simulation = Simulation(store)
+        simulation.dispatch = MagicMock(side_effect=pool.DispatchRejected(403))
+        with patch.object(pool, 'reconcile_dispatch') as confirm:
+            with self.assertRaises(pool.DispatchRejected): simulation.run()
+        confirm.assert_not_called(); simulation.dispatch.assert_called_once()
+        self.assertEqual(store.state['tickets'][0]['dispatch_rejected_http'], 403)
+        self.assertEqual(store.state['tickets'][0]['status'], 'completed')
 
     def test_unused_capacity_is_not_a_wait_barrier(self):
         state = journal(1); t = pool.reserve(state, 0, 'prepare', 1)

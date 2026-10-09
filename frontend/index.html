@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>iCourse Subscriber</title>
+  <title>iCourseNotes</title>
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
@@ -184,7 +184,7 @@
 
   <!-- ─── SETUP WIZARD ─── -->
   <div x-show="view === 'setup'" class="max-w-md mx-auto p-6 mt-8">
-    <h2 class="text-xl font-bold text-gray-800 mb-1">iCourse Subscriber</h2>
+    <h2 class="text-xl font-bold text-gray-800 mb-1">iCourseNotes</h2>
     <p class="text-sm text-gray-500 mb-6">Enter your credentials to connect to your encrypted database.</p>
 
     <div class="space-y-4">
@@ -211,7 +211,7 @@
         </label>
         <input x-model="setup.token" type="password" autocomplete="off" placeholder="github_pat_..."
                class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        <p class="text-xs text-gray-400 mt-1">Scope: this repo only; Contents, Actions, and Secrets: Read and Write</p>
+        <p class="text-xs text-gray-400 mt-1">Scope: this repo only; Contents: Read; Actions and Secrets: Read and Write</p>
       </div>
 
       <!-- Database key -->

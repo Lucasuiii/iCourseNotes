@@ -354,6 +354,13 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
         candidate_files(store, target)
         stage('complete')
     except Exception as error:
+        from src.pipeline.summary_review import SummaryReviewBlocked, export_draft
+        if isinstance(error, SummaryReviewBlocked):
+            from scripts.local_history.storage import atomic
+            try:
+                export_draft(db, sub, root, atomic)
+            except Exception as export_error:
+                state['draft_export_error_type'] = type(export_error).__name__
         state['last_error_type'] = type(error).__name__
         # Preserve code locations, never exception messages, URLs or locals.
         frames=[];trace=error.__traceback__;repo=Path(__file__).resolve().parents[2]

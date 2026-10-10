@@ -369,6 +369,7 @@ class Database:
                 ids,
             )
             self.conn.execute(f"DELETE FROM meta WHERE key IN (SELECT 'summary_figures:' || sub_id FROM lectures WHERE course_id=? AND sub_id IN ({placeholders}))", [str(course_id), *ids])
+            self.conn.execute(f"DELETE FROM meta WHERE key IN (SELECT 'summary_review:' || sub_id FROM lectures WHERE course_id=? AND sub_id IN ({placeholders}))", [str(course_id), *ids])
             cur = self.conn.execute(
                 f"""UPDATE lectures SET
                         transcript = NULL, summary = NULL,

@@ -209,7 +209,7 @@ def merge(local_path: str, remote_path: str):
                         continue
 
             if conn.execute("SELECT 1 FROM local.sqlite_master WHERE type='table' AND name='meta'").fetchone():
-                for key, value in conn.execute("SELECT key,value FROM local.meta WHERE key GLOB 'summary_figures:*'").fetchall():
+                for key, value in conn.execute("SELECT key,value FROM local.meta WHERE key GLOB 'summary_figures:*' OR key GLOB 'summary_review:*'").fetchall():
                     sid = key.partition(':')[2]
                     pair = conn.execute("SELECT l.summary, r.summary, r.deleted_at FROM local.lectures l JOIN main.lectures r ON l.sub_id=r.sub_id WHERE l.sub_id=?", (sid,)).fetchone()
                     if pair and pair[0] == pair[1] and not pair[2]:

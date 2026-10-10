@@ -326,7 +326,7 @@ def _build_meta_shard(source_db: str, output_path: str) -> None:
         dst.executescript(_SCHEMA_SQL)
         for table in ("all_courses", "meta"):
             rows = src.execute(f"SELECT * FROM {table}" + (
-                " WHERE key NOT IN (SELECT 'summary_figures:' || sub_id FROM lectures)" if table == 'meta' else "")).fetchall()
+                " WHERE key NOT GLOB 'summary_review:*' AND key NOT IN (SELECT 'summary_figures:' || sub_id FROM lectures)" if table == 'meta' else "")).fetchall()
             if not rows:
                 continue
             cols = list(rows[0].keys())
@@ -382,7 +382,7 @@ def _build_shard_db(source_db: str, course_ids: list[str],
                     course_ids,
                 ).fetchall()
             elif table == "meta":
-                rows = src.execute(f"SELECT * FROM meta WHERE key IN (SELECT 'summary_figures:' || sub_id FROM lectures WHERE course_id IN ({placeholders}))", course_ids).fetchall()
+                rows = src.execute(f"SELECT * FROM meta WHERE key IN (SELECT 'summary_figures:' || sub_id FROM lectures WHERE course_id IN ({placeholders})) OR key IN (SELECT 'summary_review:' || sub_id FROM lectures WHERE course_id IN ({placeholders}))", [*course_ids, *course_ids]).fetchall()
             else:
                 rows = src.execute(
                     f"""SELECT pp.* FROM ppt_pages pp

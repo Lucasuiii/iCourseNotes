@@ -649,20 +649,27 @@ class LectureRunner:
                 f"{time.strftime('%H:%M:%S')}"
                 f" — mode={mode}, prompt={len(prompt_text)} chars"
             )
-            keywords = []
-            if self._automatic_glossary:
-                sources={'asr':[transcript], 'ppt':[p['text'] for p in kept_pages if p.get('text')],
-                         'cloud':self._cloud_term_sources}
-                summary, model_used, keywords = self._summarizer.summarize_with_keywords(
-                    course_title,prompt_text,sources,self._historical_terms)
-            else:
-                summary, model_used = self._summarizer.summarize(course_title, prompt_text)
-            summary = ensure_homework_notice(summary, homework)
-            if gap_notice:
-                summary += '\n\n> ' + gap_notice
+            from src.pipeline import summary_review
+            sources = {'asr': [transcript], 'ppt': [p['text'] for p in kept_pages if p.get('text')],
+                       'cloud': self._cloud_term_sources}
+            def generate():
+                if self._automatic_glossary:
+                    text, model, words = self._summarizer.summarize_with_keywords(
+                        course_title, prompt_text, sources, self._historical_terms)
+                else:
+                    text, model = self._summarizer.summarize(course_title, prompt_text)
+                    words = []
+                text = ensure_homework_notice(text, homework)
+                if gap_notice:
+                    text += '\n\n> ' + gap_notice
+                return text, model, words
+            course = str(getattr(self, '_homework_course_id', ''))
+            summary, model_used, keywords, review_state = summary_review.draft(
+                self._db, course, sub_id, prompt_text, generate)
             self._reporter.info(
                 f"    [OK] Summary by {model_used}: {len(summary)} chars"
             )
+            figure_state = None
             if os.environ.get('SUMMARY_FIGURES', 'true').lower() == 'true':
                 from src.pipeline.summary_figures import add_figures
                 frames = self._summary_figure_frames + self._ppt.figure_frames(sub_id)
@@ -671,6 +678,11 @@ class LectureRunner:
                     (getattr(self, '_prepared_asr', None) or {}).get('audio_seconds') or self._asr_expected_duration,
                     retained=frames)
                 self._reporter.info(f"    [Figures] {figure_state['status']}; selected={len(figure_state['figures'])}; candidates={figure_state['image_count']}")
+            review_state = summary_review.review(self._db, self._summarizer, course, sub_id,
+                course_title, prompt_text, summary, state=review_state, figures=figure_state)
+            self._reporter.info(f"    [Summary review] {review_state['status']}; issues="
+                                f"{len(review_state.get('result', {}).get('issues', []))}")
+            summary_review.require_accepted(review_state)
             self._db.update_summary(sub_id, summary, model_used)
             if self._automatic_glossary:
                 try:
@@ -683,7 +695,8 @@ class LectureRunner:
             self._reporter.info(
                 f"    [FAIL] Summarization error: {type(e).__name__}"
             )
-            self._db.update_error(sub_id, "summarize", str(e))
+            from src.pipeline.summary_review import SummaryReviewBlocked
+            self._db.update_error(sub_id, "summary_review" if isinstance(e, SummaryReviewBlocked) else "summarize", str(e))
             raise
 
     def _release_audio(self, sub_id: str):

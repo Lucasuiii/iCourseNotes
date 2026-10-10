@@ -323,6 +323,10 @@ def review_new_preview(store, manifest):
             raise ValueError('New-lecture preview is incomplete')
         _, fresh = candidate_files(store, target)
         figure_state = json.loads(next((r['value'] for r in fresh['meta'] if r['key'] == PREFIX+target['sub_id']), '{}'))
+        from src.pipeline.summary_review import PREFIX as REVIEW_PREFIX, report
+        audit = json.loads(next((r['value'] for r in fresh['meta'] if r['key'] == REVIEW_PREFIX+target['sub_id']), '{}'))
+        if audit:
+            atomic(store.root/'summary-review.md', report(audit).encode())
         summary = fresh['lecture']['summary']
         if figure_state:
             summary = export_local(summary, figure_state, store.root)

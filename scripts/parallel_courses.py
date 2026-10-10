@@ -47,6 +47,7 @@ def course_delta(source, target, course_id):
             names=','.join('"'+name+'"' for name in columns)
             selected=','.join('p."'+name+'"' for name in columns)
             conn.execute(f'INSERT INTO ppt_pages({names}) SELECT {selected} FROM source.ppt_pages p JOIN source.lectures l ON l.sub_id=p.sub_id WHERE l.course_id=?',(course_id,))
+            conn.execute("INSERT INTO meta SELECT * FROM source.meta WHERE key IN (SELECT 'summary_review:' || sub_id FROM source.lectures WHERE course_id=?) OR key IN (SELECT 'summary_figures:' || sub_id FROM source.lectures WHERE course_id=?)", (course_id, course_id))
             prefix='auto_glossary:'+course_id+':'
             conn.execute('INSERT INTO meta SELECT * FROM source.meta WHERE substr(key,1,?)=?',(len(prefix),prefix))
     finally:

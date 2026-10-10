@@ -163,6 +163,12 @@ class Summarizer:
             return None
         return self._clients['deepseek'], config.HOMEWORK_VISION_MODEL
 
+    def summary_review_client(self):
+        """Separate native multimodal review; no text-only provider fallback."""
+        if not any(p['name'] == 'deepseek' for p in self.providers):
+            return None
+        return self._clients['deepseek'], config.HOMEWORK_VISION_MODEL
+
     def summarize_with_keywords(self, title, content, sources, terms):
         """One summary request also returns separately validated keyword metadata."""
         from src.ai.automatic_glossary import INSTRUCTION, validated_keywords

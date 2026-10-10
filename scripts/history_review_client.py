@@ -34,8 +34,13 @@ def comparison(input_path, private_path, source_run, output_path):
             '', '确认指纹：`'+report['approval_sha256']+'`', '',
             '检查转录缺段、关键术语、公式和作业信息后，再决定是否覆盖。', '']
     for lesson in report['lectures']:
+        from src.pipeline.recognition_coverage import missing_recognition_notice
+        status = ('新结果保留识别缺口，属于不完整转录。'
+                  + missing_recognition_notice(lesson.get('recognition_coverage'))
+                  if lesson.get('recognition_complete') is False else
+                  '新结果已通过完整识别与复核门禁；此检查不保证文字没有错误。')
         rows.extend([f'## 课次 {lesson["sub_id"]} · {lesson["date"]}', '',
-                     '新结果已通过完整识别与复核门禁；此检查不保证文字没有错误。', ''])
+                     status, ''])
         for field, title in (('summary','摘要'),('transcript','转录')):
             for version, label in (('old','旧'),('new','新')):
                 rows.extend(['### '+label+title, '', lesson[version][field], ''])

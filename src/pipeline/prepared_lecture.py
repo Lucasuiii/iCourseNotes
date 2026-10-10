@@ -4,9 +4,10 @@ import hashlib
 import math
 from src.pipeline.qwen_plan import validate_plan, validate_result, fingerprint
 from src.ai.qwen_segmentation import deduplicated_chunk_rows
+from src.pipeline.recognition_coverage import recognition_coverage, SHORT_GAP_POLICY
 
 
-def assemble_material(plan, results, *, audio_path=None, media_seconds=None):
+def assemble_material(plan, results, *, audio_path=None, media_seconds=None, allow_short_missing=False):
     validate_plan(plan)
     if len(results) != len(plan['shards']):
         raise ValueError('All planned ASR shards must finish before finalization')
@@ -15,12 +16,26 @@ def assemble_material(plan, results, *, audio_path=None, media_seconds=None):
         shard = result['shard_id']
         if shard in seen:
             raise ValueError('Duplicate ASR shard')
-        validate_result(plan, result, shard, require_complete=True)
+        blocks = validate_result(plan, result, shard, require_complete=not allow_short_missing)
+        if blocks != set(plan['shards'][shard]['chunk_ids']):
+            raise ValueError('All planned ASR blocks must finish before finalization')
+        if result.get('complete') is not True and not any(r.get('missing_intervals') for r in result['chunks']):
+            raise ValueError('Shard incomplete; summary forbidden')
         seen.add(shard)
         rows.extend(result['chunks'])
     rows.sort(key=lambda row: row['chunk_id'])
-    clean = deduplicated_chunk_rows(rows)
-    material = dict(selection=plan['selection'], plan_hash=fingerprint(plan), complete=True,
+    coverage = recognition_coverage(rows, allow_short_missing=allow_short_missing)
+    if not coverage['accepted']:
+        raise ValueError('Shard incomplete; summary forbidden')
+    passages = []
+    for row in rows:
+        if row.get('missing_intervals'):
+            passages.extend(dict(part, chunk_id=row['chunk_id']) for part in row['recognized_segments'])
+        else:
+            passages.append(row)
+    clean = deduplicated_chunk_rows(passages)
+    material = dict(selection=plan['selection'], plan_hash=fingerprint(plan), complete=coverage['complete'],
+                    recognition_coverage=coverage,
                     audio_seconds=plan['audio_seconds'], media_seconds=media_seconds,
                     audio_sha256=plan['audio_sha256'], recognition_terms=plan['recognition_terms'],
                     full_chunks=rows, vad_windows=plan['vad_windows'], audio_path=audio_path,
@@ -36,8 +51,7 @@ def assemble_material(plan, results, *, audio_path=None, media_seconds=None):
 
 
 def validate_material(material, course_id, sub_id):
-    if (material.get('complete') is not True
-            or any(str(material.get('selection', {}).get(k)) != str(v)
+    if (any(str(material.get('selection', {}).get(k)) != str(v)
                    for k, v in [('course_id', course_id), ('sub_id', sub_id)])
             or not isinstance(material.get('transcript'), str)
             or not isinstance(material.get('segments'), list)
@@ -45,6 +59,12 @@ def validate_material(material, course_id, sub_id):
             or not isinstance(material.get('vad_windows'), list)
             or not isinstance(material.get('recognition_terms'), list)):
         raise ValueError('Invalid prepared lecture identity or material')
+    coverage = material.get('recognition_coverage')
+    actual = recognition_coverage(material['full_chunks'],
+        allow_short_missing=bool(coverage and coverage.get('policy') == SHORT_GAP_POLICY))
+    if (not actual['accepted'] or material.get('complete') is not actual['complete']
+            or (coverage is not None and coverage != actual)):
+        raise ValueError('Invalid prepared recognition coverage')
     duration = material.get('audio_seconds')
     validate_audio_duration(duration, material.get('media_seconds'))
     for segment in material['segments']:

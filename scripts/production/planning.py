@@ -14,6 +14,9 @@ def validation_course(runtime):
     ranks = runtime.validation_ranks()
     source = os.environ.get('VALIDATION_SOURCE_RUN_ID', '').strip()
     selection_source = os.environ.get('VALIDATION_SELECTION_RUN_ID', '').strip()
+    on_date = runtime.validation_on_date()
+    if on_date and (source or selection_source):
+        raise ValueError('Exact validation date cannot change a frozen source selection')
     if selection_source and (not selection_source.isascii() or not selection_source.isdigit()):
         raise ValueError('Invalid validation selection source')
     if source and selection_source:
@@ -21,7 +24,7 @@ def validation_course(runtime):
     if source and (not source.isascii() or not source.isdigit()):
         raise ValueError('Invalid validation source run')
     if not course and (rank != 1 or os.environ.get('VALIDATION_LECTURE_RANKS', '').strip()
-                       or runtime.validation_before_date() or source or selection_source):
+                       or runtime.validation_before_date() or on_date or source or selection_source):
         raise ValueError('Recording rank is only allowed in isolated course validation')
     if course:
         courses = [item.strip() for item in course.split(',')]
@@ -68,6 +71,16 @@ def validation_before_date(runtime):
             raise ValueError('Invalid validation cutoff date')
         try: datetime.strptime(raw, '%Y-%m-%d')
         except ValueError: raise ValueError('Invalid validation cutoff date') from None
+    return raw
+
+
+def validation_on_date(runtime):
+    raw = os.environ.get('VALIDATION_ON_DATE', '').strip()
+    if raw:
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', raw):
+            raise ValueError('Invalid exact validation date')
+        try: datetime.strptime(raw, '%Y-%m-%d')
+        except ValueError: raise ValueError('Invalid exact validation date') from None
     return raw
 
 
@@ -158,7 +171,7 @@ def validate_frozen_terms(runtime, frozen, course, lecture):
         raise ValueError('Frozen glossary belongs to another lecture or input')
 
 
-def latest_validation_task(runtime, client, db, course, *, today=None, rank=1, before_date=''):
+def latest_validation_task(runtime, client, db, course, *, today=None, rank=1, before_date='', on_date=''):
     """Probe actual playback, including entries with stale playback_status.
 
     No benchmark acquisition limit or cached summary is used. Deleted lectures
@@ -172,6 +185,11 @@ def latest_validation_task(runtime, client, db, course, *, today=None, rank=1, b
         try: datetime.strptime(before_date, '%Y-%m-%d')
         except ValueError: raise ValueError('Invalid validation cutoff date') from None
     today = today or datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()
+    if on_date:
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', on_date):
+            raise ValueError('Invalid exact validation date')
+        try: datetime.strptime(on_date, '%Y-%m-%d')
+        except ValueError: raise ValueError('Invalid exact validation date') from None
     detail = client.get_course_detail(course)
     from src.runtime import config
     from src.runtime.session_rules import lecture_is_selected
@@ -184,6 +202,7 @@ def latest_validation_task(runtime, client, db, course, *, today=None, rank=1, b
         sub_id = str(lecture.get('sub_id', ''))
         if date > today or not sub_id.isascii() or not sub_id.isdigit(): continue
         if before_date and date >= before_date: continue
+        if on_date and date != on_date: continue
         if (db.get_lecture(sub_id) or {}).get('deleted_at'): continue
         if not lecture_is_selected(course, lecture, {}, exclusions=config.COURSE_SESSION_EXCLUSIONS):
             excluded_sub_ids.add(sub_id)
@@ -208,6 +227,8 @@ def latest_validation_task(runtime, client, db, course, *, today=None, rank=1, b
                 selected['_validation']['skipped_excluded'] = len(excluded_sub_ids)
             if before_date:
                 selected['_validation']['before_date'] = before_date
+            if on_date:
+                selected['_validation']['on_date'] = on_date
             return (course, detail['title'], selected), detail.get('teacher', '')
         skipped += 1
     raise ValueError('Requested playable non-future lecture rank unavailable')
@@ -251,8 +272,9 @@ def plan(runtime):
                 files = history_refresh.selection(runtime, client, db, revision, selected)
                 tasks = runtime.read_json(files['queue.json'])
             elif courses:
+                exact = {'on_date': runtime.validation_on_date()} if runtime.validation_on_date() else {}
                 selections = [runtime.latest_validation_task(client, db, course, rank=rank,
-                                                    before_date=runtime.validation_before_date()) for course, rank in requested_recordings]
+                    before_date=runtime.validation_before_date(), **exact) for course, rank in requested_recordings]
                 history = runtime.snapshot(db, runtime.root()/'history.db')
                 # A separate scratch database forces this authorized lecture
                 # through ASR even when production already has a summary.
@@ -297,6 +319,8 @@ def plan(runtime):
             lecture = task[2]; audit = lecture.get('_validation')
             if (not audit or audit.get('playable_rank', 1) != rank
                     or audit.get('before_date', '') != runtime.validation_before_date()
+                    or audit.get('on_date', '') != runtime.validation_on_date()
+                    or (runtime.validation_on_date() and lecture.get('date') != runtime.validation_on_date())
                     or (runtime.validation_before_date() and str(lecture.get('date', '')) >= runtime.validation_before_date())):
                 raise ValueError('Validation queue does not match the requested recording')
             if audit.get('source_run_id', '') != os.environ.get('VALIDATION_SOURCE_RUN_ID', '').strip():

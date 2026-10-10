@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from datetime import datetime, timezone
+from src.pipeline.recognition_coverage import recognition_coverage, SHORT_GAP_LIMIT_SECONDS
 
 
 def gather(runtime):
@@ -30,7 +31,8 @@ def gather(runtime):
     course, lecture = spec['course_id'], spec['lecture']; sub_id = str(lecture['sub_id'])
     material = spec.get('material')
     initial_errors = db.get_lecture(sub_id).get('error_count') or 0
-    missing_intervals = []
+    coverage = material.get('recognition_coverage') if material else None
+    missing_intervals = coverage.get('missing_intervals', []) if coverage else []
 
     def checkpoint():
         row = db.get_lecture(sub_id)
@@ -49,6 +51,7 @@ def gather(runtime):
                 metadata.pop('material', None); metadata.pop('recovery', None)
                 metadata['complete'] = True
                 if material:
+                    metadata['recognition_coverage'] = material.get('recognition_coverage')
                     metadata.update(audio_sha256=material['audio_sha256'], plan_hash=material['plan_hash'],
                                     audio_seconds=material['audio_seconds'])
                     cost = runtime.asr_cost(material)
@@ -97,6 +100,10 @@ def gather(runtime):
                 homework_vision_frame_count=sum(len(c.get('images', [])) for c in review.get('homework', {}).get('vision_calls', [])),
                 homework_vision_image_count=sum(c.get('image_count', 0) for c in review.get('homework', {}).get('vision_calls', [])),
                 missing_intervals=missing_intervals,
+                asr_missing_seconds=coverage['missing_seconds'] if coverage else 0,
+                asr_missing_limit_seconds=SHORT_GAP_LIMIT_SECONDS,
+                asr_integrity_passed=bool(material and (material.get('recognition_coverage') or {}).get('accepted', material.get('complete'))),
+                asr_gap_tolerated=bool(material and not material.get('complete') and (material.get('recognition_coverage') or {}).get('accepted')),
                 asr_complete=bool(material and material.get('complete') and not missing_intervals))
             runtime.out('validation-result.json').write_bytes(runtime.shards.encoded(audit))
     db.checkpoint = checkpoint
@@ -118,10 +125,12 @@ def gather(runtime):
             missing_intervals = [dict(gap,chunk_id=row['chunk_id'])
                 for result in results for row in result['chunks']
                 for gap in row.get('missing_intervals',[])]
+            coverage = recognition_coverage([row for result in results for row in result['chunks']], allow_short_missing=True)
             if missing_intervals and not config.DOUBAO_ASR_API_KEY:
                 print('[Doubao fallback] API unavailable; Qwen missing intervals retained.', flush=True)
                 from src.ai.qwen_transcriber import IncompleteQwenRecognitionError
-                raise IncompleteQwenRecognitionError(missing_intervals)
+                if not coverage['accepted']:
+                    raise IncompleteQwenRecognitionError(missing_intervals)
             if hashlib.sha256(files['lecture.flac']).hexdigest() != plan['audio_sha256']:
                 raise ValueError('Prepared audio hash changed')
             flac = runtime.root()/'lecture.flac'; flac.write_bytes(files['lecture.flac'])
@@ -131,19 +140,18 @@ def gather(runtime):
             if abs(raw.stat().st_size/64000-plan['audio_seconds']) > .1:
                 raise ValueError('Decoded finalization audio differs from the immutable plan')
             validate_audio_duration(plan['audio_seconds'], spec.get('media_seconds'))
-            if missing_intervals:
+            if missing_intervals and config.DOUBAO_ASR_API_KEY:
                 from src.ai.qwen_missing_fallback import repair_missing
                 results = repair_missing(plan, results, str(raw), review, checkpoint,
                                          api_key=config.DOUBAO_ASR_API_KEY)
                 missing_intervals = [dict(gap,chunk_id=row['chunk_id'])
                     for result in results for row in result['chunks']
                     for gap in row.get('missing_intervals',[])]
-                if missing_intervals:
+                coverage = recognition_coverage([row for result in results for row in result['chunks']], allow_short_missing=True)
+                if not coverage['accepted']:
                     from src.ai.qwen_transcriber import IncompleteQwenRecognitionError
                     raise IncompleteQwenRecognitionError(missing_intervals)
-            for result in results:
-                runtime.validate_result(plan,result,result['shard_id'],require_complete=True)
-            material = assemble_material(plan, results, audio_path=str(raw), media_seconds=spec['media_seconds'])
+            material = assemble_material(plan, results, audio_path=str(raw), media_seconds=spec['media_seconds'], allow_short_missing=True)
             material['official_support'] = spec.get('official_support', [])
         row = db.get_lecture(sub_id)
         if spec['mode'] != 'finished' or (row.get('summary') and not row.get('deleted_at')):

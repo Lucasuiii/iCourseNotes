@@ -198,7 +198,7 @@ class MediaTransportTests(unittest.TestCase):
             subprocess.run(['ffmpeg','-nostdin','-v','error','-i',str(source),'-af',
                 'aresample=async=1:first_pts=0','-ar','16000','-ac','1','-f','f32le',str(baseline)],check=True)
             with Origin(source.read_bytes(),drop_start=65536) as origin:
-                downloader=AudioDownloader(str(tmp/'audio'),max_concurrent=1)
+                downloader=AudioDownloader(str(tmp/'audio'),max_concurrent=1, audio_mode="mp4")
                 try:
                     downloader.schedule(origin.client,'course','lesson',preserve_timestamps=True)
                     handle=downloader.get('lesson',timeout=20)

@@ -196,6 +196,11 @@ OCR_MAX_TARGET = int(os.environ.get("OCR_MAX_TARGET", "2"))
 VIDEO_DOWNLOAD_CONCURRENCY = int(
     os.environ.get("VIDEO_DOWNLOAD_CONCURRENCY", "2")
 )
+# Timestamp-preserving production preparation prefers verified AAC batches.
+# mp4 explicitly restores the existing signed-range FFmpeg acquisition path.
+AUDIO_ACQUISITION = os.environ.get("AUDIO_ACQUISITION", "aac_auto").strip()
+if AUDIO_ACQUISITION not in ('aac_auto', 'mp4'):
+    raise ValueError('Invalid audio acquisition mode')
 
 # Local Qwen is primary.  When set, Seed-ASR 2.0 only rescues bounded
 # VAD-confirmed speech windows with empty or near-empty local recognition.

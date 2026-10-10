@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "access_mode": "campus_direct",
+  "production_downloader": true,
+  "model_calls": 0,
+  "success": true,
+  "media_retained": false,
+  "audio_seconds": 13377.4713125,
+  "media_seconds": 13377.471333333333,
+  "pcm_bytes": 856158164,
+  "decode_return_code": 0,
+  "timeline_preserved": true,
+  "stderr_complete": true,
+  "decode_error_counts": {},
+  "source_transport": {
+    "mode": "aac_ranges",
+    "aac_expected_samples": 627068,
+    "aac_verified_samples": 627068,
+    "aac_payload_bytes": 156139918,
+    "multipart_requests": 6532,
+    "upstream_bytes": 210428403,
+    "aac_full_packet_coverage": true,
+    "aac_timeline_complete": true,
+    "aac_media_seconds": 13377.471333333333,
+    "range_requests": 6556,
+    "range_verified": 418069,
+    "retries": 0,
+    "range_rejections": 0,
+    "session_refresh_attempts": 0,
+    "session_identity_verifications": 0,
+    "session_resume_attempts": 0,
+    "session_refresh_successes": 0,
+    "upstream_status_counts": {
+      "206": 6556
+    },
+    "session_recovery_events": []
+  },
+  "wall_seconds": 390.455,
+  "temporary_media_removed": true
+}

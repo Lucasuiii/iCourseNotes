@@ -390,7 +390,7 @@ class LectureRunner:
         # previous lecture already kicked it off (Phase C), but for the
         # first lecture in the batch we still need to fire it ourselves.
         downloader = self._scheduler.audio_downloader
-        downloader.schedule(self._client, course_id, sub_id)
+        downloader.schedule(self._client, course_id, sub_id, preserve_timestamps=True)
         try:
             handle = downloader.get(sub_id, timeout=120)
         except TimeoutError as e:
@@ -620,6 +620,10 @@ class LectureRunner:
             prompt_text, mode = bucketer.assemble(
                 transcript, transcript_segments, kept_pages,
             )
+            from src.pipeline.recognition_coverage import missing_recognition_notice
+            gap_notice = missing_recognition_notice((getattr(self, '_prepared_asr', None) or {}).get('recognition_coverage'))
+            if gap_notice:
+                prompt_text += '\n\n' + gap_notice + '\n不得推测或补写未识别时段的内容。'
             if getattr(self, '_prepared_asr', None) and self._prepared_asr.get('official_support'):
                 prompt_text += ('\n\n官方字幕辅助材料（低可信度；不得覆盖 Qwen 转写，不得据此补写未识别的课堂内容）：\n'
                                 +json.dumps(self._prepared_asr['official_support'], ensure_ascii=False))
@@ -648,6 +652,8 @@ class LectureRunner:
             else:
                 summary, model_used = self._summarizer.summarize(course_title, prompt_text)
             summary = ensure_homework_notice(summary, homework)
+            if gap_notice:
+                summary += '\n\n> ' + gap_notice
             self._reporter.info(
                 f"    [OK] Summary by {model_used}: {len(summary)} chars"
             )

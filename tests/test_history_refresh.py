@@ -85,6 +85,75 @@ class HistoryPolicyTests(unittest.TestCase):
         with closing(sqlite3.connect(self.remote)) as conn:
             return policy.lesson_state(conn, '10', sid)
 
+    def short_gap_candidate(self, spans=None, *, attempts=True):
+        from test_short_recognition_gaps import with_gaps
+        from src.pipeline.recognition_coverage import recognition_coverage, missing_recognition_notice
+        plan, results = with_gaps(spans or {0: [(21.195, 28.695)]})
+        coverage = recognition_coverage([r for result in results for r in result['chunks']], allow_short_missing=True)
+        review = {'complete': True, 'failed': attempts, 'seconds': 7.5 if attempts else 0,
+                  'attempts': [{'seconds': 7.5, 'status': 'failed', 'segments': [],
+                                'interval': {'start_ms': 21195, 'end_ms': 28695,
+                                             'kind': 'missing_asr'}}] if attempts else []}
+        path = self.candidates[0]
+        with closing(sqlite3.connect(path)) as conn, conn:
+            metadata = json.loads(conn.execute('SELECT value FROM meta WHERE key="qwen_pipeline:1"').fetchone()[0])
+            metadata.update(recognition_coverage=coverage, review=review)
+            conn.execute('UPDATE meta SET value=? WHERE key="qwen_pipeline:1"', (json.dumps(metadata),))
+            conn.execute('UPDATE lectures SET summary=?', ('新完整摘要\n\n'+missing_recognition_notice(coverage),))
+        self.files[0]['database.db'] = path.read_bytes()
+        self.files[0]['review.json'] = policy.encoded(review)
+        return review, coverage
+
+    def test_short_gap_failed_rescue_is_accepted_without_refunding_or_claiming_complete(self):
+        review, coverage = self.short_gap_candidate()
+        state = policy.validate_candidate(self.candidates[0], self.files[0], self.manifest['targets'][0], '99')
+        metadata = json.loads(next(r['value'] for r in state['meta'] if r['key'] == 'qwen_pipeline:1'))
+        self.assertFalse(metadata['recognition_coverage']['complete'])
+        self.assertEqual(metadata['recognition_coverage'], coverage)
+        self.assertEqual(metadata['review'], review)
+        self.assertEqual(review['seconds'], 7.5)
+        self.assertEqual(review['attempts'][0]['status'], 'failed')
+
+    def test_short_gap_without_cloud_call_can_still_be_reviewed(self):
+        self.short_gap_candidate(attempts=False)
+        policy.validate_candidate(self.candidates[0], self.files[0], self.manifest['targets'][0], '99')
+
+    def test_short_gap_rejects_unknown_other_failed_or_inconsistent_review(self):
+        path = self.candidates[0]; target = self.manifest['targets'][0]
+        for change in ('reserved', 'weak', 'outside', 'unfinished', 'error', 'missing-failure',
+                       'no-attempt', 'mismatched-ledger', 'no-notice', 'no-coverage',
+                       'forged-seconds', 'forged-complete', 'bad-policy', 'wrong-block', 'nan'):
+            with self.subTest(change=change):
+                review, coverage = self.short_gap_candidate()
+                if change == 'reserved': review['attempts'][0]['status'] = 'reserved'
+                if change == 'weak': review['attempts'][0]['interval']['kind'] = 'weak'
+                if change == 'outside': review['attempts'][0]['interval'].update(start_ms=30000,end_ms=37500)
+                if change == 'unfinished': review['complete'] = False
+                if change == 'error': review['error_type'] = 'RuntimeError'
+                if change == 'missing-failure': review['failed'] = False
+                if change == 'no-attempt': review.update(attempts=[], seconds=0)
+                if change == 'forged-seconds': coverage['missing_seconds'] = 0
+                if change == 'forged-complete': coverage['complete'] = True
+                if change == 'bad-policy': coverage['policy'] = 'anything'
+                if change == 'wrong-block': coverage['missing_intervals'][0]['chunk_id'] = 1
+                if change == 'nan': coverage['missing_intervals'][0]['start'] = float('nan')
+                with closing(sqlite3.connect(path)) as conn, conn:
+                    metadata = json.loads(conn.execute('SELECT value FROM meta WHERE key="qwen_pipeline:1"').fetchone()[0])
+                    metadata.update(review=review, recognition_coverage=coverage)
+                    if change == 'mismatched-ledger': metadata['review'] = {}
+                    if change == 'no-coverage': metadata.pop('recognition_coverage')
+                    if change == 'no-notice': conn.execute('UPDATE lectures SET summary="无缺口提示"')
+                    conn.execute('UPDATE meta SET value=? WHERE key="qwen_pipeline:1"', (json.dumps(metadata),))
+                self.files[0]['review.json'] = policy.encoded(review)
+                with self.assertRaises(ValueError): policy.validate_candidate(path, self.files[0], target, '99')
+
+    def test_historical_gap_limit_is_whole_lecture_and_strictly_under_fifteen(self):
+        for spans in ({0: [(10,25)]}, {0: [(10,25.001)]}, {0: [(10,18)],1: [(130,138)]}):
+            with self.subTest(spans=spans):
+                self.short_gap_candidate(spans, attempts=False)
+                with self.assertRaises(ValueError):
+                    policy.validate_candidate(self.candidates[0], self.files[0], self.manifest['targets'][0], '99')
+
     def test_exact_request_rejects_empty_duplicate_over_limit_and_non_numeric_ids(self):
         for raw in ('{}', '{"course_id":"10","lecture_ids":""}',
                     '{"course_id":"10","lecture_ids":"1,1"}',
@@ -185,6 +254,13 @@ class HistoryPolicyTests(unittest.TestCase):
             self.assertEqual(self.state('1')['lecture']['summary'], '旧摘要1')
 
     def test_review_encrypts_comparison_and_apply_uses_exact_authenticated_candidates(self):
+        self.review_and_apply()
+
+    def test_short_gap_preview_comparison_and_approved_apply_preserve_missing_status(self):
+        self.short_gap_candidate()
+        self.review_and_apply(short_gap=True)
+
+    def review_and_apply(self, *, short_gap=False):
         from scripts.sharded_qwen_pilot import environment
         from scripts.production_result_export import decrypt
         from cryptography.hazmat.primitives import serialization
@@ -210,7 +286,21 @@ class HistoryPolicyTests(unittest.TestCase):
             entry.review()
             report=json.loads(decrypt(runtime.out('comparison.enc').read_bytes(),key,'99',0))
             self.assertEqual(report['lectures'][0]['old']['summary'],'旧摘要1')
-            self.assertEqual(report['lectures'][0]['new']['summary'],'新完整摘要')
+            lesson = report['lectures'][0]
+            self.assertEqual(lesson['recognition_complete'], not short_gap)
+            if short_gap:
+                self.assertEqual(lesson['recognition_coverage']['missing_seconds'], 7.5)
+                self.assertIn('7.5 秒语音未识别', lesson['new']['summary'])
+                self.assertTrue(lesson['review']['failed'])
+                from scripts.history_review_client import comparison
+                private_path = self.root/'private.key'; private_path.write_bytes(key)
+                readable = self.root/'comparison.md'
+                comparison(runtime.out('comparison.enc'), private_path, '99', readable)
+                self.assertIn('不完整转录', readable.read_text())
+                self.assertIn('00:00:21.195–00:00:28.695', readable.read_text())
+                self.assertNotIn('已通过完整识别', readable.read_text().split('## 课次 2')[0])
+            else:
+                self.assertEqual(lesson['new']['summary'],'新完整摘要')
             audit=json.loads(runtime.out('history-audit.json').read_bytes())
             self.assertNotIn('course_id',audit);self.assertNotIn('date',audit)
             approved=runtime.out('approval.enc').read_bytes()
@@ -224,6 +314,17 @@ class HistoryPolicyTests(unittest.TestCase):
                 approval,paths=entry.approval_source()
                 self.assertEqual(policy.digest(approval),report['approval_sha256'])
                 self.assertEqual(set(paths),{0,1})
+                if short_gap:
+                    old = self.state('1')['lecture']
+                    self.assertTrue(policy.replace_batch(self.remote, approval, paths))
+                    fresh = self.state('1')
+                    self.assertEqual(fresh['lecture']['emailed_at'], old['emailed_at'])
+                    self.assertEqual(fresh['lecture']['failure_notified_at'], old['failure_notified_at'])
+                    self.assertIn('7.5 秒语音未识别', fresh['lecture']['summary'])
+                    metadata = json.loads(next(r['value'] for r in fresh['meta'] if r['key']=='qwen_pipeline:1'))
+                    self.assertFalse(metadata['recognition_coverage']['complete'])
+                    self.assertEqual(metadata['review']['seconds'], 7.5)
+                    self.assertEqual(metadata['review']['attempts'][0]['status'], 'failed')
                 with environment({'APPROVAL_SHA256':'f'*64}),self.assertRaises(ValueError): entry.approval_source()
                 with patch('src.runtime.config.COURSE_SESSION_EXCLUSIONS',{'10':[(6,3,3)]}), \
                      self.assertRaisesRegex(ValueError,'now excluded'): entry.approval_source()

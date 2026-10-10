@@ -84,6 +84,8 @@ def failure_code(error):
         'Required recovery artifact is absent': 'recovery_missing',
         'No playable production audio': 'audio_startup_failed',
         'Production audio is incomplete': 'incomplete_audio',
+        'Production AAC packet coverage is incomplete': 'incomplete_audio',
+        'Production AAC timeline is incomplete': 'incomplete_audio',
         'Production audio has read or decode errors': 'audio_decode_errors',
         'Production audio diagnostics are incomplete': 'audio_diagnostics_incomplete',
         'Production audio has invalid sample metadata': 'audio_sample_metadata_invalid',
@@ -180,6 +182,11 @@ def validation_before_date():
     return planning.validation_before_date(sys.modules[__name__])
 
 
+def validation_on_date():
+    from scripts.production import planning
+    return planning.validation_on_date(sys.modules[__name__])
+
+
 def validation_source_queue(source):
     from scripts.production import planning
     return planning.validation_source_queue(sys.modules[__name__], source)
@@ -195,9 +202,9 @@ def validate_frozen_terms(frozen, course, lecture):
     return planning.validate_frozen_terms(sys.modules[__name__], frozen, course, lecture)
 
 
-def latest_validation_task(client, db, course, *, today=None, rank=1, before_date=''):
+def latest_validation_task(client, db, course, *, today=None, rank=1, before_date='', on_date=''):
     from scripts.production import planning
-    return planning.latest_validation_task(sys.modules[__name__], client, db, course, today=today, rank=rank, before_date=before_date)
+    return planning.latest_validation_task(sys.modules[__name__], client, db, course, today=today, rank=rank, before_date=before_date, on_date=on_date)
 
 
 def plan():

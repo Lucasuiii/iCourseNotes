@@ -34,7 +34,7 @@ class ProgressTests(unittest.TestCase):
         # Live logs are immediate; summary is written only when finalized.
         self.assertFalse(self.summary.exists())
 
-    def test_final_gaps_never_become_success_and_counts_survive_plan_removal(self):
+    def test_failed_gather_retains_gaps_and_counts_survive_plan_removal(self):
         state = journal(1); state['courses']['0']['phase'] = 'asr'
         self.reporter.update(state, {0: {'total_blocks': 59, 'completed_blocks': 58,
             'failed_blocks': 1, 'pending_blocks': 0, 'claimed_blocks': 0, 'remaining_blocks': 0}})
@@ -43,8 +43,17 @@ class ProgressTests(unittest.TestCase):
         saved = json.loads(self.output.read_text()); self.assertEqual(saved['status'], 'incomplete')
         self.assertIn('不完整（存在缺失块）', self.summary.read_text())
         self.assertIn('成功 58/59', self.summary.read_text())
-        state['courses']['0']['phase'] = 'done'
-        self.assertEqual(self.reporter.snapshot(state, {}, final=True)['status'], 'incomplete')
+
+    def test_successful_gather_with_retained_gaps_is_distinct_from_complete_asr(self):
+        state=journal(1);state['courses']['0']['phase']='gather'
+        counts={0:dict(total_blocks=131,completed_blocks=130,failed_blocks=1,pending_blocks=0,claimed_blocks=0,remaining_blocks=0)}
+        self.assertEqual(self.reporter.snapshot(state,counts)['status'],'running_incomplete')
+        state['courses']['0']['phase']='done'
+        saved=self.reporter.snapshot(state,{},final=True)
+        self.assertEqual(saved['status'],'success_with_gaps')
+        self.assertEqual(saved['courses'][0]['completed_blocks'],130)
+        self.assertIn('完成（保留未识别片段）',self.reporter.markdown(saved))
+        self.assertEqual(self.reporter.snapshot(state,{},final=True,error=True)['status'],'controller_stopped')
 
     def test_child_links_unknown_reservations_and_worker_statuses(self):
         state = journal(1)

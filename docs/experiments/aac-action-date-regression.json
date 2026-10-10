@@ -1,0 +1,9 @@
+{
+  "suite": "unittest_discover_tests",
+  "tests": 756,
+  "seconds": 110.362,
+  "passed": true,
+  "new_exact_date_tests": 5,
+  "live_models_used": false,
+  "actions_dispatched_during_regression": false
+}

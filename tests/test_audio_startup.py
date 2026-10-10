@@ -12,7 +12,7 @@ from scripts import production_resource_fetch as resource
 
 class AudioStartupTests(unittest.TestCase):
     def pending(self,tmp):
-        downloader=AudioDownloader(tmp,max_concurrent=1)
+        downloader=AudioDownloader(tmp,max_concurrent=1, audio_mode="mp4")
         pending=_PendingSpawn();downloader._active['1']=pending
         return downloader,pending
 

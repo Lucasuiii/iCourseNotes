@@ -84,6 +84,11 @@ def homework_prompt(evidence):
               '逐项保留reference_evidence中supported=true的题号及其对应页码，包含1(1)(3)这类小题结构；'
               '不能因另一候选缺失或全局unverified而省略这些已佐证项。仅有画面依据时写“板书列出的练习”，'
               '只有语音或明确通知支持布置事实时才写成要求完成的作业；不把两者混为一谈。'
+              'reference_evidence中tentative=true的单帧清晰页码或题号也要输出，'
+              '保留对应页码与小题结构，在该项旁明确标注“存疑、待核实”，例如'
+              '“画面线索（存疑）：第25页第1题，是否为本次作业待核实”。'
+              '这类线索不是已确认的作业要求，不升级supported状态；'
+              '存在语音冲突、难辨数字或仅普通公式/例题编号时不得按此规则补写。'
               '不罗列没有可靠依据的候选数字；'
               '禁止用普通公式、例题编号或单帧低可信数字补造作业。'
               'writing_state=stable仅表示该帧未见正在书写，不证明老师写完；最后一帧也不保证清单完整。'
@@ -157,6 +162,45 @@ def _listed_in_notice(notice, page, item):
                for passage in passages)
 
 
+def _tentative_board_items(evidence):
+    """Only assessed, non-conflicting single-frame references become hints."""
+    from src.ai.homework_vision import exercise_label
+    groups = {}
+    for ref in evidence.get('visual', {}).get('reference_evidence', []):
+        if (ref.get('tentative') is not True or ref.get('supported') is not False
+                or ref.get('audio_conflict')):
+            continue
+        page, text = ref.get('page'), ref.get('text', '')
+        if page is not None and (type(page) is not int or not 1 <= page <= 999):
+            continue
+        match = re.fullmatch(r'(?:第)?([1-9]\d{0,2})页', text)
+        if match:
+            groups.setdefault(int(match[1]), [])
+            continue
+        match = re.fullmatch(r'第(.+)题', text)
+        if not match:
+            continue
+        items = [exercise_label(item) for item in re.split(r'[、,，及和]', match[1])]
+        if not all(items):
+            continue
+        for item in items:
+            if item not in groups.setdefault(page, []):
+                groups[page].append(item)
+    return groups
+
+
+def _tentative_listed(notice, page, item=None):
+    for paragraph in re.split(r'\n\s*\n', notice):
+        if not re.search(r'存疑|待核实|待确认|疑似', paragraph):
+            continue
+        if item is not None and _listed_in_notice(paragraph, page, item):
+            return True
+        if item is None and page is not None and re.search(
+                rf'(?:[Pp]\s*{page}(?!\d)|(?:第\s*)?{page}\s*页)', paragraph):
+            return True
+    return False
+
+
 def ensure_homework_notice(summary, evidence):
     """Keep one reader-facing reminder; raw evidence stays in the ledger."""
     if not evidence or not evidence.get('candidates'):
@@ -164,11 +208,20 @@ def ensure_homework_notice(summary, evidence):
     section = _notice_section(summary)
     notice = summary[section[0]:section[1]] if section else ''
     missing = []
-    for page, items in _supported_board_items(evidence).items():
+    supported = _supported_board_items(evidence)
+    for page, items in supported.items():
         omitted = [item for item in items if not _listed_in_notice(notice, page, item)]
         if omitted:
             prefix = f'第{page}页：' if page is not None else ''
             missing.append('- 板书列出的练习：' + prefix + '、'.join(omitted) + '。')
+    for page, items in _tentative_board_items(evidence).items():
+        omitted = [item for item in items if item not in supported.get(page, [])
+                   and not _tentative_listed(notice, page, item)]
+        if omitted or (not items and page not in supported and not _tentative_listed(notice, page)):
+            prefix = f'第{page}页' if page is not None else ''
+            labels = '、'.join(f'第{item}题' for item in omitted)
+            missing.append('- 画面线索（存疑）：' + prefix + ('：' if prefix and labels else '')
+                           + labels + '。仅一张课堂画面读到，尚无其他佐证，是否为本次作业待核实。')
     if missing:
         addition = '\n\n' + '\n'.join(missing) + '\n\n'
         if section:

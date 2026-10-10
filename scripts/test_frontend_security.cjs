@@ -51,6 +51,25 @@ assert.equal(target.querySelector('h2').textContent, '矩阵');
 assert.equal(target.querySelector('strong').textContent, '结论');
 assert.ok(target.querySelector('table'));
 assert.ok(target.textContent.includes('\\(A < B\\)'));
+const revoked = [];
+window.URL.createObjectURL = () => 'blob:https://frontend.invalid/test-figure';
+window.URL.revokeObjectURL = url => revoked.push(url);
+const figureId = 'a'.repeat(64);
+const figure = {id: figureId, mime: 'image/jpeg', data: '/9j/2Q=='};
+const figureMd = `## 事件\n\n![可见原图](#icourse-figure-${figureId})\n\n$P(A)$`;
+target.innerHTML = window.ICS.render.renderMarkdown(figureMd, [figure]);
+assert.equal(target.querySelector('img').getAttribute('loading'), 'lazy');
+assert.equal(target.querySelector('img').getAttribute('src'), 'blob:https://frontend.invalid/test-figure');
+assert.equal(target.querySelector('button').getAttribute('aria-label'), '查看大图：可见原图');
+assert.equal(target.querySelectorAll('a').length, 0);
+window.ICS.render.renderMarkdown('另一张PPT文字');
+assert.equal(revoked.length, 0, 'hidden PPT rendering must not revoke visible summary pictures');
+target.innerHTML = window.ICS.render.renderMarkdown(figureMd, []);
+assert.equal(target.querySelectorAll('img').length, 0);
+assert.ok(target.textContent.includes('课堂配图不可用'));
+assert.equal(revoked.length, 1);
+target.innerHTML = window.ICS.render.renderMarkdown(figureMd, [{...figure, data: 'aW52YWxpZA=='}]);
+assert.equal(target.querySelectorAll('img').length, 0);
 // Production dependencies use complete versions. Tailwind's Play CDN lacks
 // CORS, so it cannot use anonymous SRI without blocking the stylesheet runtime.
 const index = new JSDOM(fs.readFileSync(path.join(root, 'frontend/index.html'), 'utf8'));

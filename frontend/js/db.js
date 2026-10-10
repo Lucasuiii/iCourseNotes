@@ -229,6 +229,12 @@ function _getLecture(subId) {
   `, [subId]);
   if (!rows.length) return null;
   rows[0].state = _deriveState(rows[0]);
+  try {
+    var figures = JSON.parse(_getMeta('summary_figures:' + subId) || 'null');
+    rows[0].summary_figures = figures && figures.status === 'complete' &&
+      String(figures.sub_id) === String(subId) && String(figures.course_id) === String(rows[0].course_id)
+      ? figures.figures : [];
+  } catch (e) { rows[0].summary_figures = []; }
   return rows[0];
 }
 

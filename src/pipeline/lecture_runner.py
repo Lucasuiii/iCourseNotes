@@ -103,13 +103,14 @@ class LectureRunner:
         self._historical_terms = []
         self._cloud_term_sources = []
         self._qwen_review_material = {}
+        self._summary_figure_frames = []
 
     # ── Public entry point ──────────────────────────────────────────────
 
     def run(self, course_id: str, course_title: str, lecture: dict,
             next_info: Optional[tuple[str, str]] = None, *,
             prepared_asr: dict | None = None, review_state: dict | None = None,
-            checkpoint=None, prepared_ppt: bool = False) -> Optional[str]:
+            checkpoint=None, prepared_ppt: bool = False, prepared_figures=None) -> Optional[str]:
         """Process one lecture.  Returns the summary text or None.
 
         ``next_info``: ``(course_id, sub_id)`` of the next lecture, used to
@@ -123,6 +124,7 @@ class LectureRunner:
         self._prepared_asr = prepared_asr
         self._review_state = review_state
         self._checkpoint = checkpoint
+        self._summary_figure_frames = list(prepared_figures or [])[:12]
         if prepared_asr is not None:
             from src.pipeline.prepared_lecture import validate_material
             validate_material(prepared_asr, course_id, sub_id)
@@ -390,7 +392,7 @@ class LectureRunner:
         # previous lecture already kicked it off (Phase C), but for the
         # first lecture in the batch we still need to fire it ourselves.
         downloader = self._scheduler.audio_downloader
-        downloader.schedule(self._client, course_id, sub_id)
+        downloader.schedule(self._client, course_id, sub_id, preserve_timestamps=True)
         try:
             handle = downloader.get(sub_id, timeout=120)
         except TimeoutError as e:
@@ -610,8 +612,12 @@ class LectureRunner:
             client = ICourseClient(login_with_retry())
         return collect_visual_evidence(client, self._homework_course_id, self._homework_sub_id,
                                        candidates, intervals,
-                                       vision_reader=reader,
+                                       vision_reader=reader, frame_observer=self._retain_figure_frame,
                                        audio_seconds=(getattr(self, '_prepared_asr', None) or {}).get('audio_seconds'))
+
+    def _retain_figure_frame(self, image, row):
+        if image and len(self._summary_figure_frames) < 12:
+            self._summary_figure_frames.append({'image': image, 'seconds': row['seconds'], 'source': row['source']})
 
     def _summarize(self, sub_id: str, course_title: str, transcript: str,
                    transcript_segments: list[dict] | None) -> Optional[str]:
@@ -620,6 +626,10 @@ class LectureRunner:
             prompt_text, mode = bucketer.assemble(
                 transcript, transcript_segments, kept_pages,
             )
+            from src.pipeline.recognition_coverage import missing_recognition_notice
+            gap_notice = missing_recognition_notice((getattr(self, '_prepared_asr', None) or {}).get('recognition_coverage'))
+            if gap_notice:
+                prompt_text += '\n\n' + gap_notice + '\n不得推测或补写未识别时段的内容。'
             if getattr(self, '_prepared_asr', None) and self._prepared_asr.get('official_support'):
                 prompt_text += ('\n\n官方字幕辅助材料（低可信度；不得覆盖 Qwen 转写，不得据此补写未识别的课堂内容）：\n'
                                 +json.dumps(self._prepared_asr['official_support'], ensure_ascii=False))
@@ -648,9 +658,19 @@ class LectureRunner:
             else:
                 summary, model_used = self._summarizer.summarize(course_title, prompt_text)
             summary = ensure_homework_notice(summary, homework)
+            if gap_notice:
+                summary += '\n\n> ' + gap_notice
             self._reporter.info(
                 f"    [OK] Summary by {model_used}: {len(summary)} chars"
             )
+            if os.environ.get('SUMMARY_FIGURES', 'true').lower() == 'true':
+                from src.pipeline.summary_figures import add_figures
+                frames = self._summary_figure_frames + self._ppt.figure_frames(sub_id)
+                summary, figure_state = add_figures(self._db, self._client, self._summarizer,
+                    str(getattr(self, "_homework_course_id", "")), sub_id, summary, kept_pages, transcript_segments,
+                    (getattr(self, '_prepared_asr', None) or {}).get('audio_seconds') or self._asr_expected_duration,
+                    retained=frames)
+                self._reporter.info(f"    [Figures] {figure_state['status']}; selected={len(figure_state['figures'])}; candidates={figure_state['image_count']}")
             self._db.update_summary(sub_id, summary, model_used)
             if self._automatic_glossary:
                 try:

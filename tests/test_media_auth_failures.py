@@ -16,6 +16,21 @@ import test_webvpn_auth_diagnostics as auth_fixtures
 
 
 class AuthFailureTests(unittest.TestCase):
+    def test_local_ticket_read_budget_is_longer_but_keeps_total_deadline(self):
+        from src.api.auth_recovery import DeadlineSession
+        request=requests.Request('GET','https://example.invalid/').prepare()
+        for cap,remaining,expected in ((30,120,30),(60,120,60),(60,20,20)):
+            with DeadlineSession(threading.Event(),100+remaining,read_timeout=cap) as session, \
+                 patch('src.api.auth_recovery.time.monotonic',return_value=100), \
+                 patch('requests.Session.send') as send:
+                session.send(request,timeout=60)
+                self.assertEqual(send.call_args.kwargs['timeout'],(10,expected))
+        stopped=threading.Event();stopped.set()
+        with DeadlineSession(stopped,time.monotonic()+120,read_timeout=60) as session, \
+             patch('requests.Session.send') as send:
+            with self.assertRaises(AuthenticationError):session.send(request,timeout=60)
+            send.assert_not_called()
+
     def test_error_classes_and_phase_are_safe_fixed_fields(self):
         errors=((requests.exceptions.ReadTimeout('private-url'),'ReadTimeout','auth_read_timeout'),
                 (requests.exceptions.ConnectTimeout('private-url'),'ConnectTimeout','auth_connect_timeout'),

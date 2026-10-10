@@ -11,7 +11,7 @@ from src.runtime.scheduler import AudioDownloader, _PendingSpawn, record_decode_
 class AudioTimelineTests(unittest.TestCase):
     def test_downloader_keeps_header_and_error_counts_after_log_rotation(self):
         with tempfile.TemporaryDirectory() as tmp:
-            downloader=AudioDownloader(tmp,max_concurrent=1)
+            downloader=AudioDownloader(tmp,max_concurrent=1, audio_mode="mp4")
             pending=_PendingSpawn();downloader._active['1']=pending
             client=MagicMock();client.get_video_url.return_value='private-url'
             client.get_stream_params.return_value=('private-url','private-header')
@@ -38,7 +38,7 @@ class AudioTimelineTests(unittest.TestCase):
 
     def extraction_command(self, preserve):
         with tempfile.TemporaryDirectory() as tmp:
-            downloader=AudioDownloader(tmp,max_concurrent=1)
+            downloader=AudioDownloader(tmp,max_concurrent=1, audio_mode="mp4")
             pending=_PendingSpawn();downloader._active['1']=pending
             client=MagicMock();client.get_video_url.return_value='selected-private-url'
             client.get_stream_params.return_value=('authenticated-private-url','private-header')

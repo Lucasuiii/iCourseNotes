@@ -173,6 +173,8 @@ GitHub Pages 部署是可选且**仅手动触发**：配置 Pages 后运行 **De
 
 开发者可先阅读[处理链代码结构](docs/pipeline-architecture.md)，了解核心模块、运行入口与检查点边界。
 
+Mac 上重做已有历史笔记可使用 [`local-history.command`](local-history.command)：默认验证并获取 AAC 音轨，支持 Apple GPU / MLX 识别、逐块续跑和原／新笔记对照。只有明确执行带覆盖指纹的 `apply` 才更新正式 `data`；使用方法和验证边界见[本机历史笔记入口](docs/local-history-refresh.md)。
+
 | 文档 | 内容 |
 | --- | --- |
 | [个人部署说明](PERSONAL_DEPLOYMENT.md) | Secrets、权限、私密筛选、数据操作和停用 |

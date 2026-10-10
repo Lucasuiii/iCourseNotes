@@ -77,7 +77,7 @@ class RuntimeAuditTests(unittest.TestCase):
 
     def test_cancelled_slot_wait_does_not_lookup_or_spawn(self):
         with tempfile.TemporaryDirectory() as tmp:
-            downloader=AudioDownloader(tmp,max_concurrent=1);pending=_PendingSpawn()
+            downloader=AudioDownloader(tmp,max_concurrent=1, audio_mode="mp4");pending=_PendingSpawn()
             downloader._active['1']=pending;downloader._sem.acquire()
             client=MagicMock();client.get_video_url.return_value=None
             worker=threading.Thread(target=downloader._spawn_when_ready,args=(client,'10','1',pending,True))
@@ -90,7 +90,7 @@ class RuntimeAuditTests(unittest.TestCase):
 
     def test_cancelled_waiter_exits_while_the_slot_is_still_occupied(self):
         with tempfile.TemporaryDirectory() as tmp:
-            downloader=AudioDownloader(tmp,max_concurrent=1);pending=_PendingSpawn()
+            downloader=AudioDownloader(tmp,max_concurrent=1, audio_mode="mp4");pending=_PendingSpawn()
             downloader._active['1']=pending;downloader._sem.acquire();client=MagicMock()
             worker=threading.Thread(target=downloader._spawn_when_ready,args=(client,'10','1',pending,True))
             worker.start()
@@ -102,7 +102,7 @@ class RuntimeAuditTests(unittest.TestCase):
 
     def test_cancel_during_lookup_never_starts_transport(self):
         with tempfile.TemporaryDirectory() as tmp:
-            downloader=AudioDownloader(tmp,max_concurrent=1);pending=_PendingSpawn();downloader._active['1']=pending
+            downloader=AudioDownloader(tmp,max_concurrent=1, audio_mode="mp4");pending=_PendingSpawn();downloader._active['1']=pending
             client=MagicMock()
             def lookup(*args):downloader.release('1');return 'private-url'
             client.get_video_url.side_effect=lookup
@@ -113,7 +113,7 @@ class RuntimeAuditTests(unittest.TestCase):
 
     def test_orphan_cleanup_cannot_delete_same_lecture_replacement_audio(self):
         with tempfile.TemporaryDirectory() as tmp:
-            downloader=AudioDownloader(tmp,max_concurrent=2);pending=_PendingSpawn();downloader._active['1']=pending
+            downloader=AudioDownloader(tmp,max_concurrent=2, audio_mode="mp4");pending=_PendingSpawn();downloader._active['1']=pending
             client=MagicMock();client.get_video_url.return_value='synthetic-url'
             client.get_stream_params.return_value=('synthetic-url','')
             old,new=MagicMock(),MagicMock()
@@ -136,7 +136,7 @@ class RuntimeAuditTests(unittest.TestCase):
     def test_display_failure_keeps_decoder_monitor_and_slot_ownership(self):
         with tempfile.TemporaryDirectory() as tmp:
             reporter=MagicMock();reporter.audio_prefetch_start.side_effect=RuntimeError('synthetic display')
-            downloader=AudioDownloader(tmp,max_concurrent=1,reporter=reporter)
+            downloader=AudioDownloader(tmp,max_concurrent=1, audio_mode="mp4",reporter=reporter)
             pending=_PendingSpawn();downloader._active['1']=pending;client=MagicMock()
             client.get_stream_params.return_value=('synthetic-url','')
             proc=MagicMock();proc.stderr=[];proc.poll.return_value=0
@@ -152,7 +152,7 @@ class RuntimeAuditTests(unittest.TestCase):
 
     def test_cancel_during_prefix_fetch_closes_transport_and_never_spawns(self):
         with tempfile.TemporaryDirectory() as tmp:
-            downloader=AudioDownloader(tmp,max_concurrent=1);pending=_PendingSpawn();downloader._active['1']=pending
+            downloader=AudioDownloader(tmp,max_concurrent=1, audio_mode="mp4");pending=_PendingSpawn();downloader._active['1']=pending
             client=MagicMock();client.get_video_url.return_value='private-url'
             entered=threading.Event();closed=threading.Event()
             relay=MagicMock()

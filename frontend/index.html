@@ -358,7 +358,7 @@
         <!-- Summary -->
         <div x-show="detailView === 'summary'"
              class="prose"
-             x-html="renderMd(currentLecture.summary || '')"
+             x-html="renderMd(currentLecture.summary || '', currentLecture.summary_figures)"
              x-effect="detailView === 'summary' && currentLecture && $nextTick(() => activateKaTeX($el))">
         </div>
 

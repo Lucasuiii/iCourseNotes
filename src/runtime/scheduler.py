@@ -28,6 +28,8 @@ from typing import Callable, Optional
 
 from src.runtime import config
 from src.runtime.media_transport import SignedRangeRelay
+from src.runtime.aac_ranges import AACRangeTransport, Limits, MediaTransportError
+from src.runtime.aac_audio import AACDecodeProcess, FALLBACK_CODES, prepare_aac, duration_header
 from src.runtime.audio_preparation import DecodeErrorScanner, record_decode_errors, startup_diagnostics
 from src.api import icourse
 
@@ -133,7 +135,7 @@ class AudioHandle:
 
     sub_id: str
     path: str          # disk file ffmpeg writes f32le mono 16 kHz to
-    process: subprocess.Popen
+    process: subprocess.Popen | AACDecodeProcess
     stderr_chunks: list[bytes]
     timeline_preserved: bool = False
     decode_error_counts: dict[str, int] = field(default_factory=dict)
@@ -157,13 +159,13 @@ class _AudioSpawnCancelled(Exception):
 
 
 class AudioDownloader:
-    """Spawn-and-track concurrent ``ffmpeg`` audio extractions.
+    """Spawn-and-track concurrent, timestamp-preserving audio extractions.
 
-    For each sub_id we spawn one ``ffmpeg -i <signed URL> -vn -ar 16000 -ac 1
-    -f f32le <path>`` process.  ``ffmpeg`` writes the decoded mono float32
-    audio straight to disk at network speed — no Python pipe in the loop, so
-    download is NOT bottlenecked by ASR consumption.  Transcriber reads that
-    file with tail-f semantics, processing chunks as they arrive.
+    Supported AAC sources use verified bounded batches on FFmpeg stdin;
+    unsupported sources use the existing signed MP4 range relay. FFmpeg
+    writes decoded mono float32 audio straight to disk, independently of ASR
+    consumption. Transcriber reads that file with tail-f semantics as chunks
+    arrive. The AAC aggregate process also validates producer completion.
 
     Concurrency is bounded by ``max_concurrent`` (default 2: current lecture
     being transcribed + one pre-decoded for the next lecture).  ``schedule()``
@@ -171,7 +173,7 @@ class AudioDownloader:
     """
 
     def __init__(self, audio_dir: str, max_concurrent: int = None,
-                 reporter=None):
+                 reporter=None, *, audio_mode=None):
         self._dir = audio_dir
         self.max_concurrent = max_concurrent or config.VIDEO_DOWNLOAD_CONCURRENCY
         self._sem = threading.BoundedSemaphore(self.max_concurrent)
@@ -179,6 +181,10 @@ class AudioDownloader:
         self._active: dict[str, "AudioHandle | _PendingSpawn"] = {}
         self._lock = threading.Lock()
         self._reporter = reporter
+        self.audio_mode = config.AUDIO_ACQUISITION if audio_mode is None else audio_mode
+        self.allow_fresh_session_escalation = False
+        if self.audio_mode not in ('aac_auto', 'mp4'):
+            raise ValueError('Invalid audio acquisition mode')
         self._startup_failures = {}
         os.makedirs(self._dir, exist_ok=True)
 
@@ -251,9 +257,30 @@ class AudioDownloader:
                     self._pop_if_mine(sub_id, pending)
                     self._sem.release()
                     return
-                if preserve_timestamps:
+                prepared_aac = None
+                if preserve_timestamps and self.audio_mode == 'aac_auto':
+                    phase = 'media_transport_start'
+                    transport = AACRangeTransport(client, url, allow_session_refresh=True,
+                        **({'allow_fresh_session_escalation': True} if self.allow_fresh_session_escalation else {}),
+                        limits=Limits(seconds=5400, network_bytes=1_000_000_000, requests=10000),
+                        timeout=(10, 15))
+                    with self._lock:
+                        if self._active.get(sub_id) is not pending: raise _AudioSpawnCancelled()
+                        pending.media_transport = transport
+                    check_pending()
+                    try:
+                        prepared_aac = prepare_aac(transport)
+                    except MediaTransportError as error:
+                        if error.code not in FALLBACK_CODES: raise
+                        check_pending()
+                        transport.start_mp4_fallback(error.code)
+                    check_pending()
+                    vpn_url, headers = transport.url, ''
+                    network_options = ['-rw_timeout', '180000000']
+                elif preserve_timestamps:
                     phase = 'media_transport_start'
                     transport = SignedRangeRelay(client,url,allow_session_refresh=True,
+                                                 **({'allow_fresh_session_escalation': True} if self.allow_fresh_session_escalation else {}),
                                                  cache_bytes=16*1024*1024)
                     with self._lock:
                         if self._active.get(sub_id) is not pending: raise _AudioSpawnCancelled()
@@ -291,14 +318,18 @@ class AudioDownloader:
                 ]
                 phase = 'decoder_spawn'
                 check_pending()
-                proc = subprocess.Popen(
-                    cmd, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                )
+                if prepared_aac is not None:
+                    proc = AACDecodeProcess.spawn(transport, prepared_aac, path)
+                else:
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                    )
 
                 # Drain stderr so the pipe never deadlocks.  Keep last few KB
                 # for diagnostics if ffmpeg dies.
-                stderr_chunks: list[bytes] = []
+                stderr_chunks: list[bytes] = ([duration_header(prepared_aac[0])]
+                                              if prepared_aac is not None else [])
                 decode_error_counts: dict[str, int] = {}
                 error_scanner = DecodeErrorScanner(decode_error_counts)
                 stderr_done = threading.Event()
@@ -512,11 +543,11 @@ class Scheduler:
         """Schedule image (always) + audio (optional) prefetch for a future
         lecture.  Pass ``audio=False`` when the caller already knows
         transcription won't read the stream (cached or official
-        transcript) — the ffmpeg download is a full pull of the lecture
+        transcript) — audio acquisition is a full pull of the lecture
         and would otherwise hold one of the two slots for nothing."""
         self.image_cache.schedule(client, course_id, sub_id)
         if audio:
-            self.audio_downloader.schedule(client, course_id, sub_id)
+            self.audio_downloader.schedule(client, course_id, sub_id, preserve_timestamps=True)
 
     def submit_ocr(self, fn: Callable, *args, **kwargs) -> Future:
         """Submit an OCR job.  Live concurrency is capped at

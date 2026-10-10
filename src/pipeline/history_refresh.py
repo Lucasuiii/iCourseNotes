@@ -43,7 +43,7 @@ def request(raw):
 
 
 def scope_keys(course, sub_id):
-    return ('qwen_pipeline:'+sub_id, 'auto_glossary:'+course+':'+sub_id)
+    return ('qwen_pipeline:'+sub_id, 'auto_glossary:'+course+':'+sub_id, 'summary_figures:'+sub_id)
 
 
 def lesson_state(conn, course, sub_id):
@@ -55,7 +55,7 @@ def lesson_state(conn, course, sub_id):
     return {'lecture': dict(row), 'ppt': [dict(r) for r in conn.execute(
         'SELECT * FROM ppt_pages WHERE sub_id=? ORDER BY page_num', (sub_id,))],
         'meta': [dict(r) for r in conn.execute(
-            'SELECT * FROM meta WHERE key IN (?,?) ORDER BY key', scope_keys(course, sub_id))]}
+            'SELECT * FROM meta WHERE key IN (?,?,?) ORDER BY key', scope_keys(course, sub_id))]}
 
 
 def completed(row, *, require_model=False):
@@ -113,8 +113,7 @@ def validate_candidate(path, files, target, run):
             or plan.get('run_id') != run or plan.get('course_slot') != target['slot']
             or plan.get('selection', {}).get('course_id') != target['course_id']
             or plan.get('selection', {}).get('sub_id') != target['sub_id']
-            or review.get('complete') is not True or review.get('failed')
-            or any(a['status'] != 'complete' for a in review.get('attempts', []))):
+            or review.get('complete') is not True):
         raise ValueError('Historical candidate lacks complete authenticated recognition')
     validate_audio_duration(plan['audio_seconds'], spec.get('media_seconds'))
     state = candidate(path, target)
@@ -125,6 +124,34 @@ def validate_candidate(path, files, target, run):
             or metadata.get('audio_seconds') != plan['audio_seconds']
             or metadata.get('transcript_sha256') != hashlib.sha256(state['lecture']['transcript'].encode()).hexdigest()):
         raise ValueError('Historical completion checkpoint mismatch')
+    from src.pipeline.recognition_coverage import validate_coverage_report, missing_recognition_notice
+    coverage = metadata.get('recognition_coverage')
+    if coverage is not None:
+        coverage = validate_coverage_report(plan, coverage)
+    failures = [a for a in review.get('attempts', []) if a['status'] != 'complete']
+    if coverage and not coverage['complete']:
+        # These inputs come from the authenticated finalization checkpoint.
+        # Keep failed rescue calls and quota charged; never accept unknown calls.
+        if (metadata.get('review') != review or review.get('error_type')
+                or missing_recognition_notice(coverage) not in state['lecture']['summary']):
+            raise ValueError('Historical short-gap checkpoint mismatch')
+    if failures or review.get('failed'):
+        if (not coverage or coverage['complete'] or not failures or not review.get('failed')
+                or any(a['status'] != 'failed' or a['interval'].get('kind') != 'missing_asr'
+                       for a in failures)):
+            raise ValueError('Historical candidate has unresolved recognition review')
+        import math
+        spans = sorted((math.floor(g['start']*1000+1e-7), math.ceil(g['end']*1000-1e-7))
+                       for g in coverage['missing_intervals'])
+        merged = []
+        for start, end in spans:
+            if merged and start <= merged[-1][1]:
+                merged[-1][1] = max(end, merged[-1][1])
+            else:
+                merged.append([start, end])
+        if any(not any(start <= a['interval']['start_ms'] < a['interval']['end_ms'] <= end
+                       for start, end in merged) for a in failures):
+            raise ValueError('Historical failed rescue is outside the retained gaps')
     return state
 
 
@@ -186,7 +213,7 @@ def replace_batch(path, approval, candidates):
                 columns = list(page)
                 conn.execute('INSERT INTO ppt_pages ('+','.join('"'+c+'"' for c in columns)+') VALUES ('
                              +','.join('?' for _ in columns)+')', [page[c] for c in columns])
-            conn.execute('DELETE FROM meta WHERE key IN (?,?)', scope_keys(target['course_id'], sub_id))
+            conn.execute('DELETE FROM meta WHERE key IN (?,?,?)', scope_keys(target['course_id'], sub_id))
             for item in fresh['meta']:
                 conn.execute('INSERT INTO meta(key,value) VALUES (?,?)', (item['key'], item['value']))
         conn.execute('INSERT INTO meta(key,value) VALUES (?,?)', (marker_key, encoded(approval).decode()))

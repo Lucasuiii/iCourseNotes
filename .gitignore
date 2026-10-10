@@ -55,3 +55,6 @@ _shard_inspect/
 
 # Local historical comparison keys and decrypted review files
 .history-refresh/
+.local-history-refresh/
+.env.local
+.venv-local/

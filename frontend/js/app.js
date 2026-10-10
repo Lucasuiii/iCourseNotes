@@ -1015,7 +1015,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     // Template helpers
-    renderMd(s) { return ICS.render.renderMarkdown(s); },
+    renderMd(s, figures) { return ICS.render.renderMarkdown(s, figures); },
     activateKaTeX(el) { ICS.render.activateKaTeX(el); },
     snippet(s, n) { return ICS.render.plainSnippet(s, n); },
     highlight(text, q) { return _highlightSnippet(text, q); },

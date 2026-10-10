@@ -147,9 +147,12 @@ def initial_authenticated_session(*, max_attempts=3, student_id=None, password=N
 
 class DeadlineSession(requests.Session):
     """Each auth request/redirect checks the same cancellation and wall deadline."""
-    def __init__(self, cancelled, deadline):
+    def __init__(self, cancelled, deadline, *, read_timeout=30):
         super().__init__()
+        if type(read_timeout) not in (int, float) or not math.isfinite(read_timeout) or not 1 <= read_timeout <= 90:
+            raise ValueError('Invalid bounded authentication read timeout')
         self.cancelled, self.deadline = cancelled, deadline
+        self.read_timeout = read_timeout
 
     def send(self, request, **kwargs):
         remaining = self.deadline-time.monotonic()
@@ -158,16 +161,16 @@ class DeadlineSession(requests.Session):
         requested = kwargs.get('timeout') or (10, 10)
         if not isinstance(requested, tuple): requested = (requested, requested)
         kwargs['timeout'] = tuple(min(float(v or cap), cap, remaining)
-                                  for v, cap in zip(requested, (10, 30)))
+                                  for v, cap in zip(requested, (10, self.read_timeout)))
         return super().send(request, **kwargs)
 
 
-def fresh_media_session(cancelled, deadline):
+def fresh_media_session(cancelled, deadline, *, read_timeout=30, access_mode='webvpn'):
     """One new ticket flow from configured credentials, never a media Location."""
     def factory():
-        vpn = WebVPNSession()
+        vpn = WebVPNSession(access_mode=access_mode)
         vpn.session.close()
-        vpn.session = DeadlineSession(cancelled, deadline)
+        vpn.session = DeadlineSession(cancelled, deadline, read_timeout=read_timeout)
         from src.runtime import config
         vpn.session.headers.update({'User-Agent': config.USER_AGENT})
         return vpn

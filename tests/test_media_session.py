@@ -64,7 +64,7 @@ class SessionOrigin:
                     else:location='/media?t=untrusted-ticket'
                     self.reply(302,b'private-login-html',[('Location',location)]);return
                 if start and owner.mode in ('login','cold','persistent','changed','wrapped_login',
-                                           'control','control_persistent','control_changed','root'):
+                                           'control','control_persistent','control_changed','root','twice'):
                     if owner.token!='refreshed' or owner.mode in ('persistent','control_persistent'):
                         location = (get_vpn_url('https://id.fudan.edu.cn/idp/authCenter/authenticate')
                                     if owner.mode=='wrapped_login' else '/login')
@@ -74,6 +74,8 @@ class SessionOrigin:
                 expected='' if owner.token is None else 'media_token='+owner.token
                 if cookie!=expected:
                     self.reply(401,b'private-login-html');return
+                if start >= 20480 and owner.mode == 'twice':
+                    self.reply(302,b'private-login-html',[('Location','/login?private-ticket')]);return
                 headers=[('Content-Range',f'bytes {start}-{end}/{len(owner.DATA)}'),
                          ('ETag','"changed"' if start and owner.mode in ('changed','control_changed') else '"immutable"')]
                 if start==0 and owner.mode=='rotate':
@@ -303,6 +305,44 @@ class MediaSessionTests(unittest.TestCase):
                 origin.client._media_reauth_factory.assert_called_once()
                 self.assertNotIn('/login',origin.calls)
                 self.assertNotIn('private',json.dumps(audit))
+
+    def test_local_escalation_after_api_only_or_short_lived_recovery(self):
+        for mode in ('persistent','twice'):
+            with self.subTest(mode=mode), SessionOrigin(mode) as origin:
+                old=origin.client.vpn
+                def factory(cancelled,deadline):
+                    candidate=type(old)()
+                    origin.mode='ok';origin.token='refreshed'
+                    candidate.session.cookies.set('media_token','refreshed',domain='127.0.0.1',path='/')
+                    return candidate
+                origin.client._media_reauth_factory=MagicMock(side_effect=factory)
+                with self.relay(origin,allow_session_refresh=True,allow_fresh_session_escalation=True) as relay:
+                    self.assertEqual(requests.get(relay.url,timeout=20).content,origin.DATA)
+                    audit=relay.audit()
+                    self.assertEqual(audit['session_refresh_attempts'],2)
+                    self.assertEqual(audit['fresh_session_attempts'],1)
+                    self.assertEqual(audit['upstream_bytes'],len(origin.DATA))
+                    self.assertIs(origin.client.vpn,old)
+                    origin.client._media_reauth_factory.assert_called_once()
+                    self.assertNotIn('/login',origin.calls)
+                    self.assertNotIn('private',json.dumps(audit))
+
+    def test_local_escalation_stops_after_one_fresh_login_and_rejects_source_change(self):
+        for mode,code in [('persistent','media_session_unavailable'),('changed','source_changed')]:
+            with self.subTest(mode=mode), SessionOrigin('persistent') as origin:
+                old=origin.client.vpn
+                def factory(cancelled,deadline):
+                    candidate=type(old)();origin.mode=mode
+                    candidate.session.cookies.set('media_token','refreshed',domain='127.0.0.1',path='/')
+                    return candidate
+                origin.client._media_reauth_factory=MagicMock(side_effect=factory)
+                with self.relay(origin,allow_session_refresh=True,allow_fresh_session_escalation=True) as relay:
+                    with self.assertRaises(requests.RequestException):requests.get(relay.url,timeout=20)
+                    audit=relay.audit()
+                    self.assertEqual(audit['terminal_error_code'],code)
+                    self.assertEqual(audit['upstream_bytes'],4096)
+                    self.assertEqual(audit['fresh_session_attempts'],1)
+                    origin.client._media_reauth_factory.assert_called_once()
 
     def test_fresh_login_cannot_accept_another_account_or_tenant(self):
         for user in ({'id':'another'}, {'id':'cached-private-user','tenant_id':'another'}):

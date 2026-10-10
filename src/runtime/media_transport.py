@@ -24,7 +24,8 @@ class SignedRangeRelay:
     def __init__(self, client, signed_url, *, chunk_bytes=8*1024*1024,
                  prefix_bytes=64*1024, attempts=3, max_upstream_bytes=None,
                  session_factory=requests.Session, timeout=(10, 15),
-                 allow_session_refresh=False, cache_bytes=0):
+                 allow_session_refresh=False, cache_bytes=0,
+                 allow_fresh_session_escalation=False):
         factory = getattr(client, "_media_reauth_factory", None)
         self._owns_client = callable(factory) and allow_session_refresh
         self.client = client.fork_for_media() if self._owns_client else client
@@ -33,6 +34,8 @@ class SignedRangeRelay:
         self.attempts, self.max_bytes = attempts, max_upstream_bytes
         self.session_factory, self.timeout = session_factory, timeout
         self.allow_session_refresh = allow_session_refresh
+        self.allow_fresh_session_escalation = allow_fresh_session_escalation
+        self._fresh_auth_used = False
         self._session = None
         self._source = MediaSource(signed_url)
         self._recovery = RangeRecoveryPolicy(attempts)
@@ -59,6 +62,7 @@ class SignedRangeRelay:
                            upstream_status_counts={}, range_rejections=0,
                            redirect_counts={}, cookie_updates=0,
                            session_refresh_attempts=0, session_refresh_successes=0,
+                           fresh_session_attempts=0,
                            session_identity_verifications=0, session_resume_attempts=0,
                            session_recovery_events=[],
                            last_failure_offset=None, last_error_code=None, state='idle',
@@ -93,7 +97,7 @@ class SignedRangeRelay:
     def _session_event(self, event, offset=None):
         with self._audit_lock:
             events = self._audit['session_recovery_events']
-            if len(events) < 8:
+            if len(events) < (12 if self.allow_fresh_session_escalation else 8):
                 events.append({'event':event, 'elapsed_seconds':round(time.monotonic()-self._started, 3),
                                'offset':offset if offset is not None else self._audit['last_failure_offset']})
 
@@ -111,7 +115,11 @@ class SignedRangeRelay:
                 self._audit['state'] = 'failed'
         raise MediaTransportError(code)
 
+    def _check_signing_budget(self):
+        if self._stop.is_set(): raise MediaTransportError('stopped')
+
     def _signed_request(self, start, retry):
+        self._check_signing_budget()
         now = int(time.time())
         # Initial-byte reuse may be rejected even with a new UUID. On retry,
         # wait for the actual clock to advance, never fabricate a future time.
@@ -122,7 +130,9 @@ class SignedRangeRelay:
             previous = now
             while now == previous:
                 if self._stop.wait(.05): raise MediaTransportError('stopped')
+                self._check_signing_budget()
                 now = int(time.time())
+        self._check_signing_budget()
         fresh = self.client.renew_video_url(self.signed_url, now=now)
         if self._stop.is_set(): raise MediaTransportError('stopped')
         if self._source.selected != media_identity(fresh):
@@ -154,20 +164,33 @@ class SignedRangeRelay:
         login_urls = routes() if callable(routes) else ()
         return redirect_kind(response, login_urls=login_urls)
 
+    def _can_refresh_session(self):
+        return (self.allow_session_refresh
+                and callable(getattr(self.client, 'refresh_media_session', None))
+                and (not self._session_refreshed or
+                     self.allow_fresh_session_escalation and self._owns_client
+                     and not self._fresh_auth_used))
+
     def _refresh_session(self):
         refresh = getattr(self.client, 'refresh_media_session', None)
-        if (not self.allow_session_refresh or self._session_refreshed
-                or not callable(refresh)):
+        if not self._can_refresh_session():
             self._fail('media_session_unavailable')
+        escalate = self._session_refreshed
         self._session_refreshed = True
         self._count('session_refresh_attempts')
         self._session_event('authentication_started')
         if self._stop.is_set(): raise MediaTransportError('stopped')
         try:
-            success = refresh() is True
+            # An API-verified cookie can still fail on the media endpoint.
+            # On its second login rejection, use one genuinely fresh login.
+            success = False if escalate else refresh() is True
             reauthenticate = getattr(self.client, "reauthenticate_media_session", None)
             if not success and self._owns_client and callable(reauthenticate):
-                success = reauthenticate(self._stop) is True
+                self._fresh_auth_used = True
+                self._count('fresh_session_attempts')
+                timeout = getattr(self.client, '_media_reauth_timeout', None)
+                options = {'timeout': timeout} if timeout is not None else {}
+                success = reauthenticate(self._stop, **options) is True
         except Exception:
             success = False
         with self._audit_lock:
@@ -209,7 +232,7 @@ class SignedRangeRelay:
                     self._session_event('login_redirect', start)
                     raise MediaTransportError('media_session_refresh_needed')
                 observed = redirect_observation(response)
-                if (self.allow_session_refresh and not self._session_refreshed
+                if (self._can_refresh_session()
                         and observed.get('authority') == 'same_origin'
                         and observed.get('route') in ('root', 'vpn_control')
                         and not observed.get('downgrade')
@@ -307,8 +330,7 @@ class SignedRangeRelay:
                 self._transition('recovering', error=error_code, offset=start+len(data))
                 # Header validation can already have marked a permanent failure.
                 if self.audit()['terminal_error_code']: self._fail(error_code)
-                can_refresh = (self.allow_session_refresh and not self._session_refreshed
-                               and callable(getattr(self.client, 'refresh_media_session', None)))
+                can_refresh = self._can_refresh_session()
                 action = self._recovery.decide(error_code, attempt, can_refresh=can_refresh)
                 if action is RecoveryAction.STOP:
                     self._fail(self._recovery.terminal_code(error_code))

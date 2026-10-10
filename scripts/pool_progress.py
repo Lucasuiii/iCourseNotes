@@ -20,7 +20,7 @@ CONCLUSIONS = {'success', 'failure', 'cancelled', 'skipped', 'timed_out',
                'action_required', 'startup_failure', 'stale', 'neutral'}
 LABELS = {'running': '进行中', 'running_with_failures': '进行中（部分课次失败）',
           'running_incomplete': '进行中（已有缺失块，整堂不完整）',
-          'success': '完成', 'failed': '失败', 'incomplete': '不完整',
+          'success': '完成', 'success_with_gaps': '完成（保留未识别片段）', 'failed': '失败', 'incomplete': '不完整',
           'controller_stopped': '控制器停止；子任务状态需核验'}
 
 
@@ -45,6 +45,7 @@ class PoolProgress:
             if phase == 'publish':
                 label = '发布结果' if state['flags']['PUBLISH_RESULTS'] == 'true' else '隔离结果校验'
             if phase == 'failed' and counts.get('failed_blocks', 0): label = '不完整（存在缺失块）'
+            if phase == 'done' and counts.get('failed_blocks', 0): label = '完成（保留未识别片段）'
             # Keep the latest ticket per stage/worker, including ended runs.
             latest = {}
             for t in state.get('tickets', []):
@@ -67,7 +68,8 @@ class PoolProgress:
                             'workers_waiting': sum(t['status'] != 'in_progress' for t in workers),
                             'children': children})
         phases = [c['phase'] for c in courses]
-        incomplete = any(c.get('failed_blocks', 0) for c in courses)
+        incomplete = any(c.get('failed_blocks', 0) and c['phase'] != 'done' for c in courses)
+        retained_gaps = any(c.get('failed_blocks', 0) and c['phase'] == 'done' for c in courses)
         active = any(p not in ('done', 'failed') for p in phases)
         status = ('controller_stopped' if final and error and active
                   else 'running_incomplete' if incomplete and active
@@ -75,6 +77,7 @@ class PoolProgress:
                   else 'incomplete' if incomplete
                   else 'failed' if 'failed' in phases
                   else 'controller_stopped' if final and error
+                  else 'success_with_gaps' if retained_gaps and all(p == 'done' for p in phases)
                   else 'success' if courses and all(p == 'done' for p in phases) else 'running')
         run = str(state['run_id'])
         return {'schema': 1, 'parent_run_id': run if re.fullmatch('[0-9]+', run) else None,

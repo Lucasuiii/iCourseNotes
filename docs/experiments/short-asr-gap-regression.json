@@ -1,0 +1,18 @@
+{
+  "policy": "short_gaps_under_15s_v1",
+  "full_regression": {"tests": 764, "seconds": 110.452, "passed": true},
+  "final_progress_regression": {"tests": 12, "seconds": 0.045, "passed": true},
+  "whole_lecture_limit_seconds": 15,
+  "limit_is_exclusive": true,
+  "original_trial_replay": {
+    "blocks": 131,
+    "missing_seconds": 7.5,
+    "strict_policy_rejected": true,
+    "new_policy_accepted": true,
+    "asr_complete": false,
+    "worker_results_unchanged": true
+  },
+  "live_audio_download": false,
+  "model_calls": 0,
+  "new_classroom_dispatches": 0
+}

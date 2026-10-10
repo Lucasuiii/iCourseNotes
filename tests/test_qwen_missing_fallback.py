@@ -160,6 +160,41 @@ class MissingFallbackTests(unittest.TestCase):
 
 
 class EncryptedFallbackTests(unittest.TestCase):
+    def test_gather_accepts_small_gaps_without_key_but_rejects_fifteen_after_failed_fallback(self):
+        import numpy as np
+        import soundfile as sf
+        import hashlib
+        Runner=_load_runner_class()
+        for key, gap_seconds in [('',7.5),('fake',15),('fake',16),('',15)]:
+            with self.subTest(key=bool(key),seconds=gap_seconds),tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{
+                'RUNNER_TEMP':tmp,'GITHUB_RUN_ID':'99','COURSE_SLOT':'0','DB_ENCRYPTION_KEY':'k'*32,
+                'GITHUB_ACTIONS':'false','QWEN_PRODUCTION_TASK':'true','AUTO_COURSE_TERMS':'false','SEND_EMAIL':'false','PUBLISH_RESULTS':'false'}):
+                root=pipeline.root();(root/'inbox').mkdir()
+                buf=io.BytesIO();sf.write(buf,np.zeros(24*16000),16000,format='FLAC');flac=buf.getvalue()
+                plan,results=fixture(((0,24),),audio_sha256=hashlib.sha256(flac).hexdigest())
+                row=results[0]['chunks'][0]
+                row['recognized_segments']=[dict(start=0,end=1,text='前文课堂内容。'*40),dict(start=1+gap_seconds,end=24,text='后文课堂内容。'*40)]
+                row['text']='\n'.join(p['text'] for p in row['recognized_segments'])
+                row['missing_intervals']=[dict(start=1,end=1+gap_seconds,error_code='retry_timeout')]
+                db=database(root/'fixture.db');payload=snapshot(db,root/'snapshot.db');db.conn.close()
+                spec=dict(course_id='10',course_title='概率论',lecture={'sub_id':'1','_validation':{'date':'2026-09-18'}},mode='sharded',plan=plan,media_seconds=24)
+                pipeline.encode({'specification.json':pipeline.shards.encoded(spec),'database.db':payload,'lecture.flac':flac},'prepared',root/'inbox/prepared.enc')
+                llm=MagicMock();llm.summarize.return_value=('课堂摘要','test')
+                with patch.object(pipeline,'artifact',return_value=False),patch.object(pipeline,'shared_results',return_value=results), \
+                    patch('src.runtime.config.DOUBAO_ASR_API_KEY',key), \
+                    patch('src.ai.qwen_missing_fallback.rescue_intervals_pcm',return_value=([],gap_seconds,True)) as cloud, \
+                    patch.dict('sys.modules',{'src.pipeline.lecture_runner':SimpleNamespace(LectureRunner=Runner)}), \
+                    patch('src.ai.summarizer.Summarizer',return_value=llm),patch('src.ai.qwen_review_ledger.review_prepared',return_value={}):
+                    if gap_seconds<15:pipeline.gather()
+                    else:
+                        with self.assertRaises(IncompleteQwenRecognitionError):pipeline.gather()
+                self.assertEqual(cloud.call_count,int(bool(key)))
+                audit=json.loads((root/'out/validation-result.json').read_bytes())
+                self.assertEqual(audit['asr_missing_seconds'],gap_seconds)
+                self.assertEqual(audit['asr_integrity_passed'],gap_seconds<15)
+                self.assertEqual(audit['processed'],gap_seconds<15);self.assertFalse(audit['asr_complete'])
+                if gap_seconds>=15:llm.summarize.assert_not_called()
+
     def test_real_gather_checks_audio_then_fills_or_retains_gap_with_private_cache(self):
         import numpy as np
         import soundfile as sf
@@ -190,21 +225,32 @@ class EncryptedFallbackTests(unittest.TestCase):
                     patch.dict('sys.modules',{'src.pipeline.lecture_runner':SimpleNamespace(LectureRunner=Runner)}), \
                     patch('src.ai.summarizer.Summarizer',return_value=llm), \
                     patch('src.ai.qwen_review_ledger.review_prepared',return_value={}):
-                    if success:pipeline.gather()
-                    else:
-                        with self.assertRaises(IncompleteQwenRecognitionError):pipeline.gather()
+                    pipeline.gather()
                 self.assertEqual(call.call_count,1);saved=pipeline.decode(root/'out/state.enc','state')
                 self.assertEqual(json.loads(saved['review.json'])['seconds'],1)
                 audit=json.loads((root/'out/validation-result.json').read_bytes())
                 self.assertEqual(audit['fallback_clips'],1);self.assertEqual(audit['fallback_seconds'],1)
                 self.assertEqual(audit['fallback_completed_clips'],int(success))
-                self.assertEqual(audit['asr_complete'],success);self.assertEqual(audit['processed'],success)
+                self.assertEqual(audit['asr_complete'],success);self.assertTrue(audit['processed'])
+                self.assertTrue(audit['asr_integrity_passed']);self.assertEqual(audit['asr_gap_tolerated'],not success)
+                self.assertEqual(audit['asr_missing_seconds'],0 if success else 1)
                 self.assertFalse(audit['emailed']);self.assertNotIn('豆包补全',json.dumps(audit,ensure_ascii=False))
                 if success:
                     prompt=llm.summarize.call_args.args[1]
                     self.assertLess(prompt.index('前文课堂内容'),prompt.index('豆包补全'))
                     self.assertLess(prompt.index('豆包补全'),prompt.index('后文课堂内容'))
-                else:llm.summarize.assert_not_called()
+                else:
+                    prompt=llm.summarize.call_args.args[1]
+                    self.assertIn('有 1 秒语音未识别',prompt)
+                    self.assertIn('不得推测或补写',prompt)
+                    (root/'saved.db').write_bytes(saved['database.db'])
+                    from src.data.database import Database
+                    finished=Database(str(root/'saved.db'))
+                    self.assertIn('有 1 秒语音未识别',finished.get_lecture('1')['summary'])
+                    metadata=json.loads(finished.read_meta('qwen_pipeline:1'))
+                    self.assertFalse(metadata['recognition_coverage']['complete'])
+                    self.assertTrue(metadata['recognition_coverage']['accepted'])
+                    finished.conn.close()
 
     def test_hash_and_decode_length_gates_precede_cloud_transport(self):
         import numpy as np

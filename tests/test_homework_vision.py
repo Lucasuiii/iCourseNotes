@@ -94,6 +94,52 @@ class DirectVisionTests(unittest.TestCase):
         self.assertLessEqual(len(times), 12)
         self.assertEqual(visual_window({'block_end': 120}, interval)['end_ms'], 120000)
 
+    def test_unaligned_late_cue_reads_completed_board_with_existing_budget(self):
+        client = MagicMock(); client.get_ppt_list.return_value = []
+        client.get_video_url.return_value = 'private'; client.get_stream_params.return_value = ('private', '')
+        candidate = {'id': 0, 'quote': '今天作业', 'block_start': 6150, 'block_end': 6270}
+        reader = MagicMock(side_effect=lambda frames: validated_frames(response(len(frames)), len(frames)))
+        ocr = MagicMock()
+        with patch('src.pipeline.homework_visual.video_frame', return_value=board_png()) as capture:
+            result = collect_visual_evidence(client, '10', '1', [candidate], [],
+                                            audio_seconds=6420.81, vision_reader=reader, ocr=ocr)
+        self.assertEqual(capture.call_count, 12); reader.assert_called_once(); ocr.assert_not_called()
+        self.assertFalse(result['windows'][0]['aligned'])
+        self.assertEqual(result['windows'][0]['anchor'], 'asr_block')
+        seconds = [frame['seconds'] for frame in result['frames']]
+        self.assertIn(6390.81, seconds); self.assertIn(6420.71, seconds)
+        self.assertTrue(all(6150 <= time < 6420.81 for time in seconds))
+        self.assertEqual(result['reference_status'], 'supported')
+
+    def test_aligned_late_quote_reserves_two_frames_for_final_board(self):
+        candidate = {'block_start': 6080, 'block_end': 6200}
+        interval = {'quote_start_ms': 6100000, 'quote_end_ms': 6110000}
+        window = visual_window(candidate, interval, 6420.81)
+        for count in (6, 12):
+            times = frame_times(interval, window, count)
+            self.assertLessEqual(len(times), count)
+            self.assertIn(6390.81, times); self.assertIn(6420.71, times)
+        middle = visual_window(dict(block_start=100, block_end=220),
+                               {'quote_start_ms': 110000, 'quote_end_ms': 120000}, 6420.81)
+        self.assertNotIn('includes_lecture_end', middle)
+        self.assertEqual(middle['end_ms'], 300000)
+
+    def test_invalid_coarse_timestamps_do_not_seek(self):
+        for start, end in ((None, 120), (float('nan'), 120), (100, float('inf')),
+                           (-1, 120), (120, 100), (True, 120), (700, 800)):
+            self.assertIsNone(visual_window({'block_start': start, 'block_end': end}, None, 600))
+
+    def test_unaligned_four_cues_remain_bounded_by_total_image_budget(self):
+        client = MagicMock(); client.get_ppt_list.return_value = []
+        client.get_video_url.return_value = 'private'; client.get_stream_params.return_value = ('private', '')
+        candidates = [{'id': i, 'quote': '作业', 'block_start': 5900+i*100,
+                       'block_end': 6020+i*100} for i in range(6)]
+        with patch('src.pipeline.homework_visual.video_frame', return_value=None) as capture:
+            result = collect_visual_evidence(client, '10', '1', candidates, [], audio_seconds=6420.81)
+        self.assertLessEqual(capture.call_count, 48)
+        self.assertEqual(len(result['windows']), 4)
+        self.assertTrue(all(0 <= call.args[1] < 6420.81 for call in capture.call_args_list))
+
     def test_batch_transport_precedes_reading_and_failure_uses_local_ocr(self):
         client = MagicMock(); client.get_ppt_list.return_value = []
         client.get_video_url.return_value = 'private'; client.get_stream_params.return_value = ('private', '')
@@ -116,6 +162,32 @@ class DirectVisionTests(unittest.TestCase):
         for invalid in [{'frames': []}, {'frames': [response()['frames'][0]]*2},
                         {'frames': [dict(response()['frames'][0], frame_index=9), response()['frames'][1]]}]:
             with self.assertRaises(ValueError): validated_frames(invalid, 2)
+
+    def test_three_crop_entries_merge_into_one_instant_without_extra_request(self):
+        data = response(1)
+        data['frames'] += [dict(data['frames'][0], references=[]), copy.deepcopy(data['frames'][0])]
+        client = MagicMock(); client_response(client, data)
+        rows = read_images(client, 'deepseek-flash', inputs(1), [], lambda: None)
+        self.assertEqual(len(rows), 1); self.assertEqual(rows[0]['image_view_readings'], 3)
+        self.assertEqual(len(rows[0]['references']), 4)
+        client.with_options.return_value.chat.completions.create.assert_called_once()
+        rows[0].update(seconds=100, candidate_id='cue')
+        evidence = assess_visual({'candidate_ids': ['cue'], 'frames': rows})
+        self.assertEqual(evidence['reference_status'], 'unverified')
+        self.assertTrue(all(ref['tentative'] and not ref['multi_frame_agreement']
+                            for ref in evidence['reference_evidence']))
+
+    def test_conflicting_crops_discard_ambiguous_page_without_hiding_other_page(self):
+        first = response(1)['frames'][0]
+        second = copy.deepcopy(first)
+        second.update(text='P76 1,2,9\nP7 2,3', references=[
+            {'raw': 'P76 1,2,9', 'page': 76, 'exercises': [1, 2, 9], 'legible': True},
+            {'raw': 'P7 2,3', 'page': 7, 'exercises': [2, 3], 'legible': True}])
+        merged = validated_frames({'frames': [first, second]}, 1)[0]
+        self.assertEqual(merged['reference_conflicts'], [76])
+        self.assertEqual([ref['text'] for ref in merged['references']], ['7页', '第2题', '第3题'])
+        for bad in ([first]*4, [first, dict(second, frame_index=1)], [first, dict(second, frame_index=True)]):
+            with self.assertRaises(ValueError): validated_frames({'frames': bad}, 1)
 
     def test_unreadable_invented_and_concatenated_numbers_not_supported(self):
         for change in [{'legible': False}, {'raw': 'P76 1,2,9', 'exercises': [1, 2, 9]},

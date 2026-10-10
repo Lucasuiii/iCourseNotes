@@ -13,21 +13,44 @@ FRAMES_PER_CUE = 12
 
 
 def visual_window(candidate, interval, audio_seconds=None, *, delay_seconds=180):
-    start = max(0, interval['quote_start_ms']/1000-10)
-    end = interval['quote_end_ms']/1000+delay_seconds
+    if interval:
+        start = max(0, interval['quote_start_ms']/1000-10)
+        end = interval['quote_end_ms']/1000+delay_seconds
+    else:
+        # A rejected word alignment must not disable board reading. The ASR
+        # block is only a coarse search range, never a precise quote timestamp.
+        start, block_end = candidate.get('block_start'), candidate.get('block_end')
+        if (any(type(t) not in (int, float) or not math.isfinite(t)
+                for t in (start, block_end)) or start < 0 or block_end <= start):
+            return None
+        end = block_end+delay_seconds
     limit = audio_seconds if isinstance(audio_seconds, (int, float)) and math.isfinite(audio_seconds) else candidate['block_end']
     end = min(end, limit)
     if end <= start:
         return None
-    return {'start_ms': round(start*1000), 'end_ms': round(end*1000)}
+    window = {'start_ms': round(start*1000), 'end_ms': round(end*1000)}
+    block_end = candidate.get('block_end')
+    if (limit >= 600 and isinstance(audio_seconds, (int, float))
+            and math.isfinite(audio_seconds) and type(block_end) in (int, float)
+            and math.isfinite(block_end) and 0 <= limit-block_end <= 300):
+        # Late instructions can precede the completed board. Reserve samples
+        # near the lecture end within the existing per-cue image budget.
+        window.update(end_ms=round(limit*1000), includes_lecture_end=True)
+    return window
 
 
 def frame_times(interval, window, count=FRAMES_PER_CUE):
     start, end = window['start_ms']/1000, window['end_ms']/1000
-    anchor_end = interval['quote_end_ms']/1000
-    offsets = [20, 40, 60, 90] if count == 6 else [10, 20, 35, 50, 70, 90, 110, 130, 155, 180]
-    times = {min(max(start, t), max(start, end-.1))
-             for t in [start, anchor_end]+[anchor_end+offset for offset in offsets]}
+    last = max(start, end-.1)
+    if interval:
+        anchor_end = interval['quote_end_ms']/1000
+        offsets = [20, 40, 60, 90] if count == 6 else [10, 20, 35, 50, 70, 90, 110, 130, 155, 180]
+        samples = [start, anchor_end]+[anchor_end+offset for offset in offsets]
+    else:
+        samples = [start+(last-start)*i/(count-1) for i in range(count)]
+    if window.get('includes_lecture_end'):
+        samples = samples[:count-2]+[max(start, end-30), last]
+    times = {round(min(max(start, t), last), 3) for t in samples}
     return sorted(times)
 
 
@@ -110,8 +133,9 @@ def collect_visual_evidence(client, course_id, sub_id, candidates, intervals, *,
         cid = candidate_key(candidate['id'], candidate['quote']); ids.append(cid)
         interval = next((row for row in intervals if row.get('chunk_id') == candidate['id']
                          and row.get('text') == candidate['quote']), None)
-        window = visual_window(candidate, interval, audio_seconds, delay_seconds=delay_seconds) if interval else None
-        windows.append({'candidate_id': cid, 'range': window, 'aligned': bool(interval)})
+        window = visual_window(candidate, interval, audio_seconds, delay_seconds=delay_seconds)
+        windows.append({'candidate_id': cid, 'range': window, 'aligned': bool(interval),
+                        'anchor': 'forced_alignment' if interval else 'asr_block'})
         shots = nearby_pages(pages, window or candidate)
         if isinstance(audio_seconds, (int, float)) and math.isfinite(audio_seconds):
             shots = [shot for shot in shots if 0 <= shot['created_sec'] <= audio_seconds]

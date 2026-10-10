@@ -280,14 +280,18 @@ class AssignmentVisualTests(unittest.TestCase):
         self.assertEqual(result['capture_status'], 'complete')
         self.assertNotIn('private', str(result)); self.assertEqual(client.get_video_url.call_count, 6)
 
-    def test_unaligned_quote_never_seeks_guessed_video_position(self):
+    def test_unaligned_quote_uses_block_range_without_claiming_word_alignment(self):
         from src.pipeline.homework_visual import collect_visual_evidence as collect
         collect_visual_evidence = partial(collect, frames_per_cue=6, delay_seconds=90)
         client = MagicMock(); client.get_ppt_list.return_value = []
-        result = collect_visual_evidence(client, '10', '1', assignment_candidates(material()['full_chunks']), [],
-                                        screenshot_fetcher=MagicMock(), ocr=MagicMock())
+        client.get_video_url.return_value = 'private'; client.get_stream_params.return_value = ('private', '')
+        with patch('src.pipeline.homework_visual.video_frame', return_value=None) as capture:
+            result = collect_visual_evidence(client, '10', '1', assignment_candidates(material()['full_chunks']), [],
+                                            screenshot_fetcher=MagicMock(), ocr=MagicMock())
         self.assertEqual(result['reference_status'], 'unverified'); self.assertEqual(result['capture_status'], 'unavailable')
-        client.get_video_url.assert_not_called()
+        self.assertEqual(capture.call_count, 6)
+        self.assertFalse(result['windows'][0]['aligned'])
+        self.assertEqual(result['windows'][0]['anchor'], 'asr_block')
 
 
 class AssignmentRunnerTests(unittest.TestCase):

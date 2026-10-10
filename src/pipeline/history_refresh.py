@@ -43,7 +43,7 @@ def request(raw):
 
 
 def scope_keys(course, sub_id):
-    return ('qwen_pipeline:'+sub_id, 'auto_glossary:'+course+':'+sub_id, 'summary_figures:'+sub_id)
+    return ('qwen_pipeline:'+sub_id, 'auto_glossary:'+course+':'+sub_id, 'summary_figures:'+sub_id, 'summary_review:'+sub_id)
 
 
 def lesson_state(conn, course, sub_id):
@@ -55,7 +55,7 @@ def lesson_state(conn, course, sub_id):
     return {'lecture': dict(row), 'ppt': [dict(r) for r in conn.execute(
         'SELECT * FROM ppt_pages WHERE sub_id=? ORDER BY page_num', (sub_id,))],
         'meta': [dict(r) for r in conn.execute(
-            'SELECT * FROM meta WHERE key IN (?,?,?) ORDER BY key', scope_keys(course, sub_id))]}
+            'SELECT * FROM meta WHERE key IN (?,?,?,?) ORDER BY key', scope_keys(course, sub_id))]}
 
 
 def completed(row, *, require_model=False):
@@ -213,7 +213,7 @@ def replace_batch(path, approval, candidates):
                 columns = list(page)
                 conn.execute('INSERT INTO ppt_pages ('+','.join('"'+c+'"' for c in columns)+') VALUES ('
                              +','.join('?' for _ in columns)+')', [page[c] for c in columns])
-            conn.execute('DELETE FROM meta WHERE key IN (?,?,?)', scope_keys(target['course_id'], sub_id))
+            conn.execute('DELETE FROM meta WHERE key IN (?,?,?,?)', scope_keys(target['course_id'], sub_id))
             for item in fresh['meta']:
                 conn.execute('INSERT INTO meta(key,value) VALUES (?,?)', (item['key'], item['value']))
         conn.execute('INSERT INTO meta(key,value) VALUES (?,?)', (marker_key, encoded(approval).decode()))

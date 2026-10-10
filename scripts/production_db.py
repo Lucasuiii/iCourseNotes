@@ -50,7 +50,7 @@ def lecture_snapshot(db, path, course_id, sub_id):
         conn.execute('DELETE FROM all_courses')
         from src.pipeline.history_refresh import scope_keys
         allowed = scope_keys(str(course_id), str(sub_id))
-        conn.execute('DELETE FROM meta WHERE key NOT IN (?, ?, ?)', allowed)
+        conn.execute('DELETE FROM meta WHERE key NOT IN (?, ?, ?, ?)', allowed)
     validate_database(str(path))
     return Path(path).read_bytes()
 
@@ -149,7 +149,7 @@ def merge_lecture(delta, remote, course_id, sub_id):
                          AND ppt_pages.ocr_status IN ('pending','failed') AND d.ocr_status!='pending'
                          AND NOT EXISTS (SELECT 1 FROM lectures l WHERE l.sub_id=d.sub_id AND l.deleted_at IS NOT NULL)''')
             for key, value in conn.execute('SELECT key,value FROM delta.meta').fetchall():
-                if key in ('qwen_pipeline:'+str(sub_id), 'summary_figures:'+str(sub_id)):
+                if key in ('qwen_pipeline:'+str(sub_id), 'summary_figures:'+str(sub_id), 'summary_review:'+str(sub_id)):
                     conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)', (key, value))
     validate_database(str(remote))
 

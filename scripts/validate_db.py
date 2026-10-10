@@ -32,6 +32,18 @@ def validate_database(path: str) -> None:
         missing = REQUIRED_TABLES - tables
         if missing:
             raise ValueError("database is missing required tables")
+        from src.pipeline.summary_figures import FIGURE_REF, validate_assets
+        import json
+        for key, raw in conn.execute("SELECT key,value FROM meta WHERE key GLOB 'summary_figures:*'"):
+            sid = key.partition(':')[2]; state = json.loads(raw)
+            validate_assets(state, sid)
+            lesson = conn.execute('SELECT course_id,summary FROM lectures WHERE sub_id=?', (sid,)).fetchone()
+            if lesson and str(lesson[0]) != state.get('course_id'):
+                raise ValueError('Figure assets cross course scope')
+            if lesson and lesson[1]:
+                refs = [m[2] for m in FIGURE_REF.finditer(lesson[1])]
+                if sorted(refs) != sorted(f['id'] for f in state['figures']):
+                    raise ValueError('Figure references do not match assets')
     finally:
         conn.close()
 

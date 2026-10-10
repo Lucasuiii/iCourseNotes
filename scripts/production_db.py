@@ -48,8 +48,9 @@ def lecture_snapshot(db, path, course_id, sub_id):
         conn.execute('DELETE FROM lectures WHERE sub_id != ?', (str(sub_id),))
         conn.execute('DELETE FROM courses WHERE course_id != ?', (str(course_id),))
         conn.execute('DELETE FROM all_courses')
-        allowed = ('qwen_pipeline:'+str(sub_id), 'auto_glossary:'+str(course_id)+':'+str(sub_id))
-        conn.execute('DELETE FROM meta WHERE key NOT IN (?, ?)', allowed)
+        from src.pipeline.history_refresh import scope_keys
+        allowed = scope_keys(str(course_id), str(sub_id))
+        conn.execute('DELETE FROM meta WHERE key NOT IN (?, ?, ?)', allowed)
     validate_database(str(path))
     return Path(path).read_bytes()
 
@@ -119,7 +120,8 @@ def merge_lecture(delta, remote, course_id, sub_id):
             raise ValueError('Publication delta crosses course scope')
         if any(str(r[0]) != str(sub_id) for r in local.execute('SELECT sub_id FROM ppt_pages')):
             raise ValueError('Publication delta crosses PPT scope')
-        if any(r[0] not in ('qwen_pipeline:'+str(sub_id), 'auto_glossary:'+str(course_id)+':'+str(sub_id))
+        from src.pipeline.history_refresh import scope_keys
+        if any(r[0] not in scope_keys(str(course_id), str(sub_id))
                for r in local.execute('SELECT key FROM meta')):
             raise ValueError('Publication delta crosses checkpoint scope')
         previous = target.execute('SELECT * FROM lectures WHERE sub_id=?', (str(sub_id),)).fetchone()
@@ -147,7 +149,7 @@ def merge_lecture(delta, remote, course_id, sub_id):
                          AND ppt_pages.ocr_status IN ('pending','failed') AND d.ocr_status!='pending'
                          AND NOT EXISTS (SELECT 1 FROM lectures l WHERE l.sub_id=d.sub_id AND l.deleted_at IS NOT NULL)''')
             for key, value in conn.execute('SELECT key,value FROM delta.meta').fetchall():
-                if key == 'qwen_pipeline:'+str(sub_id):
+                if key in ('qwen_pipeline:'+str(sub_id), 'summary_figures:'+str(sub_id)):
                     conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)', (key, value))
     validate_database(str(remote))
 

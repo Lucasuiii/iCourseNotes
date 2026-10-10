@@ -158,6 +158,11 @@ class Summarizer:
         return lambda frames: read_images(client, config.HOMEWORK_VISION_MODEL,
                                          frames, ledger, checkpoint)
 
+    def summary_figure_client(self):
+        if not any(p['name'] == 'deepseek' for p in self.providers):
+            return None
+        return self._clients['deepseek'], config.HOMEWORK_VISION_MODEL
+
     def summarize_with_keywords(self, title, content, sources, terms):
         """One summary request also returns separately validated keyword metadata."""
         from src.ai.automatic_glossary import INSTRUCTION, validated_keywords

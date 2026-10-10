@@ -103,13 +103,14 @@ class LectureRunner:
         self._historical_terms = []
         self._cloud_term_sources = []
         self._qwen_review_material = {}
+        self._summary_figure_frames = []
 
     # ── Public entry point ──────────────────────────────────────────────
 
     def run(self, course_id: str, course_title: str, lecture: dict,
             next_info: Optional[tuple[str, str]] = None, *,
             prepared_asr: dict | None = None, review_state: dict | None = None,
-            checkpoint=None, prepared_ppt: bool = False) -> Optional[str]:
+            checkpoint=None, prepared_ppt: bool = False, prepared_figures=None) -> Optional[str]:
         """Process one lecture.  Returns the summary text or None.
 
         ``next_info``: ``(course_id, sub_id)`` of the next lecture, used to
@@ -123,6 +124,7 @@ class LectureRunner:
         self._prepared_asr = prepared_asr
         self._review_state = review_state
         self._checkpoint = checkpoint
+        self._summary_figure_frames = list(prepared_figures or [])[:12]
         if prepared_asr is not None:
             from src.pipeline.prepared_lecture import validate_material
             validate_material(prepared_asr, course_id, sub_id)
@@ -610,8 +612,12 @@ class LectureRunner:
             client = ICourseClient(login_with_retry())
         return collect_visual_evidence(client, self._homework_course_id, self._homework_sub_id,
                                        candidates, intervals,
-                                       vision_reader=reader,
+                                       vision_reader=reader, frame_observer=self._retain_figure_frame,
                                        audio_seconds=(getattr(self, '_prepared_asr', None) or {}).get('audio_seconds'))
+
+    def _retain_figure_frame(self, image, row):
+        if image and len(self._summary_figure_frames) < 12:
+            self._summary_figure_frames.append({'image': image, 'seconds': row['seconds'], 'source': row['source']})
 
     def _summarize(self, sub_id: str, course_title: str, transcript: str,
                    transcript_segments: list[dict] | None) -> Optional[str]:
@@ -657,6 +663,14 @@ class LectureRunner:
             self._reporter.info(
                 f"    [OK] Summary by {model_used}: {len(summary)} chars"
             )
+            if os.environ.get('SUMMARY_FIGURES', 'true').lower() == 'true':
+                from src.pipeline.summary_figures import add_figures
+                frames = self._summary_figure_frames + self._ppt.figure_frames(sub_id)
+                summary, figure_state = add_figures(self._db, self._client, self._summarizer,
+                    str(getattr(self, "_homework_course_id", "")), sub_id, summary, kept_pages, transcript_segments,
+                    (getattr(self, '_prepared_asr', None) or {}).get('audio_seconds') or self._asr_expected_duration,
+                    retained=frames)
+                self._reporter.info(f"    [Figures] {figure_state['status']}; selected={len(figure_state['figures'])}; candidates={figure_state['image_count']}")
             self._db.update_summary(sub_id, summary, model_used)
             if self._automatic_glossary:
                 try:

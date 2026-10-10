@@ -368,6 +368,7 @@ class Database:
                 f"DELETE FROM ppt_pages WHERE sub_id IN ({placeholders})",
                 ids,
             )
+            self.conn.execute(f"DELETE FROM meta WHERE key IN (SELECT 'summary_figures:' || sub_id FROM lectures WHERE course_id=? AND sub_id IN ({placeholders}))", [str(course_id), *ids])
             cur = self.conn.execute(
                 f"""UPDATE lectures SET
                         transcript = NULL, summary = NULL,
@@ -456,7 +457,7 @@ class Database:
         """Successfully-OCR'd pages, sorted by time. Used by the bucketer."""
         with self._lock:
             rows = self.conn.execute(
-                """SELECT page_num, created_sec, text
+                """SELECT page_num, created_sec, text, pptimgurl
                    FROM ppt_pages
                    WHERE sub_id = ? AND ocr_status = 'done'
                      AND text IS NOT NULL AND text != ''

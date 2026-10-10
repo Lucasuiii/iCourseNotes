@@ -160,10 +160,14 @@ class PPTPipeline:
         # Keyed by sub_id; submit() drains them before starting ASR if the
         # pre-submitted OCR hasn't completed yet.
         self._prefetched_ocr: dict[str, list[Future]] = {}
+        self._figure_cache: dict[str, list[dict]] = {}
         # The background threads driving prefetch_and_ocr, keyed by sub_id.
         # submit() joins the thread before reading _prefetched_ocr, which
         # is also what makes the dict handoff thread-safe.
         self._prefetch_threads: dict[str, threading.Thread] = {}
+
+    def figure_frames(self, sub_id):
+        return self._figure_cache.pop(str(sub_id), [])
 
     # ── Public entry points ─────────────────────────────────────────────
 
@@ -338,9 +342,22 @@ class PPTPipeline:
         ]
         dropped_pages = {survivor_pages[i] for i in dedup_dhash(survivor_items)}
         dropped_pages |= {page_at[i] for i in garbage_idx}
+        from src.pipeline.summary_figures import spread, _jpeg
+        rows = [dict(p, seconds=p['created_sec']) for p in pending if p['page_num'] in images and p['page_num'] not in {page_at[i] for i in garbage_idx}]
+        retained = []
+        for page in spread(rows, 12):
+            try:
+                data = _jpeg(images[page['page_num']])
+                if data:
+                    retained.append({'image': data, 'seconds': page['created_sec'], 'source': 'platform_screenshot'})
+            except Exception:
+                pass
+        if retained:
+            self._figure_cache[sub_id] = retained
         for pn in dropped_pages:
             self._db.update_ppt_page(sub_id, pn, None, "dedup_dropped")
             images.pop(pn, None)
+
 
         return images, {
             "total": total, "inserted": inserted,

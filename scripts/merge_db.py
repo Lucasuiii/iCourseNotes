@@ -208,6 +208,13 @@ def merge(local_path: str, remote_path: str):
                     except (ValueError,TypeError,KeyError,AttributeError):
                         continue
 
+            if conn.execute("SELECT 1 FROM local.sqlite_master WHERE type='table' AND name='meta'").fetchone():
+                for key, value in conn.execute("SELECT key,value FROM local.meta WHERE key GLOB 'summary_figures:*'").fetchall():
+                    sid = key.partition(':')[2]
+                    pair = conn.execute("SELECT l.summary, r.summary, r.deleted_at FROM local.lectures l JOIN main.lectures r ON l.sub_id=r.sub_id WHERE l.sub_id=?", (sid,)).fetchone()
+                    if pair and pair[0] == pair[1] and not pair[2]:
+                        conn.execute('INSERT OR REPLACE INTO main.meta(key,value) VALUES (?,?)', (key, value))
+
             # 6) all_courses (catalog): upsert local rows into remote.  We take
             #    the side with the newer ``last_seen_at`` so a stale local crawl
             #    can't overwrite a fresher remote one.  We deliberately don't

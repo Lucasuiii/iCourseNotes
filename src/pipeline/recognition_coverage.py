@@ -16,6 +16,10 @@ def recognition_coverage(rows, *, allow_short_missing=False):
             if _aligned_parts(row) is None:
                 raise ValueError('Missing recognition has no aligned partial timeline')
             gaps.extend(dict(gap, chunk_id=row['chunk_id']) for gap in row['missing_intervals'])
+    return _coverage(gaps, allow_short_missing=allow_short_missing)
+
+
+def _coverage(gaps, *, allow_short_missing):
     # Round outwards to source samples, then count overlapping intervals once.
     # This is a whole-lecture limit, never a per-block allowance.
     spans = sorted((math.floor(g['start']*16000), math.ceil(g['end']*16000)) for g in gaps)
@@ -31,6 +35,28 @@ def recognition_coverage(rows, *, allow_short_missing=False):
         policy=SHORT_GAP_POLICY if allow_short_missing else 'strict',
         limit_seconds=SHORT_GAP_LIMIT_SECONDS if allow_short_missing else 0,
         missing_seconds=samples/16000, missing_intervals=gaps)
+
+
+def validate_coverage_report(plan, coverage):
+    """Recheck the compact authenticated report after full rows are discarded."""
+    if not isinstance(coverage, dict) or not isinstance(coverage.get('missing_intervals'), list):
+        raise ValueError('Invalid historical recognition coverage')
+    gaps = coverage['missing_intervals']
+    for gap in gaps:
+        if (not isinstance(gap, dict) or type(gap.get('chunk_id')) is not int
+                or not 0 <= gap['chunk_id'] < len(plan['blocks'])
+                or any(type(gap.get(k)) not in (int, float) or not math.isfinite(gap[k])
+                       for k in ('start', 'end'))):
+            raise ValueError('Invalid historical recognition gap')
+        block = plan['blocks'][gap['chunk_id']]
+        if not block['start'] <= gap['start'] < gap['end'] <= block['end']:
+            raise ValueError('Historical recognition gap changed the source timeline')
+    if coverage.get('policy') not in ('strict', SHORT_GAP_POLICY):
+        raise ValueError('Unknown historical recognition policy')
+    expected = _coverage(gaps, allow_short_missing=coverage['policy'] == SHORT_GAP_POLICY)
+    if coverage != expected or not expected['accepted']:
+        raise ValueError('Historical recognition coverage is not accepted')
+    return expected
 
 
 def missing_recognition_notice(coverage):

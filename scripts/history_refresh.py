@@ -144,9 +144,13 @@ def review():
             raise ValueError('Historical baseline changed inside preview')
         approval['targets'].append(dict(target, candidate_hash=policy.digest(fresh)))
         payload[f'candidate-{slot}.db'] = final['database.db']
+        metadata = json.loads(next(r['value'] for r in fresh['meta']
+                                   if r['key'] == 'qwen_pipeline:'+target['sub_id']))
+        coverage = metadata.get('recognition_coverage')
         comparisons.append({'slot': slot, 'course_id': target['course_id'], 'sub_id': target['sub_id'],
                             'date': target['date'], 'old': old['lecture'], 'new': fresh['lecture'],
-                            'recognition_complete': True, 'review': json.loads(final['review.json'])})
+                            'recognition_complete': coverage['complete'] if coverage else True,
+                            'recognition_coverage': coverage, 'review': json.loads(final['review.json'])})
     approval_hash = policy.validate_approval(approval)
     payload['approval.json'] = policy.encoded(approval)
     runtime.encode(payload, 'history-approval', runtime.out('approval.enc'))
@@ -158,7 +162,8 @@ def review():
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary:
         with open(summary, 'a') as out:
-            out.write(f'历史预览完成：{len(comparisons)} 堂完整结果，未覆盖、未发信。\n\n'
+            incomplete = sum(not c['recognition_complete'] for c in comparisons)
+            out.write(f'历史预览完成：{len(comparisons)} 堂结果，其中 {incomplete} 堂保留识别缺口，未覆盖、未发信。\n\n'
                       f'先解密 comparison.enc 对比，再通过 apply 输入本次 run ID 和确认指纹：`{approval_hash}`。\n')
     print('Encrypted historical comparison ready; no publication or email')
 

@@ -23,7 +23,7 @@ context 课程日期、授课上下文、普通课/荣誉课边界；figures 图
 发现明确错误或需要人工处理的疑点时列入 issues；不要笼统说正确，不输出改写后的摘要。
 每个问题 quote 必须逐字引用摘要中的非空片段；reason 写具体理由，suggestion 给修正建议；
 证据 evidence_quote 只能逐字引用 material，数学逻辑问题可为空。
-返回 JSON {"verdict":"pass 或 needs_revision", "checks":[
+checks 的 detail 每类不超过300字，reason/suggestion 每项不超过500字。返回 JSON {"verdict":"pass 或 needs_revision", "checks":[
 {"category":"上述六类之一", "detail":"具体检查结论"}],
 "issues":[{"category":"上述六类之一", "severity":"error 或 uncertain",
 "quote":"摘要原文", "reason":"理由", "evidence_quote":"材料原文或空字符串",
@@ -139,16 +139,26 @@ def review(db, summarizer, course, sub, title, material, summary, *, state=None,
             model=model, messages=[{'role': 'system', 'content': PROMPT},
                                    {'role': 'user', 'content': content}],
             response_format={'type': 'json_object'}, temperature=0.1,
-            max_tokens=16000, timeout=360,
+            max_tokens=32000, timeout=360,
             extra_body={'thinking': {'type': 'enabled'}}, reasoning_effort='high')
+        state['response_finish_reason'] = response.choices[0].finish_reason if response.choices else 'no_choices'
+        usage = getattr(response, 'usage', None)
+        if usage is not None:
+            state['tokens'] = {k: getattr(usage, k, None) for k in ('prompt_tokens', 'completion_tokens')}
         if not response.choices or response.choices[0].finish_reason != 'stop':
             state['error_code'] = 'incomplete_response'
             raise ValueError('Incomplete summary review response')
-        result = validate_result(json.loads(response.choices[0].message.content), summary, material)
+        # Retain the exact completed response before parsing: schema failures
+        # remain inspectable without another billable request.
+        state['response_content'] = response.choices[0].message.content
+        save_state(db, state)
+        result = validate_result(json.loads(state['response_content']), summary, material)
         state.update(result=result, status='passed' if result['verdict'] == 'pass' else 'needs_revision')
     except Exception as error:
         state.update(status='failed', error_type=type(error).__name__)
         state.setdefault('error_code', 'invalid_response' if isinstance(error, ValueError) else 'request_failed')
+        if isinstance(error, ValueError):
+            state['validation_error'] = str(error)[:200]
     save_state(db, state)
     return state
 

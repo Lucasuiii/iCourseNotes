@@ -87,17 +87,31 @@ def transcribe_pending(transcriber, plan, audio, rows, save, deadline, *, allow_
             def load(block):
                 stream.seek(round(block['start']*16000)*4)
                 return np.frombuffer(stream.read(block['samples']*4), dtype='<f4').copy()
-            for block in plan['blocks']:
-                index = block['chunk_id']
-                if index in known:
-                    continue
+            pending=[b for b in plan['blocks'] if b['chunk_id'] not in known]
+            size=getattr(type(transcriber),'batch_size',1)
+            if size not in (1,2): raise ValueError('Unsupported local batch size')
+            for offset in range(0,len(pending),size):
+                blocks=pending[offset:offset+size]
                 remaining = budget(deadline)
-                result = transcriber.recognize_blocks([block], load, timeout=remaining, keep_model=True)[0]
-                validate_block_row(block, result)
-                known[index] = result
-                save([known[i] for i in sorted(known)])
-                if incomplete_row(result) and not allow_cloud_repair:
-                    raise RuntimeError('Recognition has unresolved audio gaps; old data is preserved')
+                def commit(values):
+                    for result in values:
+                        index=result['chunk_id']
+                        if index not in {b['chunk_id'] for b in blocks}:
+                            raise ValueError('Batch returned an unrelated block')
+                        validate_block_row(plan['blocks'][index],result)
+                        if index in known:
+                            if known[index]!=result: raise ValueError('Batch changed a saved block')
+                            continue
+                        known[index]=result
+                        save([known[i] for i in sorted(known)])
+                        if incomplete_row(result) and not allow_cloud_repair:
+                            raise RuntimeError('Recognition has unresolved audio gaps; old data is preserved')
+                kwargs={'timeout':remaining,'keep_model':True}
+                if size==2: kwargs['checkpoint']=commit
+                results=transcriber.recognize_blocks(blocks,load,**kwargs)
+                commit(results)
+                if any(b['chunk_id'] not in known for b in blocks):
+                    raise ValueError('Batch failed to return every pending block')
         return [known[i] for i in sorted(known)]
     finally:
         transcriber.release_model()
@@ -132,6 +146,8 @@ def candidate_files(store, target):
         raise ValueError('Candidate lacks verified AAC acquisition or explicit format fallback evidence')
     if spec.get('plan', {}).get('local_backend') != manifest['backend']:
         raise ValueError('Candidate backend differs from the frozen local plan')
+    if spec.get('mlx_batch_size',1)!=manifest.get('mlx_batch_size',1):
+        raise ValueError('Candidate batch schedule differs from the frozen local plan')
     if any(v.get('status') != 'complete' for v in review.get('homework', {}).get('vision_calls', [])):
         raise ValueError('Candidate vision review has an unresolved call')
     path = store.root/tag/'candidate.db'
@@ -167,7 +183,7 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
     from src.runtime.audio_preparation import collect_decode_diagnostics, validate_prepared_audio
     from src.runtime.reporter import Reporter
     from src.runtime.scheduler import Scheduler
-    from scripts.local_history.backends import MLXTranscriber
+    from scripts.local_history.backends import MLXTranscriber, MLXBatchTranscriber
     course, sub = target['course_id'], target['sub_id']
     tag = course+'-'+sub
     root = private_dir(store.root/tag)
@@ -181,7 +197,9 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
     scheduler = Scheduler(reporter)
     scheduler.audio_downloader.audio_mode = manifest['audio_acquisition']
     scheduler.audio_downloader.allow_fresh_session_escalation = True
-    transcriber = MLXTranscriber(manifest['model_path'])
+    size=manifest.get('mlx_batch_size',1)
+    if size not in (1,2): raise ValueError('Unsupported frozen batch size')
+    transcriber = (MLXBatchTranscriber if size==2 else MLXTranscriber)(manifest['model_path'])
     db = Database(str(root/'candidate.db'))
     vpn = client = None
     try:
@@ -277,6 +295,9 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
                 spec['glossary_snapshot'] = state['glossary_snapshot']
             state['spec'] = spec; save()
         spec = state['spec']; plan = spec['plan']
+        if spec.get('mlx_batch_size',manifest.get('mlx_batch_size',1))!=manifest.get('mlx_batch_size',1):
+            raise ValueError('Saved batch schedule changed')
+        spec['mlx_batch_size']=manifest.get('mlx_batch_size',1)
         spec['review_runtime'] = manifest.get('review_runtime')
         if spec.get('requested_audio_acquisition') != manifest['audio_acquisition']:
             raise ValueError('Saved audio acquisition mode differs from the frozen plan')
@@ -347,6 +368,7 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
         db.write_meta('qwen_pipeline:'+sub, json.dumps({'complete': True,
             'plan_hash': fingerprint(plan), 'audio_sha256': plan['audio_sha256'],
             'audio_seconds': plan['audio_seconds'], 'backend': manifest['backend'],
+            'mlx_batch_size':manifest.get('mlx_batch_size',1),
             'recognition_coverage': material['recognition_coverage'],
             'review': review, 'transcript_sha256': hashlib.sha256(row['transcript'].encode()).hexdigest()}, ensure_ascii=False))
         save()

@@ -146,6 +146,7 @@ def make_plan(store, args):
         manifest = {'schema': 1, 'run_id': str(time.time_ns()), 'repository': os.environ['GITHUB_REPOSITORY'],
                     'baseline_revision': revision, 'targets': targets, 'source': source_identity(),
                     'model_path': str(args.model.resolve()), 'backend': backend_identity(args.model),
+                    'mlx_batch_size':getattr(args,'mlx_batch_size',1),
                     'vad_sha256': file_hash(args.vad_model), 'cloud_review': args.cloud_review,
                     'review_runtime': review_identity(args),
                     'audio_acquisition': args.audio_mode,
@@ -164,6 +165,7 @@ def verify_resume(manifest, args):
     if (manifest['repository'] != os.environ['GITHUB_REPOSITORY']
             or manifest['source'] != source_identity()
             or manifest['backend'] != backend_identity(args.model)
+            or manifest.get('mlx_batch_size',1) != getattr(args,'mlx_batch_size',1)
             or manifest['model_path'] != str(args.model.resolve())
             or manifest['vad_sha256'] != file_hash(args.vad_model)
             or manifest['cloud_review'] != args.cloud_review
@@ -361,6 +363,10 @@ def doctor(args):
         result['homework_vision_provider'] = any(p['name']=='deepseek' for p in config.resolve_model_providers())
         good = good and all(result[k] for k in ('cloud_key','alignment_dependencies',
                                                'alignment_model_exists','homework_vision_provider'))
+    result['mlx_batch_size']=getattr(args,'mlx_batch_size',1)
+    if result['mlx_batch_size']==2:
+        result['batch_runtime_compatible']=not missing and importlib.metadata.version('mlx-qwen3-asr')=='0.4.4'
+        good=good and result['batch_runtime_compatible']
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if good else 2
 
@@ -371,6 +377,8 @@ def main(argv=None):
     parser.add_argument('--key-file', type=Path, help='单行数据库加密密钥文件')
     parser.add_argument('--run-dir', type=Path, default=REPO/'.local-history-refresh/current')
     parser.add_argument('--model', type=Path, default=Path.home()/'Library/Application Support/iCourseQwen/models/qwen3-asr-1.7b-bf16')
+    parser.add_argument('--mlx-batch-size',type=int,choices=(1,2),default=1,
+                        help='单模型原始块调度；2启用双路解码并保留单路容错')
     parser.add_argument('--vad-model', type=Path, default=REPO/'silero_vad.onnx')
     parser.add_argument('--cloud-review', action='store_true', default=True,
                         help='兼容旧命令；默认已保留服务器的豆包局部复核、定位与截图流程')

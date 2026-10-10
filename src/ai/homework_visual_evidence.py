@@ -63,7 +63,8 @@ def assess_visual(visual, cloud=()):
         evidence.append({'candidate_id': candidate, 'text': text, 'seconds': sorted(times),
                          'page': scope_page,
                          'multi_frame_agreement': multi_frame, 'audio_agreement': audio_match,
-                         'audio_conflict': conflict, 'supported': (multi_frame or audio_match) and not conflict})
+                         'audio_conflict': conflict, 'supported': (multi_frame or audio_match) and not conflict,
+                         'tentative': len(times) == 1 and not audio_match and not conflict})
     supported = [e for e in evidence if e['supported']]
     candidates = visual.get('candidate_ids', [])
     # Do not hide one missing board behind another reminder's successful OCR.
@@ -77,4 +78,6 @@ def assess_visual(visual, cloud=()):
                 reference_evidence=evidence,
                 notice='多帧或语音一致只佐证画面文字，不表示教师已布置该题。' if complete else
                        '部分题号或页码已有佐证，其余内容仍待核实；不表示已布置该题。' if supported else
+                       '单帧清晰读出的题号或页码可作为存疑线索保留，尚无交叉佐证，不表示已布置该题。'
+                       if any(e['tentative'] for e in evidence) else
                        '视觉核对未完成：尚无可交叉佐证的作业题号或页码。')

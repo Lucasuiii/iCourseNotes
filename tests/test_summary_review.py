@@ -74,6 +74,10 @@ class SummaryReviewTests(unittest.TestCase):
                 self.response('not json' if mode == 'parse' else json.dumps(result()),
                               finish='length' if mode == 'truncated' else 'stop')
                 state = self.run_review(); self.assertEqual(state['status'], 'failed')
+                if mode == 'truncated': self.assertEqual(state['response_finish_reason'], 'length')
+                if mode == 'parse':
+                    self.assertEqual(state['response_content'], 'not json')
+                    self.assertIn('validation_error', state)
                 self.run_review(); self.assertEqual(call.call_count, 1)
                 with self.assertRaises(audit.SummaryReviewBlocked): audit.require_accepted(state)
 

@@ -116,5 +116,81 @@ class SummaryFiguresTests(unittest.TestCase):
         self.assertIsNone(figures._jpeg(buf.getvalue()))
         self.assertEqual(figures.spread([{'seconds': 1}, {'seconds': 2}], 1), [{'seconds': 2}])
 
+    def test_failed_response_persisted_before_validation_without_replay(self):
+        api = MagicMock()
+        content = json.dumps(self.selection)
+        api.with_options.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason='length', message=SimpleNamespace(content=content))],
+            usage=SimpleNamespace(prompt_tokens=100, completion_tokens=6000))
+        summarizer = SimpleNamespace(summary_figure_client=lambda: (api, 'model'))
+        with patch.object(figures, 'collect', return_value=([self.image], [])):
+            _, state = figures.add_figures(self.db, MagicMock(), summarizer, '1', '2', self.summary, [], [], 3600)
+            figures.add_figures(self.db, MagicMock(), summarizer, '1', '2', self.summary, [], [], 3600)
+        self.assertEqual(state['error_code'], 'incomplete_response')
+        self.assertEqual(state['response_content'], content)
+        self.assertEqual(state['response_finish_reason'], 'length')
+        self.assertEqual(state['tokens']['completion_tokens'], 6000)
+        api.with_options.assert_called_once()
+
+    def test_invalid_reply_records_row_and_caption_error(self):
+        bad = json.loads(json.dumps(self.selection)); bad['figures'][0]['caption'] = '<script>'
+        api = MagicMock(); api.with_options.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=json.dumps(bad)))])
+        with patch.object(figures, 'collect', return_value=([self.image], [])):
+            _, state = figures.add_figures(self.db, MagicMock(), SimpleNamespace(summary_figure_client=lambda: (api, 'm')),
+                                          '1', '2', self.summary, [], [], 3600)
+        self.assertEqual(state['error_row_index'], 0)
+        self.assertEqual(state['error_code'], 'invalid_caption')
+        self.assertEqual(state['response_finish_reason'], 'stop')
+        self.assertEqual(state['figures'], [])
+
+    def test_homework_retains_later_complete_frames_and_never_partial_list(self):
+        frames = []
+        def add(sec, labels, writing='stable'):
+            figures.retain_homework_frame(frames, b'pixels', {'seconds':sec,'source':'video_frame',
+                'candidate_id':'cue','reader':'deepseek_vision','vision_status':'complete','writing_state':writing,
+                'references':[{'page':7,'text':x,'legible':True} for x in labels]})
+        add(0,['7页','第2题'],'in_progress')
+        for sec in range(1,20):add(sec,['7页','第2题','第3题'])
+        self.assertEqual([f['seconds'] for f in frames], [17,18,19])
+        complete=figures.completed_homework_frames(frames)
+        self.assertEqual([f['seconds'] for f in complete], [19])
+        self.assertEqual(complete[0]['completion_evidence_seconds'], [18,19])
+        for sec in range(20,24):add(sec,['第3题'])  # erasure must not conceal earlier required items
+        self.assertEqual(figures.completed_homework_frames(frames), [])
+
+    def test_homework_single_stable_or_in_progress_frame_rejected(self):
+        image=dict(self.image, candidate_id='cue')
+        selection=json.loads(json.dumps(self.selection)); selection['figures'][0].update(kind='homework',caption='作业清单')
+        with self.assertRaisesRegex(ValueError,'homework_completion_unverified'):
+            figures.validate_selection(selection,[image],figures.sections(self.summary))
+        image['homework_complete']=True
+        self.assertEqual(len(figures.validate_selection(selection,[image],figures.sections(self.summary))),1)
+        self.assertEqual(figures.completed_homework_frames([{'seconds':10,'candidate_id':'cue','writing_state':'stable',
+                          'reader':'deepseek_vision','vision_status':'complete','references':[{'page':7,'text':'7页','legible':True}]}]),[])
+
+    def test_complete_homework_has_room_when_ppt_budget_is_full(self):
+        frames = []
+        for sec in (90, 100):
+            figures.retain_homework_frame(frames, b'complete', {'seconds': sec, 'source': 'video_frame',
+                'candidate_id': 'cue', 'reader': 'deepseek_vision', 'vision_status': 'complete',
+                'writing_state': 'stable', 'references': [{'page': 7, 'text': '2-6', 'legible': True}]})
+        frames += [{'image': str(i).encode(), 'seconds': i, 'source': 'platform_screenshot'} for i in range(12)]
+        with patch.object(figures, '_jpeg', side_effect=lambda data: data):
+            candidates, errors = figures.collect(MagicMock(), '1', '2', [], [], 0, retained=frames)
+        self.assertEqual(len(candidates), 12)
+        homework = [c for c in candidates if c.get('homework_complete')]
+        self.assertEqual([c['seconds'] for c in homework], [100])
+        self.assertEqual(errors, [])
+
+    def test_invalid_json_reply_is_retained_for_diagnosis(self):
+        api = MagicMock(); api.with_options.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content='{broken'))])
+        with patch.object(figures, 'collect', return_value=([self.image], [])):
+            _, state = figures.add_figures(self.db, MagicMock(), SimpleNamespace(summary_figure_client=lambda: (api, 'm')),
+                                          '1', '2', self.summary, [], [], 3600)
+        self.assertEqual(state['error_code'], 'invalid_json')
+        self.assertEqual(state['response_content'], '{broken')
+
 
 if __name__ == '__main__': unittest.main()

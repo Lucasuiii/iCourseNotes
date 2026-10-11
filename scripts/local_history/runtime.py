@@ -135,6 +135,9 @@ def candidate_files(store, target):
     if review.get('error_type') or review.get('material', {}).get('uncertain_calls'):
         raise ValueError('Candidate review has an unresolved failure')
     manifest = store.read('manifest.enc')
+    scope = manifest.get('review_scope', 'full')
+    if (spec.get('review_scope', 'full') != scope or review.get('review_scope', 'full') != scope):
+        raise ValueError('Candidate review scope differs from the frozen plan')
     if manifest.get('cloud_review'):
         if (review.get('complete') is not True or review.get('local_policy')
                 or spec.get('review_runtime') != manifest.get('review_runtime')):
@@ -148,7 +151,7 @@ def candidate_files(store, target):
         raise ValueError('Candidate backend differs from the frozen local plan')
     if spec.get('mlx_batch_size',1)!=manifest.get('mlx_batch_size',1):
         raise ValueError('Candidate batch schedule differs from the frozen local plan')
-    if any(v.get('status') != 'complete' for v in review.get('homework', {}).get('vision_calls', [])):
+    if scope == 'full' and any(v.get('status') != 'complete' for v in review.get('homework', {}).get('vision_calls', [])):
         raise ValueError('Candidate vision review has an unresolved call')
     path = store.root/tag/'candidate.db'
     files = {'specification.json': policy.encoded(spec), 'review.json': policy.encoded(review)}
@@ -299,6 +302,7 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
             raise ValueError('Saved batch schedule changed')
         spec['mlx_batch_size']=manifest.get('mlx_batch_size',1)
         spec['review_runtime'] = manifest.get('review_runtime')
+        spec['review_scope'] = manifest.get('review_scope', 'full')
         if spec.get('requested_audio_acquisition') != manifest['audio_acquisition']:
             raise ValueError('Saved audio acquisition mode differs from the frozen plan')
         if file_hash(audio) != plan['audio_sha256']:
@@ -335,6 +339,7 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
                                      key=lambda row:row['chunk_id']);save()
         material = assemble_material(plan, results, audio_path=str(audio), media_seconds=spec.get('media_seconds'),
                                      allow_short_missing=True)
+        material['review_scope'] = spec['review_scope']
         state['recognition_coverage'] = material['recognition_coverage'];save()
         if manifest.get('review_runtime'):
             material['alignment_model_path'] = manifest['review_runtime']['alignment_model_path']

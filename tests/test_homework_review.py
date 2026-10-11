@@ -23,6 +23,31 @@ def aligned(report, selected, *_args, **_kwargs):
 
 
 class AssignmentEvidenceTests(unittest.TestCase):
+    def test_fresh_theory_mode_keeps_images_without_alignment_or_speech_review(self):
+        state = {}; saved = []; image_reader = MagicMock(return_value={'status': 'unavailable', 'frames': []})
+        with patch('src.ai.qwen_quality.review_quality') as select, \
+             patch('src.ai.qwen_audio_alignment.align_suspects') as align, \
+             patch('src.ai.doubao_asr.rescue_intervals_pcm') as speech:
+            result = review_prepared(material(), [], MagicMock(), state,
+                                     lambda: saved.append(copy.deepcopy(state)), homework_ocr=image_reader)
+            self.assertEqual(review_prepared(material(), [], MagicMock(), state, lambda: None,
+                                             homework_ocr=image_reader), result)
+        select.assert_not_called(); align.assert_not_called(); speech.assert_not_called()
+        image_reader.assert_called_once()
+        self.assertEqual(image_reader.call_args.args[1], [])
+        self.assertEqual(state['review_scope'], 'theory')
+        self.assertEqual(state['speech_review_status'], 'not_requested')
+        self.assertEqual(state['theory_review_status'], 'pending_summary')
+        self.assertEqual(result['variants'], [])
+        self.assertTrue(saved)
+
+    def test_old_failed_ledger_cannot_be_relabelled_as_new_theory_review(self):
+        state = {'error_type': 'JSONDecodeError', 'material': {'unresolved': []}}
+        with self.assertRaisesRegex(ValueError, 'Frozen review scope changed'):
+            review_prepared(dict(material(), review_scope='theory'), [], MagicMock(), state, lambda: None)
+        self.assertEqual(state['error_type'], 'JSONDecodeError')
+        self.assertNotIn('complete', state)
+
     def test_late_instruction_survives_many_early_mentions(self):
         chunks = [{'start': i*120, 'end': (i+1)*120, 'text': f'这是第{i}次讨论，上次作业只是举个例子，继续研究矩阵。'} for i in range(8)]
         chunks.append({'start': 960, 'end': 1080, 'text': '今天布置课后作业，完成第七页第二题，下周提交。'})

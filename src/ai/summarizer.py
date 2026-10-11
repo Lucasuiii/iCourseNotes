@@ -178,7 +178,7 @@ class Summarizer:
             for model in provider['models']:
                 try:
                     options = ({'extra_body':{'thinking':{'type':'enabled'}},
-                                'reasoning_effort':'high','max_tokens':64000}
+                                'reasoning_effort':'high'}
                                if provider['name']=='deepseek' else {})
                     response=client.chat.completions.create(model=model,
                         messages=[{'role':'system','content':self.system_prompt+'\n\n'+INSTRUCTION},

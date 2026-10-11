@@ -61,7 +61,7 @@ def backend_identity(model):
 
 def review_identity(args):
     """Freeze the existing local CPU aligner and review dependencies."""
-    if not args.cloud_review:
+    if not args.cloud_review or getattr(args, 'review_scope', 'full') == 'theory':
         return None
     from scripts.local_history.storage import tree_hash
     model = args.aligner.resolve()
@@ -148,6 +148,7 @@ def make_plan(store, args):
                     'model_path': str(args.model.resolve()), 'backend': backend_identity(args.model),
                     'mlx_batch_size':getattr(args,'mlx_batch_size',1),
                     'vad_sha256': file_hash(args.vad_model), 'cloud_review': args.cloud_review,
+                    'review_scope': getattr(args, 'review_scope', 'theory'),
                     'review_runtime': review_identity(args),
                     'audio_acquisition': args.audio_mode,
                     'campus_access': getattr(args,'campus_mode','auto'),
@@ -169,6 +170,7 @@ def verify_resume(manifest, args):
             or manifest['model_path'] != str(args.model.resolve())
             or manifest['vad_sha256'] != file_hash(args.vad_model)
             or manifest['cloud_review'] != args.cloud_review
+            or manifest.get('review_scope', 'full') != getattr(args, 'review_scope', 'full')
             or manifest.get('review_runtime') != review_identity(args)
             or manifest.get('audio_acquisition') != args.audio_mode
             or manifest.get('campus_access','auto') != getattr(args,'campus_mode','auto')
@@ -352,11 +354,12 @@ def doctor(args):
               'subscribed_courses': len(config.COURSE_IDS),
               'summary_provider': bool(config.resolve_model_providers()),
               'cloud_review': args.cloud_review, 'free_disk_gib': round(shutil.disk_usage(args.run_dir.parent).free/1024**3, 1),
+              'review_scope': getattr(args, 'review_scope', 'full'),
               'audio_acquisition': args.audio_mode,
               'campus_logins': 0, 'inference_calls': 0, 'publication': False, 'email': False}
     good = not missing and sys.platform == 'darwin' and all(result[k] for k in
         ('ffmpeg', 'git', 'gh', 'model_exists', 'vad_exists', 'campus_credentials', 'database_key', 'subscribed_courses', 'summary_provider'))
-    if args.cloud_review:
+    if args.cloud_review and getattr(args, 'review_scope', 'full') == 'full':
         result['cloud_key'] = bool(config.DOUBAO_ASR_API_KEY)
         result['alignment_dependencies'] = all(importlib.util.find_spec(p) for p in ('torch', 'qwen_asr', 'soundfile'))
         result['alignment_model_exists'] = args.aligner.is_dir() and (args.aligner/'model.safetensors').is_file()
@@ -381,7 +384,9 @@ def main(argv=None):
                         help='单模型原始块调度；2启用双路解码并保留单路容错')
     parser.add_argument('--vad-model', type=Path, default=REPO/'silero_vad.onnx')
     parser.add_argument('--cloud-review', action='store_true', default=True,
-                        help='兼容旧命令；默认已保留服务器的豆包局部复核、定位与截图流程')
+                        help='兼容旧命令；允许识别缺口的有界补救')
+    parser.add_argument('--review-scope', choices=('theory', 'full'), default='theory',
+                        help='默认只检查摘要理论正确性并保留作业截图；full恢复原逐句定位复核')
     parser.add_argument('--aligner',type=Path,
                         default=Path.home()/'Library/Application Support/iCourseQwen/models/qwen3-forced-aligner-0.6b',
                         help='已准备的本地CPU时间对齐模型，不替换MLX语音识别')

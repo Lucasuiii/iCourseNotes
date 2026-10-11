@@ -54,6 +54,37 @@ class SummaryReviewTests(unittest.TestCase):
         self.generate.assert_called_once()
         self.api.with_options.return_value.chat.completions.create.assert_called_once()
 
+    def test_theory_review_needs_no_six_categories_exact_quote_or_evidence(self):
+        self.response(json.dumps({'verdict': 'needs_revision', 'issues': [
+            {'quote': '第一段示性函数的集合等式', 'reason': '补集方向写反', 'suggestion': '改为A的补集'}]}))
+        state = self.run_review()
+        self.assertEqual(state['review_scope'], 'theory')
+        self.assertEqual(state['status'], 'needs_revision')
+        self.assertEqual(state['result']['checks'], [])
+        options = self.api.with_options.return_value.chat.completions.create.call_args.kwargs
+        self.assertNotIn('max_tokens', options)
+        self.assertIn('不要求时间定位', options['messages'][0]['content'])
+
+    def test_simple_theory_pass_validates_and_truncated_reply_is_preserved(self):
+        self.response('{"verdict":"pass","issues":[]}')
+        state = self.run_review()
+        self.assertEqual(state['status'], 'passed')
+        audit.validate_published(state, '1', '2', self.text, '2026-10-09')
+        self.db.write_meta(audit.PREFIX+'2', '')
+        self.response('{"verdict":"pass",', finish='length')
+        state = self.run_review()
+        self.assertEqual(state['status'], 'failed')
+        self.assertEqual(state['response_content'], '{"verdict":"pass",')
+
+    def test_legacy_six_category_pass_remains_readable(self):
+        state = {'schema': 1, 'course_id': '1', 'sub_id': '2', 'date': '2026-10-09',
+                 'summary_sha256': audit.digest(self.text), 'reviewed_summary': self.text,
+                 'status': 'passed', 'result': result()}
+        audit.validate_published(state, '1', '2', self.text, '2026-10-09')
+        state['result']['checks'] = []
+        with self.assertRaises(ValueError):
+            audit.validate_published(state, '1', '2', self.text, '2026-10-09')
+
     def test_exact_pass_is_cached_and_published_metadata_is_hash_bound(self):
         self.response(json.dumps(result()))
         state = self.run_review(); self.assertEqual(state['status'], 'passed')

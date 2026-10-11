@@ -239,6 +239,7 @@ class LocalHistoryTests(unittest.TestCase):
              patch.object(entry,'doctor',return_value=0) as doctor:
             entry.main(['doctor'])
             self.assertTrue(doctor.call_args.args[0].cloud_review)
+            self.assertEqual(doctor.call_args.args[0].review_scope, 'theory')
         args=SimpleNamespace(model=self.root,vad_model=self.root/'vad',run_dir=self.root/'run',
                              cloud_review=True,audio_mode='aac_auto',aligner=self.root/'missing')
         with patch.object(entry.sys,'platform','darwin'), patch('builtins.print') as output:
@@ -265,6 +266,24 @@ class LocalHistoryTests(unittest.TestCase):
         self.store.save('10-1.enc',state)
         with self.assertRaisesRegex(ValueError,'full review pipeline'):
             runtime.candidate_files(self.store,self.targets[0])
+
+    def test_theory_scope_is_frozen_and_optional_figure_failure_does_not_block(self):
+        self.candidate(self.targets[0])
+        self.manifest.update(cloud_review=True, review_scope='theory', review_runtime=None)
+        self.store.save('manifest.enc', self.manifest)
+        state = self.store.read('10-1.enc')
+        state['spec'].update(review_scope='theory', review_runtime=None)
+        state['review'].update(review_scope='theory', homework={'vision_calls': [
+            {'status': 'failed', 'candidate_id': 'cue'}]})
+        self.store.save('10-1.enc', state)
+        runtime.candidate_files(self.store, self.targets[0])
+        self.manifest['review_scope'] = 'full'; self.store.save('manifest.enc', self.manifest)
+        with self.assertRaisesRegex(ValueError, 'review scope'):
+            runtime.candidate_files(self.store, self.targets[0])
+
+    def test_theory_preparation_does_not_require_aligner_weights(self):
+        args = SimpleNamespace(cloud_review=True, review_scope='theory', aligner=self.root/'missing')
+        self.assertIsNone(entry.review_identity(args))
 
     def test_apply_requires_exact_approval_before_remote_access(self):
         with patch('scripts.production_db.load_remote') as load:

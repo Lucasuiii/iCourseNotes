@@ -8,6 +8,8 @@ from src.ai.segment_rescue import MAX_CLOUD_SECONDS, MAX_CLOUD_CLIPS
 
 def validate_ledger(state):
     import math
+    if state.get('review_scope', 'full') not in ('theory', 'full'):
+        raise ValueError('Invalid review scope')
     attempts = state.get('attempts', [])
     seconds = sum(item['seconds'] for item in attempts)
     identities = [(i['interval']['start_ms'], i['interval']['end_ms']) for i in attempts]
@@ -27,15 +29,61 @@ def validate_ledger(state):
         raise ValueError('Invalid homework vision checkpoint')
 
 
+def _prepare_theory_images(material, pages, state, checkpoint, homework_ocr):
+    """Keep assignment screenshots without speech quote alignment or re-ASR."""
+    from src.ai.homework_review import assignment_candidates, prioritize_candidates, nearby_pages, MAX_FOCUS
+    if state.get('error_type'):
+        return state.get('material', {})  # Never erase an earlier failed request.
+    state.setdefault('attempts', [])
+    state.setdefault('seconds', 0)
+    if 'homework' not in state:
+        candidates = assignment_candidates(material['full_chunks'])
+        state['homework'] = {'candidates': prioritize_candidates(candidates),
+                             'deferred_count': max(0, len(candidates)-MAX_FOCUS),
+                             'intervals': [], 'unresolved': []}
+        checkpoint()
+    homework = state['homework']
+    if homework['candidates'] and 'visual' not in homework:
+        try:
+            if callable(homework_ocr):
+                homework['visual'] = homework_ocr(homework['candidates'], [])
+            else:
+                frames = [dict(source='existing_ppt_ocr', seconds=p['created_sec'],
+                               text=p['text'][:2000], status='ok')
+                          for c in homework['candidates'] for p in nearby_pages(pages, c)
+                          if str(p.get('text') or '').strip()]
+                homework['visual'] = {'status': 'ok' if frames else 'unavailable', 'frames': frames}
+        except Exception as error:
+            homework['visual'] = {'status': 'failed', 'error_type': type(error).__name__, 'frames': []}
+        checkpoint()
+    state['material'] = {'variants': [], 'weak_rescues': [], 'unresolved': [],
+                         'homework': {**{k: v for k, v in homework.items() if k != 'vision_calls'}, 'cloud': []},
+                         'uncertain_calls': sum(a['status'] == 'reserved' for a in state.get('attempts', []))}
+    state.update(complete=True, speech_review_status='not_requested', theory_review_status='pending_summary')
+    checkpoint()
+    return state['material']
+
+
 def review_prepared(material, pages, summarizer, state, checkpoint, *, homework_ocr=None):
-    from src.ai.qwen_quality import review_quality
-    from src.ai.qwen_audio_alignment import align_suspects
-    from src.ai.doubao_asr import rescue_intervals_pcm
     validate_ledger(state)
     if state.get('complete'):
         return state.get('material', {})
     if not callable(checkpoint):
         raise ValueError('Cloud review requires durable checkpoints')
+    # Existing started ledgers keep their original policy, including failures.
+    legacy = any(k in state for k in ('homework', 'intervals', 'weak_intervals', 'error_type', 'material'))
+    legacy = legacy or any(a['interval'].get('kind') != 'missing_asr' for a in state.get('attempts', []))
+    scope = material.get('review_scope', state.get('review_scope', 'full' if legacy else 'theory'))
+    if (scope not in ('theory', 'full') or state.get('review_scope', scope) != scope
+            or legacy and 'review_scope' not in state and scope != 'full'):
+        raise ValueError('Frozen review scope changed')
+    state['review_scope'] = scope
+    checkpoint()
+    if scope == 'theory':
+        return _prepare_theory_images(material, pages, state, checkpoint, homework_ocr)
+    from src.ai.qwen_quality import review_quality
+    from src.ai.qwen_audio_alignment import align_suspects
+    from src.ai.doubao_asr import rescue_intervals_pcm
     report = {'full_chunks': material['full_chunks'], 'vad_windows': material['vad_windows']}
     attempts = state.setdefault('attempts', [])
     used = {(a['interval']['start_ms'], a['interval']['end_ms']) for a in attempts}
@@ -114,7 +162,8 @@ def review_prepared(material, pages, summarizer, state, checkpoint, *, homework_
                         subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-f', 'f32le', '-ar', '16000',
                                         '-ac', '1', '-i', material['audio_path'], '-y', str(wav)],
                                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
-                        raw, _, rejected, _ = align_suspects(report, selected, wav, lambda _: None, budget=budget)
+                        raw, _, rejected, _ = align_suspects(report, selected, wav, lambda _: None,
+                                                            budget=budget)
                         unresolved.extend(rejected)
                         intervals = focus_intervals(raw, material.get('audio_seconds', 0))
                 except Exception as error:
@@ -169,7 +218,8 @@ def review_prepared(material, pages, summarizer, state, checkpoint, *, homework_
                         subprocess.run(['ffmpeg', '-nostdin', '-v', 'error', '-f', 'f32le', '-ar', '16000',
                                         '-ac', '1', '-i', material['audio_path'], '-y', str(wav)],
                                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
-                        intervals, _, unresolved, _ = align_suspects(report, suspects, wav, lambda _: None, budget=remaining)
+                        intervals, _, unresolved, _ = align_suspects(report, suspects, wav, lambda _: None,
+                                                                   budget=remaining)
             state.update(intervals=intervals, unresolved=unresolved)
             checkpoint()
         if not state.get('failed'): rescue(state['intervals'])

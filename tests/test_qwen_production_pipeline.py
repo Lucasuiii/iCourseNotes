@@ -1068,7 +1068,7 @@ class RecoveryBoundaryTests(unittest.TestCase):
         from src.ai.qwen_review_ledger import review_prepared
         material={'full_chunks':[],'vad_windows':[],'audio_path':'unused','recognition_terms':[],
                   'audio_seconds':60,'transcript':'','weak_windows':[{'start_ms':0,'end_ms':20000,'text':''}]}
-        state={};saved=[]
+        state={'review_scope':'full'};saved=[]
         def recognize(path,key,windows,**kw):
             self.assertEqual(saved[-1]['seconds'],20)
             self.assertEqual(saved[-1]['attempts'][0]['status'],'reserved')

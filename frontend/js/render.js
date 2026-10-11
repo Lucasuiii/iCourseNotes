@@ -58,7 +58,7 @@ function _stashFormulas(mdText) {
 /** Restore stashed formulas in the HTML output after marked.parse(). */
 function _restoreFormulas(html, formulas) {
   for (var i = 0; i < formulas.length; i++) {
-    html = html.split(_FORMULA_PLACEHOLDER_PREFIX + i + _FORMULA_PLACEHOLDER_SUFFIX).join(formulas[i]);
+    html = html.split(_FORMULA_PLACEHOLDER_PREFIX + i + _FORMULA_PLACEHOLDER_SUFFIX).join(_escapeHtmlText(formulas[i]));
   }
   return html;
 }

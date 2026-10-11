@@ -127,10 +127,15 @@ def _enumerate_lectures(client: ICourseClient, db: Database,
                 reporter.course_filter_skip(filtered_count)
 
             known_processed = db.get_processed_sub_ids(course_id)
-            new_lectures = [
-                lec for lec in selected_lectures
-                if str(lec["sub_id"]) not in known_processed
-            ]
+            new_lectures = []
+            for lec in selected_lectures:
+                sub_id = str(lec["sub_id"])
+                if sub_id in known_processed:
+                    continue
+                stored = db.get_lecture(sub_id)
+                if stored and (stored.get("error_count") or 0) >= 3:
+                    continue
+                new_lectures.append(lec)
             unprocessed = db.get_unprocessed_lectures(course_id)
             new_ids = {str(lec["sub_id"]) for lec in new_lectures}
             retry_only = [

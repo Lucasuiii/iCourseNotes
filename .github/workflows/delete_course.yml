@@ -42,13 +42,15 @@ jobs:
         run: |
           git fetch --depth=1 origin "+refs/heads/data:refs/remotes/origin/data" \
             || { echo "::error::Could not fetch the existing data branch."; exit 1; }
+          DELETE_DATA_BASE_SHA=$(git rev-parse refs/remotes/origin/data)
+          echo "DELETE_DATA_BASE_SHA=$DELETE_DATA_BASE_SHA" >> "$GITHUB_ENV"
           mkdir -p data/sharded/shards
-          if git cat-file -e origin/data:data/icourse-index.enc 2>/dev/null; then
-            git show origin/data:data/icourse-index.enc > data/sharded/icourse-index.enc
-            shard_paths=$(git ls-tree -r --name-only origin/data | grep '^data/shards/' || true)
+          if git cat-file -e "$DELETE_DATA_BASE_SHA:data/icourse-index.enc" 2>/dev/null; then
+            git show "$DELETE_DATA_BASE_SHA:data/icourse-index.enc" > data/sharded/icourse-index.enc
+            shard_paths=$(git ls-tree -r --name-only "$DELETE_DATA_BASE_SHA" | grep '^data/shards/' || true)
             for path in $shard_paths; do
               base=$(basename "$path")
-              git show "origin/data:$path" > "data/sharded/shards/$base"
+              git show "$DELETE_DATA_BASE_SHA:$path" > "data/sharded/shards/$base"
             done
             rm -f data/icourse.db.reassembled
             python scripts/db_shard.py reassemble data/sharded data/icourse.db.reassembled
@@ -82,11 +84,7 @@ jobs:
               echo "  $remaining visible lecture(s) remaining for selected course"
             else
               echo "Deleting selected course data..."
-              count=$(sqlite3 data/icourse.db "SELECT COUNT(*) FROM lectures WHERE course_id='$cid'")
-              sqlite3 data/icourse.db "DELETE FROM ppt_pages WHERE sub_id IN (SELECT sub_id FROM lectures WHERE course_id='$cid')"
-              sqlite3 data/icourse.db "DELETE FROM lectures WHERE course_id='$cid'"
-              sqlite3 data/icourse.db "DELETE FROM courses WHERE course_id='$cid'"
-              echo "  Removed $count lecture(s) from selected course"
+              python scripts/delete_course.py data/icourse.db "$cid"
             fi
           done
 
@@ -112,14 +110,17 @@ jobs:
           python scripts/db_shard.py shard data/icourse.db data/sharded_out
 
           # Preserve data-branch history so an accidental deletion remains
-          # recoverable. Shared workflow concurrency prevents write races.
+          # recoverable. Local publishers are outside Actions concurrency:
+          # parent this snapshot to exactly the commit we read, so a newer
+          # remote update rejects the ordinary push. Rerun the entire deletion
+          # against fresh data after a conflict; never rebase the old snapshot.
           rm -rf /tmp/db_deploy
           mkdir -p /tmp/db_deploy
           cd /tmp/db_deploy
 
           git init -q
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          git fetch -q --depth=1 origin data
+          git fetch -q --depth=1 "$GITHUB_WORKSPACE" "$DELETE_DATA_BASE_SHA"
           git checkout -q -b data FETCH_HEAD
           rm -rf data
           mkdir -p data/shards

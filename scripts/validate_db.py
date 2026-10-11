@@ -7,6 +7,9 @@ import os
 import sqlite3
 import sys
 
+# The CLI runs from scripts/ while validation now imports pipeline modules.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 REQUIRED_TABLES = {"courses", "lectures", "ppt_pages", "all_courses", "meta"}
 

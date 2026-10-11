@@ -21,6 +21,39 @@ from src.runtime.enumeration import CourseEnumerationError
 
 
 class EnumerationSafetyTests(unittest.TestCase):
+    def test_catalog_cannot_requeue_paused_failures_until_explicit_reset(self):
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            stack.enter_context(patch.object(main.config, 'COURSE_IDS', ['10']))
+            stack.enter_context(patch.object(main.config, 'RERUN_TARGET_IDS', set()))
+            stack.enter_context(patch.object(main, '_in_run_scope', return_value=True))
+            db = Database(str(Path(tmp) / 'db'))
+            self.addCleanup(db.conn.close)
+            db.upsert_course('10', 'course', '')
+            for sub in ['paused', 'retryable', 'processed', 'suppressed', 'absent']:
+                db.insert_lecture(sub, '10', sub, '2026-09-18')
+            for _ in range(3):
+                db.update_error('paused', 'summary', 'timeout')
+            for _ in range(2):
+                db.update_error('retryable', 'summary', 'timeout')
+            db.mark_processed('processed')
+            db.suppress_lectures('10', ['suppressed'])
+            client = self.fixture({'10': 'ok'})
+            client.get_course_detail.side_effect = None
+            client.get_course_detail.return_value = {
+                'title': 'course', 'teacher': '', 'lectures': [
+                    {'sub_id': sub, 'sub_title': sub, 'date': '2026-09-18', 'has_playback': True}
+                    for sub in ['paused', 'retryable', 'processed', 'suppressed', 'new']]}
+            def tasks():
+                result = main._enumerate_lectures(client, db, MagicMock())
+                result.require_success()
+                return [str(t[2]['sub_id']) for t in result.lectures]
+            self.assertEqual(set(tasks()), {'retryable', 'new', 'absent'})
+            self.assertEqual(db.get_lecture('paused')['error_count'], 3)
+            self.assertEqual(db.retry_attention_lectures(['paused']), 1)
+            ids = tasks()
+            self.assertEqual(set(ids), {'paused', 'retryable', 'new', 'absent'})
+            self.assertEqual(len(ids), len(set(ids)))
+
     def fixture(self, outcomes, new=False):
         client = MagicMock(); client.check_alive.return_value = True
         def detail(course):

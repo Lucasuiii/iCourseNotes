@@ -51,6 +51,23 @@ assert.equal(target.querySelector('h2').textContent, '矩阵');
 assert.equal(target.querySelector('strong').textContent, '结论');
 assert.ok(target.querySelector('table'));
 assert.ok(target.textContent.includes('\\(A < B\\)'));
+for (const [markdown, latex] of [
+  ['$i<j$', '\\(i<j\\)'],
+  ['$\\sum_{i<j}P(A_i\\cap A_j)$', '\\(\\sum_{i<j}P(A_i\\cap A_j)\\)'],
+  ['$$x<y$$', '\\[x<y\\]'],
+  ['\\(i<j\\)', '\\(i<j\\)'],
+  ['\\[\\begin{matrix}a&b\\\\c&d\\end{matrix}\\]', '\\[\\begin{matrix}a&b\\\\c&d\\end{matrix}\\]'],
+  ['$x&copy;>y$', '\\(x&copy;>y\\)'],
+  ['$<img src=x onerror=alert(1)>$', '\\(<img src=x onerror=alert(1)>\\)'],
+]) {
+  target.innerHTML = window.ICS.render.renderMarkdown(markdown);
+  assert.equal(target.textContent.trim(), latex, 'LaTeX must survive HTML parsing verbatim');
+  assert.equal(target.querySelectorAll('img,script,svg,[onerror]').length, 0);
+  let renderedInput;
+  window.renderMathInElement = element => { renderedInput = element.textContent.trim(); };
+  window.ICS.render.activateKaTeX(target);
+  assert.equal(renderedInput, latex, 'KaTeX must receive the complete LaTeX text');
+}
 const revoked = [];
 window.URL.createObjectURL = () => 'blob:https://frontend.invalid/test-figure';
 window.URL.revokeObjectURL = url => revoked.push(url);

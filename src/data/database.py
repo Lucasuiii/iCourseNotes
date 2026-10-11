@@ -345,6 +345,27 @@ class Database:
             )
         return cur.rowcount or 0
 
+    def delete_course(self, course_id: str) -> int:
+        """Delete course content and its lecture review/figure state atomically."""
+        course_id = str(course_id)
+        with self._lock, self.conn:
+            for prefix in ("summary_review:", "summary_figures:"):
+                self.conn.execute(
+                    """DELETE FROM meta WHERE key IN (
+                        SELECT ? || sub_id FROM lectures WHERE course_id = ?
+                    )""", (prefix, course_id),
+                )
+            self.conn.execute(
+                """DELETE FROM ppt_pages WHERE sub_id IN (
+                    SELECT sub_id FROM lectures WHERE course_id = ?
+                )""", (course_id,),
+            )
+            deleted = self.conn.execute(
+                "DELETE FROM lectures WHERE course_id = ?", (course_id,),
+            ).rowcount
+            self.conn.execute("DELETE FROM courses WHERE course_id = ?", (course_id,))
+        return deleted
+
     def suppress_lectures(self, course_id: str, sub_ids: list[str]) -> int:
         """Erase selected lecture content and keep persistent tombstones.
 

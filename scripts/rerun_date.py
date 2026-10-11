@@ -65,6 +65,13 @@ def prepare(db_path: Path, manifest_path: Path, run_date: str,
 
         ids = [row["sub_id"] for row in rows]
         with conn:
+            # This is an explicitly authorized new run, not failure recovery.
+            # Its previous review/figure requests remain in the local backup.
+            conn.executemany(
+                "DELETE FROM meta WHERE key = ?",
+                [(prefix + sub_id,) for sub_id in ids
+                 for prefix in ("summary_review:", "summary_figures:")],
+            )
             conn.executemany(
                 """UPDATE lectures SET
                        transcript = NULL, summary = NULL, summary_model = NULL,

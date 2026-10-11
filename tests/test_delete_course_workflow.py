@@ -145,6 +145,37 @@ class DeleteCourseWorkflowTests(unittest.TestCase):
     def test_concurrent_publish_rejects_stale_single_lecture_suppression(self):
         self.assert_concurrent_update_survives('1')
 
+    def test_pending_lecture_deletion_survives_encrypted_reload_and_catalog_sync(self):
+        from unittest.mock import MagicMock, patch
+        import main
+        from scripts.merge_db import merge
+        with self.db.conn:
+            self.db.conn.execute("UPDATE lectures SET processed_at=NULL, summary=NULL, transcript=NULL WHERE sub_id='1'")
+            self.db.conn.execute("DELETE FROM meta WHERE key IN ('summary_review:1','summary_figures:1')")
+        self.publish_writer('pending lesson')
+        self.fetch_and_delete('1')
+        self.step('Re-shard and push')
+        with self.read_remote() as conn:
+            row = conn.execute("SELECT deleted_at,summary,transcript FROM lectures WHERE sub_id='1'").fetchone()
+            self.assertIsNotNone(row[0])
+            self.assertEqual(row[1:], (None, None))
+        path = self.root / 'readback.db'
+        # A stale worker cannot resurrect deleted content during publication.
+        merge(str(self.db_path), str(path))
+        db = Database(str(path))
+        self.addCleanup(db.conn.close)
+        client = MagicMock()
+        client.get_course_detail.return_value = {
+            'title': 'offline course', 'teacher': '', 'lectures': [
+                {'sub_id': '1', 'sub_title': 'removed lesson', 'date': '2026-10-01', 'has_playback': True},
+                {'sub_id': '4', 'sub_title': 'new lesson', 'date': '2026-10-02', 'has_playback': True},
+            ]}
+        with patch.object(main.config, 'COURSE_IDS', ['10']), patch.object(main, '_in_run_scope', return_value=True):
+            selected = main._enumerate_lectures(client, db, MagicMock())
+        self.assertEqual([str(t[2]['sub_id']) for t in selected.lectures], ['4'])
+        self.assertIsNotNone(db.get_lecture('1')['deleted_at'])
+        self.assertIsNone(db.get_lecture('1')['summary'])
+
     def test_concurrent_publish_rejects_stale_whole_course_deletion(self):
         self.assert_concurrent_update_survives('')
 

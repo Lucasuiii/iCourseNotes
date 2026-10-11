@@ -114,7 +114,7 @@ def select_targets(path, revision, courses, limit=None, lecture_ids=None):
     return targets, skipped
 
 
-def new_preview_target(args, courses):
+def new_preview_target(args, courses, baseline_path=None):
     """Explicit, date-bounded new-lecture preview; runtime checks campus identity."""
     from datetime import date, datetime
     from zoneinfo import ZoneInfo
@@ -125,6 +125,11 @@ def new_preview_target(args, courses):
             or day > datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()
             or args.lecture_id or args.limit):
         raise ValueError('Invalid new-lecture preview selection')
+    if baseline_path is not None:
+        with closing(sqlite3.connect(baseline_path)) as conn:
+            row = conn.execute('SELECT course_id, deleted_at FROM lectures WHERE sub_id=?', (sub,)).fetchone()
+        if row and (str(row[0]) != course or row[1]):
+            raise ValueError('New-lecture preview is unavailable or permanently ignored')
     return {'slot': 0, 'course_id': course, 'sub_id': sub, 'date': day,
             'before_hash': None, 'preview_only': True}
 
@@ -139,7 +144,7 @@ def make_plan(store, args):
         path = Path(tmp)/'baseline.db'
         revision = load_remote(path)
         if getattr(args, 'new_lecture', None):
-            targets = [new_preview_target(args, config.COURSE_IDS)]; skipped = 0
+            targets = [new_preview_target(args, config.COURSE_IDS, path)]; skipped = 0
         else:
             targets, skipped = select_targets(path, revision, config.COURSE_IDS, args.limit,
                                               getattr(args,'lecture_id',None))

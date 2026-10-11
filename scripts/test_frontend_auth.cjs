@@ -43,6 +43,28 @@ for (const name of ['github.js','app.js']) w.eval(fs.readFileSync(path.join(root
   w.Alpine={data:(name,factory)=>{assert.equal(name,'app');makeApp=factory;}};
   w.document.dispatchEvent(new w.Event('alpine:init'));
   const app=makeApp();
+  app.lectures = ['ready', 'waiting', 'failed', 'novideo', 'skipped', 'processing'].map(
+    (state, i) => ({sub_id: String(i + 1), state})
+  );
+  app.lectures.push({sub_id: 'deleted', state: 'ready', deleted_at: '2026-10-11'});
+  app.lectures.push({state: 'waiting'});
+  assert.equal(app.getDeletableLectures().length, 6, 'Unprocessed and failed lectures must be suppressible');
+  app.openDeleteDialog();
+  app.setDeleteAll(true);
+  assert.equal(app.selectedDeleteCount(), 6);
+  assert.equal(app.isDeleteAllSelected(), true);
+  app.currentCourse = {course_id: '10'};
+  w.sessionStorage.setItem('ics_creds', JSON.stringify({token: 'offline-delete-token'}));
+  const deletions=[];
+  w.ICS.github.triggerDeleteWorkflow = async (...args) => { deletions.push(args); };
+  w.setTimeout = () => 0;
+  app._toast = () => {};
+  await app.confirmDelete();
+  assert.equal(deletions.length, 1);
+  assert.deepEqual(Array.from(deletions[0][4]), ['10']);
+  assert.deepEqual(Array.from(deletions[0][5]), ['1', '2', '3', '4', '5', '6']);
+  assert.equal(app.deleteDialogOpen, false);
+  w.sessionStorage.removeItem('ics_creds');
   const key='a'.repeat(64);
   let unlocks=0;
   app.testAndSave=async()=>{unlocks++;};

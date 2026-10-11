@@ -812,7 +812,7 @@
                  @change="toggleDeleteLecture(lec.sub_id, $event.target.checked)">
           <div class="min-w-0">
             <p class="text-sm font-medium text-gray-800 truncate" x-text="lec.sub_title || 'Untitled'"></p>
-            <p class="text-xs text-gray-500 mt-1 line-clamp-2" x-text="snippet(lec.summary, 100)"></p>
+            <p class="text-xs text-gray-500 mt-1 line-clamp-2" x-text="lec.summary ? snippet(lec.summary, 100) : '忽略此课次，后续不再识别'"></p>
           </div>
         </label>
       </template>

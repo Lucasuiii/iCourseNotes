@@ -136,6 +136,14 @@ class QwenTranscriber:
             row['text']=''
         return row
 
+    def _rescue_recognize(self, samples, budget):
+        """Backend hook: retain bounded PyTorch rescue for production workers."""
+        from transformers import StoppingCriteriaList
+        with bounded_retry(self._model, StoppingCriteriaList, seconds=budget,
+                           tokens=NORMAL_TOKENS, clock=time.monotonic) as state:
+            row = self._recognize(samples, unhinted=True)
+        return dict(row, text='', quality_state='retry_timeout') if state['timed_out'] else row
+
     def _recognize_resilient(self, samples, block, deadline):
         """Bounded full retry -> 30s -> 15s -> one final 5–7.5s bisection.
 
@@ -166,12 +174,7 @@ class QwenTranscriber:
             row=None
             try:
                 if rescue:
-                    from transformers import StoppingCriteriaList
-                    with bounded_retry(self._model,StoppingCriteriaList,seconds=budget,
-                            tokens=NORMAL_TOKENS,clock=time.monotonic) as state:
-                        row=self._recognize(samples[a:b],unhinted=True)
-                    if state['timed_out']:
-                        row=dict(row,text='',quality_state='retry_timeout')
+                    row=self._rescue_recognize(samples[a:b],budget)
                 else:
                     row=self._recognize(samples[a:b],deadline=now+budget)
                 ended=time.monotonic()

@@ -43,6 +43,13 @@ def add_empty_edit(data, seconds=.021):
 
 @unittest.skipUnless(shutil.which('ffmpeg'), 'FFmpeg required')
 class AACProductionTests(unittest.TestCase):
+    def setUp(self):
+        # Keep the integration on AAC even when the caller explicitly
+        # selected the MP4 compatibility mode.
+        from src.runtime import config
+        scope = patch.object(config, 'AUDIO_ACQUISITION', 'aac_auto')
+        scope.start(); self.addCleanup(scope.stop)
+
     def source(self, folder, *, video=False, seconds=3, edited=False):
         source = Path(folder)/'source.mp4'
         command = ['ffmpeg', '-v', 'error']

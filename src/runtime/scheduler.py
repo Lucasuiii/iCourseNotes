@@ -182,6 +182,7 @@ class AudioDownloader:
         self._lock = threading.Lock()
         self._reporter = reporter
         self.audio_mode = config.AUDIO_ACQUISITION if audio_mode is None else audio_mode
+        self.allow_fresh_session_escalation = False
         if self.audio_mode not in ('aac_auto', 'mp4'):
             raise ValueError('Invalid audio acquisition mode')
         self._startup_failures = {}
@@ -260,6 +261,7 @@ class AudioDownloader:
                 if preserve_timestamps and self.audio_mode == 'aac_auto':
                     phase = 'media_transport_start'
                     transport = AACRangeTransport(client, url, allow_session_refresh=True,
+                        **({'allow_fresh_session_escalation': True} if self.allow_fresh_session_escalation else {}),
                         limits=Limits(seconds=5400, network_bytes=1_000_000_000, requests=10000),
                         timeout=(10, 15))
                     with self._lock:
@@ -278,6 +280,7 @@ class AudioDownloader:
                 elif preserve_timestamps:
                     phase = 'media_transport_start'
                     transport = SignedRangeRelay(client,url,allow_session_refresh=True,
+                                                 **({'allow_fresh_session_escalation': True} if self.allow_fresh_session_escalation else {}),
                                                  cache_bytes=16*1024*1024)
                     with self._lock:
                         if self._active.get(sub_id) is not pending: raise _AudioSpawnCancelled()

@@ -85,6 +85,8 @@ def review_prepared(material, pages, summarizer, state, checkpoint, *, homework_
     from src.ai.qwen_audio_alignment import align_suspects
     from src.ai.doubao_asr import rescue_intervals_pcm
     report = {'full_chunks': material['full_chunks'], 'vad_windows': material['vad_windows']}
+    alignment_options = ({'model_path': material['alignment_model_path']}
+                         if material.get('alignment_model_path') else {})
     attempts = state.setdefault('attempts', [])
     used = {(a['interval']['start_ms'], a['interval']['end_ms']) for a in attempts}
 
@@ -163,7 +165,7 @@ def review_prepared(material, pages, summarizer, state, checkpoint, *, homework_
                                         '-ac', '1', '-i', material['audio_path'], '-y', str(wav)],
                                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
                         raw, _, rejected, _ = align_suspects(report, selected, wav, lambda _: None,
-                                                            budget=budget)
+                                                            budget=budget, **alignment_options)
                         unresolved.extend(rejected)
                         intervals = focus_intervals(raw, material.get('audio_seconds', 0))
                 except Exception as error:
@@ -219,7 +221,7 @@ def review_prepared(material, pages, summarizer, state, checkpoint, *, homework_
                                         '-ac', '1', '-i', material['audio_path'], '-y', str(wav)],
                                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
                         intervals, _, unresolved, _ = align_suspects(report, suspects, wav, lambda _: None,
-                                                                   budget=remaining)
+                                                                   budget=remaining, **alignment_options)
             state.update(intervals=intervals, unresolved=unresolved)
             checkpoint()
         if not state.get('failed'): rescue(state['intervals'])

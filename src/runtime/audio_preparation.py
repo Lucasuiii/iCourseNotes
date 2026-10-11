@@ -155,7 +155,7 @@ def safe_transport_diagnostics(value):
     if isinstance(code, str) and code in STARTUP_ERROR_CODES: clean['terminal_error_code'] = code
     for key in ('range_requests', 'range_verified', 'retries', 'range_rejections',
                 'session_refresh_attempts', 'session_identity_verifications',
-                'session_resume_attempts', 'session_refresh_successes'):
+                'session_resume_attempts', 'session_refresh_successes', 'fresh_session_attempts'):
         count = value.get(key)
         if type(count) is int and 0 <= count <= 1_000_000: clean[key] = count
     statuses = value.get('upstream_status_counts')
@@ -164,7 +164,7 @@ def safe_transport_diagnostics(value):
             if type(key) is str and re.fullmatch(r'[1-5][0-9]{2}', key)
             and type(count) is int and 0 <= count <= 1_000_000}
     events = value.get('session_recovery_events')
-    if type(events) is list and len(events) <= 8:
+    if type(events) is list and len(events) <= 12:
         clean['session_recovery_events'] = []
         for row in events:
             if type(row) is not dict: continue

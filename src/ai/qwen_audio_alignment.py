@@ -1,6 +1,7 @@
 """Separate CPU-only alignment stage; no ASR model co-resident."""
 import gc
 import resource
+import sys
 import time
 from src.ai.qwen_quality import aligned_quote_span,aligned_rescue_intervals
 
@@ -8,7 +9,7 @@ MODEL='Qwen/Qwen3-ForcedAligner-0.6B'
 REVISION='c7cbfc2048c462b0d63a45797104fc9db3ad62b7'
 
 
-def align_suspects(report,selected,path,checkpoint, *, budget=120):
+def align_suspects(report,selected,path,checkpoint, *, budget=120, model_path=None):
     if not selected:
         return [],[],[],{'model':MODEL,'seconds':0}
     import torch
@@ -21,8 +22,10 @@ def align_suspects(report,selected,path,checkpoint, *, budget=120):
     except RuntimeError:
         pass  # Qwen runtime may already have initialized the shared CPU pool.
     began=time.perf_counter()
-    model_path=snapshot_download(MODEL,revision=REVISION,
-                                 allow_patterns=['*.json','*.safetensors','*.txt'])
+    local_model = model_path is not None
+    if model_path is None:
+        model_path=snapshot_download(MODEL,revision=REVISION,
+                                     allow_patterns=['*.json','*.safetensors','*.txt'])
     aligner=Qwen3ForcedAligner.from_pretrained(model_path,dtype=torch.float32,
                    device_map='cpu',attn_implementation='eager')
     located,unresolved=[],[]
@@ -49,8 +52,9 @@ def align_suspects(report,selected,path,checkpoint, *, budget=120):
             del samples
             gc.collect()
     intervals,accepted,rejected=aligned_rescue_intervals(report['full_chunks'],located,budget=budget)
-    metrics={'model':MODEL,'revision':REVISION,'seconds_including_load':time.perf_counter()-began,
-             'peak_rss_gib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024**2,
+    metrics={'model':MODEL,'revision':None if local_model else REVISION,
+             'local_model':local_model,'seconds_including_load':time.perf_counter()-began,
+             'peak_rss_gib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/(1024**3 if sys.platform=='darwin' else 1024**2),
              'note':'Structural QA and VAD checks, not calibrated alignment confidence or transcript accuracy.'}
     del aligner
     gc.collect()

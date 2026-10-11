@@ -161,6 +161,9 @@ class AACRangeTransport(SignedRangeRelay):
         if self._stop.is_set(): fail('stopped')
         if self.audit()['terminal_error_code']: fail('transport_failed')
 
+    def _check_signing_budget(self):
+        self.check()
+
     def read(self, start, size, *, index=False):
         data = self.fetch([(start, start+size-1)])[0]
         if index: self._count('index_bytes', len(data))
@@ -188,6 +191,7 @@ class AACRangeTransport(SignedRangeRelay):
                 before = self.audit()['upstream_bytes']
                 try:
                     self.check()
+                    self._transition('signing')
                     target, headers = self._signed_request(ranges[0][0], attempt>0)
                     self.check()
                     session, headers = self._request_session(headers)
@@ -204,10 +208,15 @@ class AACRangeTransport(SignedRangeRelay):
                     if self._resume_pending: self._count('session_resume_attempts')
                     remaining = max(.001, self.deadline-time.monotonic())
                     timeout = tuple(min(t, remaining) for t in self.timeout)
+                    before_cookies = [(c.domain,c.path,c.name,c.value,c.expires) for c in session.cookies]
+                    self._transition('requesting')
                     response = session.get(target, headers=headers, stream=True,
                                            timeout=timeout, allow_redirects=False)
                     with self._response_lock: self._responses.add(response)
+                    if [(c.domain,c.path,c.name,c.value,c.expires) for c in session.cookies] != before_cookies:
+                        self._count('cookie_updates')
                     self.check()
+                    self._transition('validating')
                     if len(ranges)==1 or response.status_code != 206:
                         expected = self._verify_response(response, *ranges[0])
                         if expected != payload_size: fail('invalid_content_range')
@@ -225,6 +234,7 @@ class AACRangeTransport(SignedRangeRelay):
                     if length is not None and (not length.isdigit() or int(length)>cap):
                         fail('response_body_limit')
                     body = bytearray()
+                    self._transition('reading')
                     read_once=getattr(response.raw,'read1',None)
                     if not callable(read_once):fail('bounded_raw_read_unsupported')
                     while True:
@@ -251,6 +261,7 @@ class AACRangeTransport(SignedRangeRelay):
                         self._count('session_refresh_successes')
                         self._session_event('media_resumed', ranges[0][0])
                         self._resume_pending = False
+                    self._transition('ready')
                     return output
                 except MediaTransportError as error:
                     code = error.code
@@ -262,9 +273,8 @@ class AACRangeTransport(SignedRangeRelay):
                         response.close()
                 self._count('retry_bytes', self.audit()['upstream_bytes']-before)
                 self.check()
-                action = self._recovery.decide(code, attempt, can_refresh=(
-                    self.allow_session_refresh and not self._session_refreshed
-                    and callable(getattr(self.client, 'refresh_media_session', None))))
+                self._transition('recovering', error=code, offset=ranges[0][0])
+                action = self._recovery.decide(code, attempt, can_refresh=self._can_refresh_session())
                 if action is RecoveryAction.STOP: self._fail(self._recovery.terminal_code(code))
                 if action is RecoveryAction.REFRESH: self._refresh_session()
                 self._count('retries')

@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import requests
 
@@ -257,6 +257,30 @@ class MultipartTests(unittest.TestCase):
             self.assertEqual(reader.fetch([(0,2),(7,9)]),[b'012',b'789'])
             self.assertEqual(origin.refresh,1);self.assertEqual(reader.statistics()['session_refresh_successes'],1)
 
+    def test_local_aac_escalates_only_one_fresh_login_and_keeps_batch_integrity(self):
+        for next_mode,code in [('ok',None),('auth_persistent','media_session_unavailable'),('changed','source_changed')]:
+            with self.subTest(next_mode=next_mode), Origin(b'0123456789','auth_persistent') as origin:
+                origin.client._media_reauth_factory=MagicMock()
+                origin.client.fork_for_media=lambda:origin.client
+                origin.client.close_media_session=lambda:None
+                def fresh(stopped):
+                    origin.client._media_reauth_factory()
+                    origin.mode=next_mode
+                    return True
+                origin.client.reauthenticate_media_session=fresh
+                with AACRangeTransport(origin.client,origin.url,allow_session_refresh=True,
+                                       allow_fresh_session_escalation=True) as reader:
+                    reader.read(0,1)
+                    if code:
+                        with self.assertRaises(MediaTransportError) as error:reader.fetch([(0,2),(7,9)])
+                        self.assertEqual(error.exception.code,code)
+                        self.assertEqual(reader.audit()['upstream_bytes'],1)
+                    else:
+                        self.assertEqual(reader.fetch([(0,2),(7,9)]),[b'012',b'789'])
+                    self.assertEqual(origin.refresh,1)
+                    origin.client._media_reauth_factory.assert_called_once()
+                    self.assertEqual(reader.audit()['fresh_session_attempts'],1)
+
     def test_budgets_cancel_and_deadline(self):
         for limits in (Limits(network_bytes=2),Limits(source_bytes=9),Limits(requests=1),Limits(body_bytes=3),Limits(header_bytes=15)):
             with Origin(b'0123456789') as origin,AACRangeTransport(origin.client,origin.url,limits=limits) as reader:
@@ -365,11 +389,20 @@ class RecoveryBudgetTests(unittest.TestCase):
     def test_drip_body_cannot_extend_total_deadline(self):
         with Origin(b'0123456789','drip') as origin,AACRangeTransport(origin.client,origin.url) as reader:
             reader.read(0,1);reader.deadline=time.monotonic()+.08;began=time.monotonic()
-            # Reusing byte zero can wait for the next signing second before
-            # making HTTP. Exercise the slow body, independently of signing.
+            # Keep the body deadline independent from byte-zero signing waits.
             with self.assertRaises(MediaTransportError) as e:reader.fetch([(1,2),(7,9)])
             self.assertEqual(e.exception.code,'aac_deadline')
             self.assertLess(time.monotonic()-began,.5)
             self.assertEqual(origin.calls,2)
             self.assertEqual(reader.statistics()['multipart_requests'],1)
             self.assertEqual(reader.statistics()['multipart_body_bytes'],0)
+
+    def test_byte_zero_signing_wait_cannot_extend_total_deadline(self):
+        with Origin(b'0123456789') as origin,AACRangeTransport(origin.client,origin.url) as reader:
+            reader.read(0,1);reader.deadline=time.monotonic()+.08;began=time.monotonic()
+            with patch('src.runtime.media_transport.time.time',return_value=reader._last_initial_time):
+                with self.assertRaises(MediaTransportError) as e:reader.fetch([(0,2),(7,9)])
+            self.assertEqual(e.exception.code,'aac_deadline')
+            self.assertLess(time.monotonic()-began,.5)
+            self.assertEqual(origin.calls,1)
+            self.assertEqual(reader.statistics()['multipart_requests'],0)

@@ -197,6 +197,8 @@ def run(store, manifest, args):
     for target in manifest['targets']:
         tag = target['course_id']+'-'+target['sub_id']
         previous = progress['lectures'].get(tag, {})
+        if previous.get('status') == 'published':
+            continue
         if previous.get('status') == 'complete':
             candidate_files(store, target)
             continue
@@ -284,6 +286,8 @@ def review(store, manifest, completed_only=False):
         with closing(sqlite3.connect(baseline)) as conn:
             for target in manifest['targets']:
                 tag = target['course_id']+'-'+target['sub_id']
+                if progress['lectures'].get(tag, {}).get('status') == 'published':
+                    continue
                 if progress['lectures'].get(tag, {}).get('status') != 'complete':
                     if not completed_only:
                         raise ValueError('Some planned lectures are incomplete; use --completed-only to explicitly review a partial batch')
@@ -480,8 +484,19 @@ def main(argv=None):
         if any(t.get('preview_only') for t in manifest['targets']):
             raise ValueError('New-lecture previews cannot publish through historical apply')
         from scripts.local_history.publication import apply
-        revision = apply(store, manifest, store.read('approval.enc'), args.approval)
-        progress = store.read('progress.enc'); progress.update(status='published', published_revision=revision)
+        approval = store.read('approval.enc')
+        revision = apply(store, manifest, approval, args.approval)
+        progress = store.read('progress.enc')
+        for batch in approval['approvals']:
+            for target in batch['targets']:
+                tag = target['course_id']+'-'+target['sub_id']
+                progress['lectures'].setdefault(tag, {}).update(
+                    status='published', published_revision=revision,
+                    candidate_hash=target['candidate_hash'])
+        all_published = all(progress['lectures'].get(t['course_id']+'-'+t['sub_id'], {}).get('status') == 'published'
+                            for t in manifest['targets'])
+        progress.update(status='published' if all_published else 'partially_published',
+                        published_revision=revision)
         store.save('progress.enc', progress)
         print('已覆盖经预览确认的课次；data='+revision+'；未发邮件。')
     return 0

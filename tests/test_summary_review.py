@@ -184,7 +184,7 @@ class SummaryReviewTests(unittest.TestCase):
         from src.data.sharder import _build_meta_shard, _build_shard_db, shard_database, reassemble_database
         from src.pipeline.history_refresh import lesson_state
         from scripts.production_db import lecture_snapshot
-        from scripts.merge_db import merge
+        from scripts.merge_db import merge_delta as merge
         root = Path(self.tmp.name)
         _build_meta_shard(str(self.path), str(root/'meta.db'))
         _build_shard_db(str(self.path), ['1'], str(root/'course.db'))

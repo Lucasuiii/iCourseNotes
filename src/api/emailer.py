@@ -21,6 +21,8 @@ import markdown
 from pygments.formatters import HtmlFormatter
 
 from src.runtime import config
+from src.api.summary_assets import lecture_assets, portable_attachment, image_subtype
+from src.pipeline.summary_figures import FIGURE_REF
 from src.api.email_markdown import (
     build_attachment_filename,
     build_course_markdown,
@@ -209,7 +211,8 @@ def _render_latex_images(formulas: list[tuple[str, bool]]) -> dict:
     return {formula: _IMAGE_CACHE[formula] for formula in unique}
 
 
-def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
+def _md_to_html(md_text: str, cid_images: dict | None = None,
+                assets: dict[str, bytes] | None = None) -> str:
     """Convert Markdown to styled HTML, rendering LaTeX math as images.
 
     Processing order: extract LaTeX → markdown convert → restore as <img>.
@@ -225,6 +228,22 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
     latex_map: dict[str, str] = {}
     counter = 0
     marker = uuid.uuid4().hex.upper()
+    figure_map = {}
+    def stash_figure(match):
+        raw = (assets or {}).get(match[2])
+        if raw is None:
+            raise ValueError('Classroom figure assets are missing')
+        key = f'ICOURSEFIGURE{marker}{len(figure_map)}END'
+        cid = 'figure-'+match[2]
+        if cid_images is not None:
+            cid_images[cid] = raw
+            src = 'cid:'+cid
+        else:
+            src = 'data:image/jpeg;base64,'+base64.b64encode(raw).decode('ascii')
+        figure_map[key] = (f'<img src="{src}" alt="{escape(match[1], quote=True)}" '
+                           'style="max-width:100%;height:auto;">')
+        return key
+    md_text = FIGURE_REF.sub(stash_figure, md_text)
 
     def _stash(match):
         nonlocal counter
@@ -319,6 +338,8 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
 
         html = html.replace(key, img_tag)
 
+    for key, tag in figure_map.items():
+        html = html.replace(key, tag)
     return html
 
 
@@ -332,12 +353,12 @@ def _resolve_src(img_data: bytes, cid_images: dict | None) -> str:
 
 
 def _prepare_pdf_html(html: str, cid_images: dict[str, bytes]) -> str:
-    """Inline CID formula images and add print-specific CSS."""
+    """Inline CID formula/classroom images and add print-specific CSS."""
     rendered = html
     for cid, png_data in cid_images.items():
         encoded = base64.b64encode(png_data).decode("ascii")
         rendered = rendered.replace(
-            f"cid:{cid}", f"data:image/png;base64,{encoded}"
+            f"cid:{cid}", f"data:image/{image_subtype(png_data)};base64,{encoded}"
         )
     pdf_style = f"<style>{_PDF_CSS}</style>"
     if "</head>" in rendered:
@@ -564,7 +585,7 @@ class Emailer:
                     f"<small>({escape(lec['date'])})</small></h3>"
                 )
                 body_parts.append(
-                    _md_to_html(lec["summary"], cid_images=cid_images)
+                    _md_to_html(lec["summary"], cid_images=cid_images, assets=lecture_assets(lec))
                 )
                 body_parts.append("<hr>")
 
@@ -594,9 +615,10 @@ class Emailer:
         # delivery uses the HTML body plus PDF and does not duplicate content
         # with a second attachment.
         markdown_fallbacks = [
-            (
+            portable_attachment(
                 build_course_markdown(course_title, lectures),
                 build_attachment_filename(course_title, lectures),
+                lectures,
             )
             for course_title, lectures in courses.items()
         ]
@@ -628,10 +650,11 @@ class Emailer:
             print(f"[Emailer] PDF generation skipped ({type(e).__name__}).")
 
         if not pdf_attached:
-            for markdown_text, markdown_filename in markdown_fallbacks:
-                markdown_part = MIMEText(
-                    markdown_text, "markdown", "utf-8"
-                )
+            for markdown_bytes, markdown_filename in markdown_fallbacks:
+                if markdown_filename.endswith('.zip'):
+                    markdown_part = MIMEApplication(markdown_bytes, _subtype='zip')
+                else:
+                    markdown_part = MIMEText(markdown_bytes.decode('utf-8'), "markdown", "utf-8")
                 markdown_part.add_header(
                     "Content-Disposition",
                     "attachment",
@@ -642,13 +665,14 @@ class Emailer:
 
         # Attach CID images
         for cid, png_data in cid_images.items():
-            img_part = MIMEImage(png_data, "png")
+            subtype = image_subtype(png_data)
+            img_part = MIMEImage(png_data, subtype)
             img_part.add_header("Content-ID", f"<{cid}>")
             img_part.add_header("Content-Disposition", "inline",
-                                filename=f"{cid}.png")
+                                filename=f"{cid}.{subtype}")
             msg.attach(img_part)
 
         if cid_images:
-            print(f"[Emailer] Embedded {len(cid_images)} LaTeX images as CID")
+            print(f"[Emailer] Embedded {len(cid_images)} images as CID")
 
         return self._deliver(msg)

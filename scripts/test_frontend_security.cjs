@@ -104,5 +104,43 @@ index.window.close();
 // Aware timestamps remain stable across host/browser timezone choices.
 assert.equal(new window.Date('2026-10-06T12:00:00+00:00').getTime(), 1791288000000);
 assert.ok(Number.isFinite(new window.Date('2026-10-06T12:00:00').getTime()));
-dom.window.close();
-console.log('Frontend DOM security payloads and timestamp compatibility passed.');
+async function checkSubscriptions() {
+  let factory;
+  window.Alpine = {data: (name, fn) => { assert.equal(name, 'app'); factory = fn; }};
+  window.document.dispatchEvent(new window.Event('alpine:init'));
+  const app = factory();
+  app.repoOwner = 'Owner'; app.repoName = 'Repository';
+  let metadataReads = 0;
+  window.ICS.db = { getAllCoursesTerms: () => [], getMeta: () => { metadataReads++; return 'old-1,old-2'; } };
+  for (const name of ['_go','_refreshSubscribedCache','_refreshSingleRunCache','_refreshDeptCache','rebuildSubsFiltered','_toast']) app[name] = () => {};
+  window.sessionStorage.setItem('ics_creds', JSON.stringify({token:'synthetic-token'}));
+  const writes = [];
+  window.ICS.github = {setCourseIdsSecret: async (owner, repo, token, ids) => { writes.push([...ids]); return ids.join(','); }};
+  app.openSubscriptions();
+  assert.deepEqual(Array.from(app.subscribedIds), ['old-1','old-2']);
+  assert.equal(metadataReads, 1);
+  app.subscribedIds = [];
+  await app.saveSubscriptions();
+  app.openSubscriptions();
+  assert.deepEqual(Array.from(app.subscribedIds), [], 'a successfully saved empty subscription is authoritative');
+  assert.equal(metadataReads, 1, 'empty cached list must not reload stale database metadata');
+  assert.deepEqual(writes, [[]]);
+  app.repoName = 'Another';
+  app.openSubscriptions();
+  assert.deepEqual(Array.from(app.subscribedIds), ['old-1','old-2'], 'repository caches must not leak into another repository');
+  app.repoName = 'repository'; app.repoOwner = 'owner';
+  app.openSubscriptions();
+  assert.deepEqual(Array.from(app.subscribedIds), [], 'repository identity is case insensitive');
+  const key = Object.keys(window.sessionStorage).find(k => k.endsWith('owner%2Frepository'));
+  assert.ok(key, 'the cache key must identify the repository');
+  window.sessionStorage.setItem(key, JSON.stringify([{}]));
+  app.openSubscriptions();
+  assert.deepEqual(Array.from(app.subscribedIds), ['old-1','old-2'], 'invalid cache must fall back to metadata');
+  window.confirm = () => true;
+  app.clearAllData();
+  assert.equal(Object.keys(window.sessionStorage).filter(k => k.startsWith('ics_lastSubscribed:')).length, 0);
+}
+checkSubscriptions().then(() => {
+  dom.window.close();
+  console.log('Frontend DOM security, subscription cache, and timestamp compatibility passed.');
+}).catch(error => { console.error(error); process.exitCode = 1; dom.window.close(); });

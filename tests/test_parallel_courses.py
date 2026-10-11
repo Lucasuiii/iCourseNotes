@@ -3,7 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from scripts.parallel_courses import MAX_PARALLEL, configured_courses, selected_course, course_delta, seal, unseal
-from scripts.merge_db import merge
+from scripts.merge_db import merge_delta as merge
 from src.data.database import Database
 
 

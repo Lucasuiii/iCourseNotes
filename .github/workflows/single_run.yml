@@ -165,6 +165,7 @@ jobs:
     - name: Record database state
       id: db-before
       run: |
+        python -c "from scripts.merge_db import snapshot_baseline; snapshot_baseline('data/icourse.db' if __import__('os').path.isfile('data/icourse.db') else ':memory:', 'data/baseline.db')"
         if [ -f data/icourse.db ]; then
           echo "hash=$(md5sum data/icourse.db | cut -d' ' -f1)" >> $GITHUB_OUTPUT
         else
@@ -248,28 +249,12 @@ jobs:
           exit 0
         fi
 
-        remote_ref=$(git ls-remote --heads origin refs/heads/data) \
-          || { echo "::error::Could not inspect the data branch before publish."; exit 1; }
-        if [ -n "$remote_ref" ]; then
-          git fetch --depth=1 origin "+refs/heads/data:refs/remotes/origin/data" \
-            || { echo "::error::Could not refresh the data branch before publish."; exit 1; }
-        fi
-        DEPLOY_DB=data/icourse.db
-        if git rev-parse origin/data >/dev/null 2>&1 && \
-           git cat-file -e origin/data:data/icourse-index.enc 2>/dev/null; then
-          rm -rf data/remote_sharded
-          mkdir -p data/remote_sharded/shards
-          git show origin/data:data/icourse-index.enc > data/remote_sharded/icourse-index.enc
-          shard_paths=$(git ls-tree -r --name-only origin/data | grep '^data/shards/' || true)
-          for path in $shard_paths; do
-            base=$(basename "$path")
-            git show "origin/data:$path" > "data/remote_sharded/shards/$base"
-          done
-          python scripts/db_shard.py reassemble data/remote_sharded data/remote.db
-          echo "Merging local changes into latest remote..."
-          python scripts/merge_db.py data/icourse.db data/remote.db
-          DEPLOY_DB=data/remote.db
-        fi
+        # Decode exactly one remote revision, then merge only changes since
+        # the pre-run snapshot. The push must use that same revision as parent.
+        export GH_TOKEN="$GITHUB_TOKEN"
+        remote_revision=$(python -c "from scripts.production_db import load_remote; print(load_remote('data/remote.db') or '')")
+        python scripts/merge_db.py data/icourse.db data/remote.db --baseline data/baseline.db
+        DEPLOY_DB=data/remote.db
 
         python scripts/validate_db.py "$DEPLOY_DB"
 
@@ -283,8 +268,8 @@ jobs:
 
         git init -q
         git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-        if [ -n "$remote_ref" ]; then
-          git fetch -q --depth=1 origin data
+        if [ -n "$remote_revision" ]; then
+          git fetch -q --depth=1 origin "$remote_revision"
           git checkout -q -b data FETCH_HEAD
         else
           git checkout -q -b data

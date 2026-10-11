@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.merge_db import merge
+from scripts.merge_db import merge_delta as merge
 from src.data.database import Database
 
 

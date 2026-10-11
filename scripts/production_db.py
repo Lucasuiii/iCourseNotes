@@ -109,7 +109,7 @@ def load_remote(destination):
 
 def merge_lecture(delta, remote, course_id, sub_id):
     """Preserve newer histories, tombstones and mail receipts; advance this lesson only."""
-    from scripts.merge_db import merge
+    from scripts.merge_db import merge_delta
     validate_database(str(delta)); validate_database(str(remote))
     with sqlite3.connect(delta) as local, sqlite3.connect(remote) as target:
         local.row_factory = target.row_factory = sqlite3.Row
@@ -139,7 +139,7 @@ def merge_lecture(delta, remote, course_id, sub_id):
             names = list(previous); assignments = ','.join('"'+n+'"=?' for n in names)
             local.execute('UPDATE lectures SET '+assignments+' WHERE sub_id=?', [previous[n] for n in names]+[str(sub_id)])
             local.execute('DELETE FROM meta'); local.execute('DELETE FROM ppt_pages')
-    merge(str(delta), str(remote))
+    merge_delta(str(delta), str(remote))
     if not protected:
         with sqlite3.connect(remote) as conn:
             conn.execute('ATTACH DATABASE ? AS delta', (str(delta),))
@@ -167,12 +167,12 @@ def publish(delta, course_id=None, sub_id=None):
             # merge_lecture may protect/migrate its source: retry against a fresh copy.
             local = tmp/'delta.db'; shutil.copyfile(delta, local)
             if course_id is None:
-                from scripts.merge_db import merge
+                from scripts.merge_db import merge_delta
                 with sqlite3.connect(local) as conn:
                     if any(conn.execute('SELECT COUNT(*) FROM '+t).fetchone()[0]
                            for t in ('courses', 'lectures', 'ppt_pages')):
                         raise ValueError('Catalog delta contains classroom state')
-                merge(str(local), str(merged))
+                merge_delta(str(local), str(merged))
             else:
                 merge_lecture(local, merged, course_id, sub_id)
             checkout = tmp/'checkout'

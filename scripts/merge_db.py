@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Merge local DB into remote DB without resurrecting deleted content.
+"""Publish full snapshots with a pre-run baseline and explicit conflicts.
 
-Used at deploy time to safely combine results from concurrent workflow runs.
-For ordinary rows, fields progress forward (null -> non-null).  A persistent
-lecture tombstone wins over stale transcript, summary, and PPT data.
+The production single-lesson/catalog delta helpers retain their additive merge;
+full snapshots must use --baseline so untouched histories stay remote-owned.
 """
 
 import os
 import sqlite3
 import sys
 import json
+from contextlib import closing
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -18,6 +19,84 @@ from src.data.schema import (
     PPT_PAGES_MIGRATION_COLUMNS,
     SCHEMA_SQL,
 )
+
+
+class MergeConflict(ValueError):
+    """Both writers changed the same database scope since the baseline."""
+
+
+_KEYS = {'courses': ('course_id',), 'lectures': ('sub_id',),
+         'ppt_pages': ('sub_id', 'page_num'), 'meta': ('key',),
+         'all_courses': ('course_id', 'term')}
+
+
+def _state(path):
+    # Normalize old schemas in memory; never modify the frozen baseline.
+    if not os.path.isfile(path):
+        raise ValueError('Merge input database is missing')
+    with closing(sqlite3.connect(path)) as source, closing(sqlite3.connect(':memory:')) as db:
+        source.backup(db)
+        _ensure_schema(db)
+        db.row_factory = sqlite3.Row
+        return {table: {tuple(row[k] for k in keys): dict(row)
+                        for row in db.execute('SELECT * FROM '+table)}
+                for table, keys in _KEYS.items()}
+
+
+def _merge_with_baseline(local_path, remote_path, baseline_path):
+    from src.pipeline.history_refresh import scope_keys
+    before, local, remote = map(_state, (baseline_path, local_path, remote_path))
+    changes = []
+    scoped_meta = set()
+    for sid in set(before['lectures']) | set(local['lectures']) | set(remote['lectures']):
+        courses = {s['lectures'][sid]['course_id'] for s in (before, local, remote)
+                   if sid in s['lectures']}
+        keys = {key for course in courses for key in scope_keys(course, sid[0])}
+        scoped_meta.update((key,) for key in keys)
+        def lesson(s):
+            return {'lectures': {sid: s['lectures'][sid]} if sid in s['lectures'] else {},
+                    'ppt_pages': {k: v for k, v in s['ppt_pages'].items() if k[0] == sid[0]},
+                    'meta': {k: v for k, v in s['meta'].items() if k[0] in keys}}
+        old, ours, theirs = map(lesson, (before, local, remote))
+        if ours == old or ours == theirs:
+            continue
+        if theirs != old:
+            raise MergeConflict('Concurrent lecture changes require review')
+        for table in ours:
+            for key in set(old[table]) | set(ours[table]):
+                changes.append((table, key, ours[table].get(key)))
+    for table in ('courses', 'all_courses', 'meta'):
+        for key in set(before[table]) | set(local[table]):
+            if table == 'meta' and key in scoped_meta:
+                continue
+            old, ours, theirs = (s[table].get(key) for s in (before, local, remote))
+            if ours == old or ours == theirs:
+                continue
+            if theirs != old:
+                raise MergeConflict('Concurrent '+table+' changes require review')
+            changes.append((table, key, ours))
+    with closing(sqlite3.connect(remote_path)) as db:
+        _ensure_schema(db)
+        with db:
+            # All conflicts are checked before the first write. SQLite rolls
+            # back the whole batch if any row cannot be applied.
+            for table, key, row in changes:
+                where = ' AND '.join(k+'=?' for k in _KEYS[table])
+                db.execute('DELETE FROM '+table+' WHERE '+where, key)
+                if row is not None:
+                    names = list(row)
+                    db.execute('INSERT INTO '+table+' ('+','.join(names)+') VALUES ('+
+                               ','.join('?' for _ in names)+')', [row[k] for k in names])
+
+
+def snapshot_baseline(source_path, target_path):
+    if source_path != ':memory:' and not os.path.isfile(source_path):
+        raise ValueError('Baseline source database is missing')
+    with closing(sqlite3.connect(source_path)) as source, closing(sqlite3.connect(target_path)) as target:
+        source.backup(target)
+        _ensure_schema(target)
+        target.commit()
+
 
 
 def _ensure_schema(conn: sqlite3.Connection):
@@ -58,8 +137,15 @@ def _migrate_attached(conn: sqlite3.Connection, schema: str):
                 )
 
 
-def merge(local_path: str, remote_path: str):
-    """Merge local changes into remote DB; tombstones win over stale data."""
+def merge(local_path: str, remote_path: str, baseline_path: str | None = None):
+    """Merge a full snapshot only with its pre-run baseline."""
+    if baseline_path is None or not os.path.isfile(baseline_path):
+        raise ValueError('Publication baseline is missing')
+    return _merge_with_baseline(local_path, remote_path, baseline_path)
+
+
+def merge_delta(local_path: str, remote_path: str):
+    """Additive merge for explicitly scoped/protected production deltas."""
     conn = sqlite3.connect(remote_path)
     _ensure_schema(conn)
     conn.execute("ATTACH DATABASE ? AS local", (local_path,))
@@ -245,7 +331,6 @@ def merge(local_path: str, remote_path: str):
                     WHERE excluded.last_seen_at > all_courses.last_seen_at
                 """)
 
-    finally:
         # Persist COURSE_IDS from the CI secret into the meta table so
         # the frontend can read the current subscription list from the
         # metadata shard without relying on localStorage alone.
@@ -257,6 +342,7 @@ def merge(local_path: str, remote_path: str):
             )
             conn.commit()
 
+    finally:
         try:
             conn.execute("DETACH DATABASE local")
         except sqlite3.Error:
@@ -265,9 +351,11 @@ def merge(local_path: str, remote_path: str):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} LOCAL_DB REMOTE_DB")
-        print("Merges LOCAL_DB into REMOTE_DB (additive-only).")
-        sys.exit(1)
-    merge(sys.argv[1], sys.argv[2])
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('local_db')
+    parser.add_argument('remote_db')
+    parser.add_argument('--baseline', required=True, help='Database snapshot from before the run')
+    args = parser.parse_args()
+    merge(args.local_db, args.remote_db, args.baseline)
     print("Merge complete.")

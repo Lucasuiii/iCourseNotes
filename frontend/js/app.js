@@ -43,6 +43,8 @@ async function _cachePut(key, value) {
 
 /* ── Credential helpers (sessionStorage only) ── */
 const _LS = "ics_";
+const _subscriptionCacheKey = (owner, repo) => _LS + "lastSubscribed:" +
+  encodeURIComponent(String(owner).toLowerCase() + "/" + String(repo).toLowerCase());
 const _loadCreds = () => { try { return JSON.parse(sessionStorage.getItem(_LS + "creds")); } catch { return null; } };
 const _saveCreds = (c) => sessionStorage.setItem(_LS + "creds", JSON.stringify(c));
 const _loadSettings = () => { try { return JSON.parse(localStorage.getItem(_LS + "settings")) || {}; } catch { return {}; } };
@@ -748,6 +750,9 @@ document.addEventListener("alpine:init", () => {
       localStorage.removeItem(_LS + "settings");
       localStorage.removeItem(_LS + "lastSubscribed");
       sessionStorage.removeItem(_LS + "lastSubscribed");
+      for (var key of Object.keys(sessionStorage)) {
+        if (key.startsWith(_LS + "lastSubscribed:")) sessionStorage.removeItem(key);
+      }
       _sessionBlobCache.clear();
       try { indexedDB.deleteDatabase(_legacyIdbName); } catch (e) {}
       this.view = "setup";
@@ -784,13 +789,19 @@ document.addEventListener("alpine:init", () => {
 
       // Load subscription (sessionStorage → meta table fallback)
       this.subscribedIds = [];
+      var cachePresent = false;
+      var cacheKey = _subscriptionCacheKey(this.repoOwner, this.repoName);
       try {
         var cached = JSON.parse(
-          sessionStorage.getItem(_LS + "lastSubscribed") || "null"
+          sessionStorage.getItem(cacheKey) || "null"
         );
-        if (Array.isArray(cached)) this.subscribedIds = cached.map(String);
+        if (Array.isArray(cached) && cached.every(id =>
+          (typeof id === "string" || Number.isSafeInteger(id)) && /^[A-Za-z0-9._:-]+$/.test(String(id)))) {
+          this.subscribedIds = cached.map(String);
+          cachePresent = true;
+        }
       } catch {}
-      if (!this.subscribedIds.length) {
+      if (!cachePresent) {
         try { var metaRaw = ICS.db.getMeta("course_ids"); } catch (e) { metaRaw = null; }
         if (metaRaw) {
           this.subscribedIds = metaRaw.split(",")
@@ -798,7 +809,7 @@ document.addEventListener("alpine:init", () => {
             .filter(Boolean);
           try {
             sessionStorage.setItem(
-              _LS + "lastSubscribed",
+              cacheKey,
               JSON.stringify(this.subscribedIds),
             );
           } catch {}
@@ -962,7 +973,7 @@ document.addEventListener("alpine:init", () => {
         );
         try {
           sessionStorage.setItem(
-            _LS + "lastSubscribed",
+            _subscriptionCacheKey(this.repoOwner, this.repoName),
             JSON.stringify(this.subscribedIds),
           );
         } catch {}

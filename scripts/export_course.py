@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.runtime import config
 from src.data.database import Database  # noqa: E402
+from src.api.summary_assets import load_figures, lecture_assets, portable_attachment, image_subtype
 from src.api.emailer import (  # noqa: E402
     _EMAIL_CSS, _PYGMENTS_CSS, _md_to_html, render_html_pdf,
 )
@@ -72,7 +73,7 @@ def _build_html(course_title: str, teacher: str, lectures: list[dict],
             f"<h2>{escape(lec['sub_title'])} "
             f"<small>({escape(lec['date'])})</small></h2>"
         )
-        body_parts.append(_md_to_html(lec["summary"], cid_images=cid_images))
+        body_parts.append(_md_to_html(lec["summary"], cid_images=cid_images, assets=lecture_assets(lec)))
         body_parts.append("<hr>")
 
     extra_css = f"\n{_PDF_LATEX_CSS}" if pdf else ""
@@ -132,10 +133,11 @@ def _send_html_email(subject: str, html: str, plain: str,
 
     if cid_images:
         for cid, png_data in cid_images.items():
-            img_part = MIMEImage(png_data, "png")
+            subtype = image_subtype(png_data)
+            img_part = MIMEImage(png_data, subtype)
             img_part.add_header("Content-ID", f"<{cid}>")
             img_part.add_header("Content-Disposition", "inline",
-                                filename=f"{cid}.png")
+                                filename=f"{cid}.{subtype}")
             msg.attach(img_part)
 
     with _smtp_connect() as server:
@@ -180,7 +182,7 @@ def _send_md_email(subject: str, md_content: list[tuple[bytes, str]]) -> None:
     msg["To"] = "undisclosed-recipients:;"
 
     for md_bytes, filename in md_content:
-        part = MIMEBase("text", "markdown", name=filename)
+        part = MIMEBase("application", "zip", name=filename) if filename.endswith('.zip') else MIMEBase("text", "markdown", name=filename)
         part.set_payload(md_bytes)
         encoders.encode_base64(part)
         part.add_header("Content-Disposition", "attachment", filename=filename)
@@ -234,6 +236,9 @@ def _query_course(db: Database, course_id: str,
     if not lectures:
         print("No summaries found for requested course – skipping.")
         return None
+    for lecture in lectures:
+        lecture['course_id'] = str(course_id)
+        load_figures(db, lecture)
 
     print(f"Found {len(lectures)} summarized lecture(s).")
     return course_title, teacher, lectures
@@ -337,8 +342,8 @@ def main():
             titles.append(course_title)
 
             markdown:str = _build_plain(course_title, teacher, lectures)
-            markdown_bytes = markdown.encode("utf-8")
             filename = f"{_safe_filename(course_title)}_summaries.md"
+            markdown_bytes, filename = portable_attachment(markdown, filename, lectures)
             attachments.append((markdown_bytes, filename))
             print(f"  Markdown ready ({len(markdown_bytes)} bytes; filename redacted)")
 

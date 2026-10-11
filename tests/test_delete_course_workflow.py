@@ -148,7 +148,7 @@ class DeleteCourseWorkflowTests(unittest.TestCase):
     def test_pending_lecture_deletion_survives_encrypted_reload_and_catalog_sync(self):
         from unittest.mock import MagicMock, patch
         import main
-        from scripts.merge_db import merge
+        from scripts.merge_db import merge_delta as merge
         with self.db.conn:
             self.db.conn.execute("UPDATE lectures SET processed_at=NULL, summary=NULL, transcript=NULL WHERE sub_id='1'")
             self.db.conn.execute("DELETE FROM meta WHERE key IN ('summary_review:1','summary_figures:1')")

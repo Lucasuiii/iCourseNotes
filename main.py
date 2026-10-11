@@ -260,6 +260,9 @@ def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
     for course_items in courses.values():
         reporter.email_summary(len(course_items))
         try:
+            from src.api.summary_assets import load_figures
+            for item in course_items:
+                load_figures(db, item)
             if emailer.send(course_items):
                 db.mark_emailed_batch(
                     [item["sub_id"] for item in course_items]

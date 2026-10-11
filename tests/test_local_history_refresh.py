@@ -177,6 +177,42 @@ class LocalHistoryTests(unittest.TestCase):
         self.assertIn('原笔记', (self.store.root/'review.md').read_text())
         self.assertEqual((self.store.root/'review.md').stat().st_mode & 0o777, 0o600)
 
+    def test_partial_cli_apply_can_resume_and_publish_only_remaining_lesson(self):
+        self.candidate(self.targets[0])
+        progress = self.store.read('progress.enc')
+        progress['lectures']['10-2'] = {'status':'paused'}
+        self.store.save('progress.enc', progress)
+        entry.review(self.store, self.manifest, completed_only=True)
+        def cli_apply(revision):
+            approval = self.store.read('approval.enc')
+            with patch.object(entry, 'REPO', self.root), \
+                 patch.dict(os.environ, DB_ENCRYPTION_KEY='k'*64, GITHUB_REPOSITORY=self.manifest['repository']), \
+                 patch.object(publication, 'apply', return_value=revision):
+                self.assertEqual(entry.main(['--run-dir',str(self.store.root),'apply',
+                                             '--approval',policy.digest(approval)]), 0)
+        cli_apply('c'*40)
+        progress = self.store.read('progress.enc')
+        self.assertEqual(progress['status'], 'partially_published')
+        self.assertEqual(progress['lectures']['10-1']['status'], 'published')
+        self.assertEqual(progress['lectures']['10-2']['status'], 'paused')
+        # The published candidate may be removed; resumption must never read
+        # or regenerate it. Only the unfinished lesson reaches processing.
+        shutil.rmtree(self.store.root/'10-1')
+        args = SimpleNamespace(hours=1,retry_failed=True)
+        with patch.object(entry,'verify_resume'), patch.object(entry,'doctor',return_value=0), \
+             patch.object(runtime,'process', side_effect=lambda store, manifest, target, deadline, **kw: self.candidate(target)) as process:
+            self.assertEqual(entry.run(self.store,self.manifest,args), 0)
+            self.assertEqual([call.args[2]['sub_id'] for call in process.call_args_list], ['2'])
+        entry.review(self.store,self.manifest)
+        approval = self.store.read('approval.enc')
+        self.assertEqual([a['targets'][0]['sub_id'] for a in approval['approvals']], ['2'])
+        self.assertTrue(publication.prepare_database(self.store,self.manifest,approval,self.remote))
+        cli_apply('d'*40)
+        progress = self.store.read('progress.enc')
+        self.assertEqual(progress['status'], 'published')
+        self.assertEqual(progress['lectures']['10-1']['published_revision'], 'c'*40)
+        self.assertEqual(progress['lectures']['10-2']['published_revision'], 'd'*40)
+
     def test_replacements_preserve_receipts_and_unselected_rows_and_are_idempotent(self):
         for target in self.targets: self.candidate(target)
         entry.review(self.store, self.manifest)

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from src.ai.automatic_glossary import validated_keywords, active_terms, AutomaticGlossary
 from src.data.database import Database
 from src.ai.summarizer import Summarizer
-from scripts.merge_db import merge
+from scripts.merge_db import merge_delta as merge
 from src.ai.automatic_glossary import term_stages
 
 

@@ -389,7 +389,20 @@ class RecoveryBudgetTests(unittest.TestCase):
     def test_drip_body_cannot_extend_total_deadline(self):
         with Origin(b'0123456789','drip') as origin,AACRangeTransport(origin.client,origin.url) as reader:
             reader.read(0,1);reader.deadline=time.monotonic()+.08;began=time.monotonic()
-            with self.assertRaises(MediaTransportError) as e:reader.fetch([(0,2),(7,9)])
+            # Keep the body deadline independent from byte-zero signing waits.
+            with self.assertRaises(MediaTransportError) as e:reader.fetch([(1,2),(7,9)])
             self.assertEqual(e.exception.code,'aac_deadline')
             self.assertLess(time.monotonic()-began,.5)
+            self.assertEqual(origin.calls,2)
+            self.assertEqual(reader.statistics()['multipart_requests'],1)
             self.assertEqual(reader.statistics()['multipart_body_bytes'],0)
+
+    def test_byte_zero_signing_wait_cannot_extend_total_deadline(self):
+        with Origin(b'0123456789') as origin,AACRangeTransport(origin.client,origin.url) as reader:
+            reader.read(0,1);reader.deadline=time.monotonic()+.08;began=time.monotonic()
+            with patch('src.runtime.media_transport.time.time',return_value=reader._last_initial_time):
+                with self.assertRaises(MediaTransportError) as e:reader.fetch([(0,2),(7,9)])
+            self.assertEqual(e.exception.code,'aac_deadline')
+            self.assertLess(time.monotonic()-began,.5)
+            self.assertEqual(origin.calls,1)
+            self.assertEqual(reader.statistics()['multipart_requests'],0)

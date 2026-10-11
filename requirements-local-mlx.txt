@@ -1,0 +1,4 @@
+# Apple Silicon Mac only; separate from GitHub CPU inference dependencies.
+-r requirements.txt
+mlx==0.32.3
+mlx-qwen3-asr==0.4.4

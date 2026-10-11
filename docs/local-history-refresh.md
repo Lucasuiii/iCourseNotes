@@ -1,137 +1,84 @@
-# 本机重做历史笔记
+# 本机识别与笔记生成
 
-入口是仓库根目录的 `local-history.command`，底层命令为 `python -m scripts.local_history_refresh`。当前实现使用 **Mac 的 MLX / Apple GPU**，接入现有 Qwen3-ASR 1.7B 本地模型。Windows CUDA 适配尚未实现。
+`local-history.command` 是 Mac 的启动入口，底层命令为 `python -m scripts.local_history_refresh`。从 GitHub 克隆 main 后可以在自己的电脑运行；当前本地后端支持 **Apple Silicon / MLX**，Windows CUDA 后端尚未接入。下载、VAD 和 Qwen3-ASR 在本机执行；课件 OCR、作业截图与精选配图沿用共享处理链，摘要、作业视觉读取及理论复核使用配置的云端服务。
 
-2026-10-10 已接入 `codex/aac-range-exploration` 的已验证获取实现（固定提交 `2f062e1e7f98d1b1d9a17718f27893017de57038`）。本地入口默认 `--audio-mode aac_auto`：从原 MP4 索引定位音轨，验证 AAC 批次后送 FFmpeg，输出原有 16 kHz 单声道 PCM；全部 packet 覆盖和 PCM 终点误差不超过 1 ms 才进入识别。遇到明确不支持的格式才允许在输出前沿同一来源回退。认证、网络、缺包、来源改变或输出后失败直接停止。
+## 安装
 
-需要原获取方式时使用 `--audio-mode mp4`，放在子命令之前。获取方式会冻结在计划及候选证据中，更改后须新建计划。已有旧代码的 `entry-validation` 计划保留，请勿直接续跑；创建独立的新目录。共享普通入口已对齐 main：默认 AAC，并在获取和预取路径保留原视频时间轴；本地 MLX 和媒体恢复适配继续保留。
-
-本地获取允许有界会话恢复：先验证现有门户和用户身份；媒体再次明确要求登录时，最多补一次完整的新登录并核对同一身份，从原字节／AAC 批次续读。若第一次现有会话探测失败就已使用新登录，则不再补第二次。每次获取最多一次现有会话探测和一次新登录，每个范围仍最多三次尝试；持续失效、来源改变、未知跳转或完整性不合格仍终止。此升级仅由本地入口启用，普通生产调用保持原来的恢复上限。
-
-本地默认 `--campus-mode auto`：先用不含凭据的探测检查校园直连服务，可达时使用直连，否则使用 WebVPN；也可在子命令前显式指定 `direct` 或 `webvpn`。选择策略冻结在计划中，实际接入方式保存到课次检查点并沿用至会话恢复；不会在提交凭据之后自动切换接入方式。本地媒体重新登录的单次读超时为 60 秒、总预算 120 秒，仍只允许一次新登录，并受批次截止时间和取消控制约束。
-
-下载和主要语音识别在本机运行；新计划默认 `--review-scope theory`：课件去重与OCR、完整转录、失败识别缺口补救、连续截图／平台截图、DeepSeek作业读图和精选图继续保留。生成摘要后只检查概念、公式、适用条件、推导与证明方向；不默认做逐句疑点选择、CPU强制定位或局部二次语音复核。作业截图沿原识别块时间窗口获取，不要求精确口播定位。图片失败时保留未核实说明，理论正确的摘要仍可完成。摘要／自审不指定 `max_tokens`，使用服务默认额度；未完成响应依然不能算通过。邮件、正式覆盖仍需原有明确授权。
-
-Qwen3-ASR 仍是本机Apple GPU语音模型。理论模式不要求CPU强制对齐模型。需要兼容原逐句复核流程时，在子命令前加 `--review-scope full`；该模式才需要 `--aligner` 指定的Qwen3-ForcedAligner-0.6B及原云复核依赖。复核范围冻结入新计划和课次检查点，不能通过改参数把旧失败请求改标通过；更换模式需要独立新计划，原输入及失败证据保留。
-
-题号证据规则已同步远端main已合并的单帧改动：单帧清晰数字以“存疑、待核实”线索保留，不升级为已确认作业；多帧／语音交叉佐证、普通公式排除、冲突拒绝和小题结构保留规则继续生效。
-
-默认无邮件、无自动发布；术语学习与 main 相同，默认关闭，可用 `--automatic-terms` 明确启用。启用时从冻结基线中读取更早课次的核实证据，术语快照和开关冻结在计划中；关键词保存在候选，正式覆盖仍需 review／apply。
-
-识别缺口策略已对齐 main `937534f`：先执行有界 Qwen 重试和豆包补识别，整堂剩余缺口严格小于15秒时才可继续；笔记与预览明确“不完整转录”、总时长和原录播时段，禁止补写缺失内容。达到15秒、音频不完整、时间轴不可信、未知请求或非缺口复核失败仍拒绝。原始识别块、补识别派生块及覆盖报告一致性均在候选与正式覆盖前复查。
-
-## 当前 Mac 的使用方法
-
-本机已存在的 Python 环境、模型、VAD、私密配置和密钥通过 `.local-history-refresh/settings.json` 的路径引用接入；没有复制密钥到仓库，也没有修改原模型。设置文件及所有运行产物均被 Git 忽略。以下命令在仓库根目录运行。
-
-当前外层项目目录 `/Users/lumen/Documents/ChatGPT/icourse_subscriber` 也有同名启动入口，会自动转到指定开发工作树；因此可以直接在该目录执行下列命令。
+需要 Git、GitHub CLI、FFmpeg、Apple Silicon Mac 和 Python。本地实际验证环境为 Python 3.13；双块后端固定 `mlx-qwen3-asr==0.4.4`，避免内部解码接口随升级改变。共享模块还使用 Cairo/Pango 原生库；已有 Homebrew 时可先执行 `brew install ffmpeg gh cairo pango`。若遇到找不到已安装 Cairo 的错误，在当前终端设置 `export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib"` 后再启动，不修改系统配置。依赖与项目的普通 CPU/GitHub 运行环境分开安装：
 
 ```bash
-./local-history.command doctor
-./local-history.command plan --limit 1
-./local-history.command run --hours 2
-./local-history.command status
-./local-history.command review
+git clone https://github.com/Lucasuiii/iCourseNotes.git
+cd iCourseNotes
+python3 -m venv .venv-local
+.venv-local/bin/python -m pip install -r requirements-local-mlx.txt
+gh auth login
+gh auth setup-git
+cp .env.example .env.local
+chmod 600 .env.local
 ```
 
-`doctor` 不登录校园、不加载模型、不调用服务。`plan` 只读取正式 `data`，选择已完成笔记（可用 `plan --lecture-id 655150` 精确选择课次，可重复；不可用时不会换成别堂），并冻结课次 ID、基线状态、代码和模型指纹；不会下载音频。当前订阅课程、允许时间和排除规则均生效。已删除、未完整、未来日期和排除课次不会进入计划。每次计划最长 256 堂。
+在 `.env.local` 中填写校园账号、`COURSE_IDS`、正式 data 对应的 `DB_ENCRYPTION_KEY`，以及摘要/视觉服务的 API 配置。配图需要 `DEEPSEEK_API_KEY`；可选识别缺口补救使用 `DOUBAO_ASR_API_KEY`。不要为既有 data 重新生成密钥。无需填写 SMTP 配置，本地入口不发邮件。
 
-先验证一堂，再为通宵任务创建独立目录：
+提前准备好 Qwen3-ASR-1.7B **MLX bf16** 权重和 Silero VAD ONNX。入口不自动下载权重，也不修改它们。默认模型目录为 `~/Library/Application Support/iCourseQwen/models/qwen3-asr-1.7b-bf16`，默认 VAD 为仓库根目录 `silero_vad.onnx`；可以在子命令前用 `--model` 和 `--vad-model` 指定已有路径。使用已有 Python 环境时，设置 `LOCAL_HISTORY_PYTHON` 指向该环境的 Python；否则启动器优先使用 `.venv-local/bin/python`。
+
+私密 env、密钥及 VAD 路径也可放进 `.local-history-refresh/settings.json`，避免每次传参；文件权限须为600，运行目录权限为700。这个设置文件和运行产物均被 Git 忽略：
+
+```json
+{
+  "env_files": ["/private/login.env", "/private/providers.env"],
+  "key_file": "/private/database.key",
+  "vad_model": "/path/to/silero_vad.onnx"
+}
+```
+
+上述路径是占位示例，替换为自己实际文件。没有 settings 时，按下方命令直接传入 `.env.local`。
+
+## 先试一堂
+
+全局参数放在子命令前，恢复时保持相同参数。下面使用双块解码；想用串行改为 `--mlx-batch-size 1`，并新建运行目录。
 
 ```bash
-./local-history.command --run-dir .local-history-refresh/overnight plan
-./local-history.command --run-dir .local-history-refresh/overnight run --hours 10
-./local-history.command --run-dir .local-history-refresh/overnight status
-./local-history.command --run-dir .local-history-refresh/overnight review
+./local-history.command --env-file .env.local --mlx-batch-size 2 doctor
+./local-history.command --env-file .env.local --mlx-batch-size 2 plan --limit 1
+./local-history.command --env-file .env.local --mlx-batch-size 2 run --hours 2
+./local-history.command --env-file .env.local --mlx-batch-size 2 status
+./local-history.command --env-file .env.local --mlx-batch-size 2 review
 ```
 
-同一计划重复 `run` 会接着做，已完成的音频块不会重识别。失败课次默认跳过；显式加 `--retry-failed` 才会重试。每堂课重新核对冻结 ID 和日期；不使用“最新一堂”的排名。下载必须完整且解码无错误；识别出现未解决音频缺口不会进入覆盖预览。
+`doctor` 只检查环境，不登录校园、不加载模型、不调用服务。`plan` 只读正式 data，选择已完成笔记并冻结课程、日期、源码、权重、依赖和输入配置。用 `plan --lecture-id <课次ID>` 精确选择历史课次，可重复；排除课次和私密课表规则继续生效。不可用时不会自动换成别堂。
 
-`status` 可显示当前获取／VAD／课件／识别／笔记阶段及已保存的识别块数。AAC 下载过程中断时重新获取该堂音频；完成后的音频与识别块按现有检查点继续复用。当前本地入口等待完整音频后执行 VAD，未启用获取与识别同时进行；AAC 下载器本身可以逐步输出 PCM。
+新课使用明确的 `plan --new-lecture <课次ID> --course-id <课程ID> --date YYYY-MM-DD`。这种计划仅生成本地预览，运行时再次核对校园目录中的课次和日期，不允许历史 `apply`。
 
-时间预算在阶段和块边界检查，并传给下载等待和识别；正在执行的 OCR、API 或原生 GPU 算子可能让实际停止时间超过预算。Mac 要接电、关闭自动睡眠，并保持校园网络/WebVPN可用。入口在登录前检查本仓库相关 Actions；发现仍在运行则阻止本地获取，避免主动叠加登录。该检查不能防止其他设备或随后启动的任务使用同一账号。
+`run` 顺序获取课程资源，等待完整音频后执行 VAD 与识别，再生成候选笔记；每块独立保存加密检查点。双块解码使用一个 bf16 模型，音频编码仍串行，每条结果保持自己的顺序、时间位置和原有有界补救。[双块调度说明](local-mlx-batch.md)
 
-并发检查拦截会显示 `blocked`、具体 Actions ID 和原因；它不是获取或识别失败。相关任务结束后执行原 `run` 命令即可继续，无须 `--retry-failed`。
+重复 `run` 会复用已完成的块；失败课次默认跳过，显式 `--retry-failed` 才会重新进入失败课次。已有不明确的模型请求仍阻止自动重放。时间预算在阶段和块边界检查，正在执行的 API/OCR/GPU 算子可能超过预算。Mac 应接电并保持唤醒。
 
-用户明确允许与云端任务同时登录时，可在本次 `run` 添加 `--allow-active-actions`。入口仍只读检查并记录相关运行 ID，然后继续登录；不取消或改写 Actions，授权开关仅对这次调用生效，音频完整性和发布审核不变。
+批量任务使用独立运行目录，每次命令都加同一个 `--run-dir .local-history-refresh/overnight`。`status` 可以在任务持锁时只读阶段和已保存块数；`review` 生成原/新笔记对照，导出摘要与入选图片。完整ASR及整理转录保留在私密候选和识别检查点，不由该入口自动清理。
 
-## 明确覆盖到 data
+## 获取与复核
 
-`review` 会产生私密的 `review.md`，展示原笔记、新笔记、转录字数变化和覆盖指纹。默认整份计划都完成才生成预览；想只覆盖成功部分，需要明确使用 `review --completed-only`。
+默认 `--audio-mode aac_auto`：从原 MP4 索引定位 AAC 音轨，校验来源、范围、packet覆盖和原时间轴，解码为16 kHz单声道PCM。只有明确不支持的格式才在输出前沿同一来源回退MP4；认证、缺包、来源变化和不完整获取直接停止。可显式用 `--audio-mode mp4`。
 
-读完预览后，用它输出的 **完整指纹** 执行：
+默认 `--campus-mode auto` 先做无凭据校园直连探测，不可达才选WebVPN；登录后不自动切换。媒体恢复最多一次现有会话探测和一次新登录，并核对同一身份与来源。该本地升级不改变普通云端入口的恢复上限。
+
+入口在校园登录前只读检查相关 Actions；发现活动任务时记为 `blocked`，任务结束后原命令可继续。用户明确允许同时登录时，对这次 `run` 加 `--allow-active-actions`；该参数不取消或修改云端任务。
+
+默认 `--review-scope theory`：检查摘要的概念、公式、适用条件与推导错误，不要求六类报告、逐字证据或默认二次语音定位。课件OCR、连续/平台截图、作业视觉读取及完整作业图保留；可选图片失败时注明未核实。摘要及自审不显式指定输出额度，仍受服务默认与上下文上限约束；截断或不可解析的回复仍记为复核未完成。
+
+需要旧逐句语音复核时使用 `--review-scope full`，并准备 `torch`、`qwen-asr`、`soundfile` 及本地 `Qwen3-ForcedAligner-0.6B`（由 `--aligner` 指定）。新范围不能直接套到旧失败检查点；更改源码、模型、范围或调度应建立独立新计划。识别缺口策略、题号证据和精选图规则与共享流程一致；未确认题号不会被当成已布置作业。
+
+## 审核后覆盖 data
+
+本地运行默认不发布。历史计划全完成后，`review` 生成私密 `review.md` 和完整覆盖指纹；只审核成功部分须明确使用 `review --completed-only`。阅读对照后才执行：
 
 ```bash
-./local-history.command --run-dir .local-history-refresh/overnight apply --approval <完整覆盖指纹>
+./local-history.command --env-file .env.local --mlx-batch-size 2 apply --approval <完整覆盖指纹>
 ```
 
-只有这个命令会推送正式 `data`。它先读取最新正式库、保存加密完整备份，再核对每堂课的基线和候选结果。选中课次自预览以来发生任何变化会拒绝覆盖；未选中课次的新内容、删除状态和邮件回执会保留。全部替换在私密临时库完成，重新分片加密并全表解密核验后，一次普通快进推送；不强推、不分堂发布、不重新发邮件。网络结果不明确时保留备份和候选，不盲目重推；重复已确认批次会由覆盖标记阻止二次替换。
+`apply` 是唯一写入正式 data 的步骤：备份最新整库，验证所选课次基线及候选，保留其他课次和邮件回执，重新加密分片并整库回读核验，然后普通快进推送。不强推、不重发邮件；不明确的推送结果保留备份，不盲目重推。新课预览不能走此步骤。
 
-## 配置与存储
+源码、启动器和安装说明属于GitHub代码；模型、账号、API密钥、完整音频、明文候选/转录和私密日志属于本机运行资料。`.local-history-refresh/`、`.env.local`、`.venv-local/` 已忽略。运行目录不要放进源码追踪目录。
 
-`--env-file` 可重复传入私密 env 文件；`--key-file` 引用单行数据库密钥。文件权限须为 `600`，不会以 shell 执行其中内容。支持 `StuId/UISPsw` 和 `STUID/UISPSW`。还需要 `COURSE_IDS`、文本模型 API 配置及已登录的 `gh` 用于 GitHub 读写和登录前检查。使用 `gh auth setup-git` 配置 Git 凭据，或自行提供 `GH_TOKEN`；本入口不保存 GitHub Token。
+## 验证范围
 
-示例（全局参数放在子命令前）：
-
-```bash
-python -m scripts.local_history_refresh \
-  --env-file /private/login.env --env-file /private/providers.env \
-  --key-file /private/database.key --vad-model /private/silero_vad.onnx \
-  --model '/path/to/qwen3-asr-1.7b-bf16' doctor
-```
-
-新机器可以设置 `LOCAL_HISTORY_PYTHON` 指向合适环境。MLX 路径需要 `mlx`、`mlx-qwen3-asr`、`sherpa-onnx` 和项目普通运行依赖；完整复核还需要 `torch`、`qwen-asr`、`soundfile` 及对齐模型。语音模型、对齐模型与VAD必须先准备好；入口启用 Hugging Face 离线模式，不自动下载权重。
-
-运行目录权限 `700`，文件 `600`。选择、进度、识别块、审核状态及正式库备份使用数据库密钥派生的 AES-GCM 加密；音频、候选 SQLite 和对照 Markdown 是本机私密目录内的明文，不要上传、共享或提交它们。AES-GCM 检查点的格式仅供这个入口使用，正式 data 继续沿用项目原分片格式。
-
-源码、模型、依赖版本、VAD、订阅规则变化时拒绝续跑，请建立新的计划。已消耗的复核额度/不明确的云请求会保留，不能通过自动重试绕过；出现该状态应先检查私密候选和审核记录。
-
-## 验证边界
-
-隔离测试覆盖断点恢复、时间预算、缺块拦截、选课与排除规则、部分预览、旧数据变化拒绝、候选变化拒绝、保留回执和无关课次、重复覆盖，以及本地裸 Git 仓库的加密发布/解密核验。2026-10-10 已完成下述两堂真实校园直连、Mac GPU 识别及在线笔记生成验证；两堂成功不证明通宵批量、Windows 或 WebVPN 长时间恢复均已验证。正式发布功能仍以隔离测试为证据，本次未真实覆盖。
-
-本机环境检查已通过，18 项入口测试通过，全仓库 732 项测试通过。全仓库测试运行时给当前进程设置了 Homebrew 的原生库搜索路径，解决原有邮件模块找不到已安装 Cairo 的问题；没有修改系统配置。已用正式 data 做过一次只读 `plan --limit 1` 和 `status` 检查，保存在 `.local-history-refresh/entry-validation`，只生成加密基线和待处理计划，尚无课程音频或候选笔记。正式 data 基线为 `763bb70e016e229feff35350a212ba6b15988afd`。
-
-AAC 接入后的最新回归：767 项全仓库测试通过（108.825 秒），其中本地入口新增了获取方式冻结、变更拒绝及真实回环 HTTP/FFmpeg AAC → 模拟识别/笔记 → 候选审核的测试；模型、校园、在线笔记服务和 SMTP 均使用桩。本地单堂真实试跑另在 `.local-history-refresh/aac-trial-2026-10-10`，使用重新读取的正式基线 `2bab9f60eff2fa9de938fe89d6bfc9cebeaba9c3`；上述旧只读计划不重用。
-
-这次试跑在登录前被仍运行的历史 Actions `38013379468` 拦截，未进行校园登录、课程下载、模型识别或在线笔记生成。随后改进了拦截状态显示和直接续跑，并通过全部 22 项入口测试（3.055 秒）。旧试跑目录保留；最终代码已重新建立一堂《数值算法与案例分析I》2026-09-08 的待运行计划 `.local-history-refresh/aac-ready-2026-10-10`。相关 Actions 结束后，在项目目录执行：
-
-```bash
-./local-history.command --run-dir .local-history-refresh/aac-ready-2026-10-10 run --hours 2
-./local-history.command --run-dir .local-history-refresh/aac-ready-2026-10-10 status
-./local-history.command --run-dir .local-history-refresh/aac-ready-2026-10-10 review
-```
-
-截至本轮，没有通过本入口覆盖正式 `data`、发送邮件或发布代码。待运行计划冻结了最终处理代码，后续修改源码需要新建计划。
-
-后续用户明确授权本地登录与云端并行，入口增加了上述单次开关，23 项入口测试通过（2.784 秒）。因此重新生成 `.local-history-refresh/aac-concurrent-trial-2026-10-10`，以 `run --hours 2 --allow-active-actions` 开始真实单堂试跑；前述 ready 计划的源码指纹已过期，不再使用。以该新目录的 `status` 和最终报告判断真实结果。
-
-最终实测：用户要求顺序试两堂、失败保留报告、完成后删除中间文件。两堂已依次结束，均未通过获取完整性检查：第一堂 AAC 解码 5963.776／10049.983 秒，媒体会话恢复一次后仍失效；第二堂 MP4 回退解码 636.075／6420.81 秒，媒体会话不可用且输入提前结束。均未进入 GPU 识别、生成笔记或覆盖正式数据。本次四个 AAC 计划／运行目录和协调脚本已清理，只保留外层项目 `outputs/local-aac-two-lecture-2026-10-10` 的两份失败报告；上述 AAC 目录不再存在，下次必须重新 `plan`。尚不能证明通宵稳定性或并行登录导致故障。
-
-真实试跑还发现原 `status` 会被正在运行的写锁挡住，已改为读取原子检查点而不争用写锁。最终 24 项入口测试通过（2.880 秒），包括运行持锁时查看状态。
-
-后续用户要求检查修补并重跑，已增加本地有界新登录升级、AAC 安全诊断和签名等待中的截止时间检查。最终 773 项全仓库测试通过（126.015 秒）。两堂重新开始于 `.local-history-refresh/aac-repaired-two-2026-10-10-v3`，`--hours 4 --allow-active-actions`；自动顺序执行，结束后按用户要求只保留外层 `outputs/local-aac-repaired-two-2026-10-10` 的 summary／失败报告并清理私密中间目录。第一堂已进入获取，第二堂待运行；完整成功以最终结果为准。
-
-该轮最终两堂均失败：首堂 AAC 获取 4644.864／10049.983 秒，新登录在 WebVPN 票据回跳阶段读取超时；第二堂 MP4 回退完整获取 6420.8006875／6420.81 秒，随后在 VAD 遇到 `AttributeError`。已导出两份失败报告，清理该轮三个运行目录及协调脚本，没有正式写入。
-
-后续定位并修复 VAD 的具体问题：本地入口向共享识别器传入了字符串 stderr，而共享实现要求 bytes 并调用 `.decode()`。改用空 bytes，并让端到端隔离测试实际经过共享 PCM/VAD 入口。真实 Silero 一秒静音和真实 MLX Qwen 一秒静音加载／识别冒烟检查通过；这些检查不证明整堂识别质量。增加上述校园接入自动选择与有界读超时后，最终 775 项全仓库测试通过（126.542 秒）。
-
-最终修补代码重新冻结到 `.local-history-refresh/aac-vad-direct-two-2026-10-10`，同两堂依次运行，预算四小时。最终 **两堂均成功**，实际总耗时 3242.3 秒（约54分钟）：首堂 AAC 获取10049.9833125／10049.983333333334秒，104／104块，识别累计1529.294秒；第二堂格式不支持时沿原来源MP4回退获取6420.8006875／6420.81秒，61／61块，识别累计1159.764秒。均无解码错误或未解决识别缺口，经过原笔记生成与候选审核后导出两份 summary。
-
-外层 `outputs/local-vad-direct-two-2026-10-10` 最终仅有两份权限600的总结。本批 direct／fixed 两个私密计划目录（包含音频、转录、候选库、运行日志与检查点）及协调脚本已删除；旧失败报告保留。不要从已清理目录查询或续跑；新任务需要重新 `plan`。没有覆盖正式data、邮件或代码发布，结束后只读核对正式data仍为 `2bab9f60eff2fa9de938fe89d6bfc9cebeaba9c3`。
-
-识别期间一次20秒系统采样：GPU利用率平均95.75%（94%～97%），GPU共享内存平均4.56GiB、峰值5.28GiB；系统供电遥测平均17.75W（15.64～21.67W）。这是整机及所有应用的统计，不是模型独占值，供电遥测也不是CPU／GPU各自瓦数。两堂语音识别在本机，笔记继续使用配置的DeepSeek `deepseek-v4-flash`云端API，转录及课件OCR会发送至该服务。
-
-用户随后明确“本地除了识别其他服务器的流程都应该需要有的”，因此改为上述默认完整复核。前面两份真实总结来自旧的关闭豆包复核配置，不能据此宣称作业截图已经充分核对；中间审计已按先前要求删除，不能重建具体视觉结果。原总结不直接改写，本次没有重跑课程或覆盖正式data。
-
-完整配置的doctor通过；使用已有本地对齐模型对3.273秒合成中文音频做真实CPU定位成功，约4.306秒含模型加载，未下载模型、未登录校园或调用外部服务。新增本地端到端隔离测试实际经过共享runner／review，核对时间定位、连续视频截图、视觉读取、豆包复核、题号保留、失败语音补识别及原始块不改写；外部服务与截图内容为桩，不能替代真实课程视觉验证。
-
-最终完整复核代码回归：786项全仓库测试通过（126.304秒），diff检查通过。当前完整复核配置已准备可运行，但尚未以此新默认配置重跑真实课程；原两堂54分钟结果仅代表旧配置。新任务须使用新计划，不能续用旧源码／模型指纹。
-
-## 新课本地预览与配图
-
-在明确核对课程目录后，可用 `plan --new-lecture 678993 --course-id 40329 --date 2026-10-09`
-冻结一堂新课；课程必须在 COURSE_IDS 中。随后 `run` 再次核对校园课次和日期，
-执行同样的 AAC、MLX、局部云端复核、作业读图和精选配图流程。
-`review` 导出本地 summary.md、原图和审核预览；本模式不生成覆盖批准，
-CLI 和发布函数均拒绝历史 apply。配图细节见 [精选配图](summary-figures.md)。
+已有真实校园课堂验证了Mac端完整音频获取和MLX识别；整堂双块对照与后续批量识别另有本机审核记录。完整流程包含云端服务，批量曾有自审截断、JSON和选图失败，不能把ASR完成等同于整条流水线通过。main接入验证已完成：861项全仓库回归通过，随后23项AAC测试通过（分别检查签名等待和慢响应读取的截止时间）。测试使用模拟模型/API与本地HTTP、SQLite、Git检验恢复和发布边界；本次未再跑课堂或发布旧结果。Windows本地GPU和新安装环境的整堂识别尚未实测。

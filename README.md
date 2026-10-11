@@ -44,6 +44,10 @@ flowchart LR
 
 ## 快速开始
 
+### Mac 本机识别
+
+main 已包含 [`local-history.command`](local-history.command) 和[安装／运行说明](docs/local-history-refresh.md)。可在 Apple Silicon Mac 上获取 AAC 音频、使用 Qwen3-ASR / MLX 识别并断点续跑；加 `--mlx-batch-size 2` 使用单模型双块解码，随后沿原流程读课件、配图、生成摘要和检查理论错误。默认仅本地预览，明确审核及 `apply` 后才覆盖 `data`；不发邮件。Windows CUDA 本地后端尚未实现。
+
 ### 1. 获取代码并确认运行方式
 
 本仓库是独立维护版本，可克隆用于本地开发。以下配置说明介绍保留的 Actions 接口，**不表示本仓库已启用运行**；先阅读[迁移说明](docs/standalone-migration.md)，确定运行位置和平台允许的用途，再配置凭据。首次处理可能包括所有符合筛选条件且尚未处理的历史录播，建议先只订阅一门课程。
@@ -174,8 +178,6 @@ GitHub Pages 部署是可选且**仅手动触发**：配置 Pages 后运行 **De
 ## 文档导航
 
 开发者可先阅读[处理链代码结构](docs/pipeline-architecture.md)，了解核心模块、运行入口与检查点边界。
-
-Mac 上重做已有历史笔记可使用 [`local-history.command`](local-history.command)：默认验证并获取 AAC 音轨，支持 Apple GPU / MLX 识别、逐块续跑和原／新笔记对照。只有明确执行带覆盖指纹的 `apply` 才更新正式 `data`；使用方法和验证边界见[本机历史笔记入口](docs/local-history-refresh.md)。
 
 | 文档 | 内容 |
 | --- | --- |

@@ -104,6 +104,7 @@ class LectureRunner:
         self._cloud_term_sources = []
         self._qwen_review_material = {}
         self._summary_figure_frames = []
+        self._summary_homework_frames = []
 
     # ── Public entry point ──────────────────────────────────────────────
 
@@ -616,8 +617,8 @@ class LectureRunner:
                                        audio_seconds=(getattr(self, '_prepared_asr', None) or {}).get('audio_seconds'))
 
     def _retain_figure_frame(self, image, row):
-        if image and len(self._summary_figure_frames) < 12:
-            self._summary_figure_frames.append({'image': image, 'seconds': row['seconds'], 'source': row['source']})
+        from src.pipeline.summary_figures import retain_homework_frame
+        retain_homework_frame(self._summary_homework_frames, image, row)
 
     def _summarize(self, sub_id: str, course_title: str, transcript: str,
                    transcript_segments: list[dict] | None) -> Optional[str]:
@@ -672,12 +673,14 @@ class LectureRunner:
             figure_state = None
             if os.environ.get('SUMMARY_FIGURES', 'true').lower() == 'true':
                 from src.pipeline.summary_figures import add_figures
-                frames = self._summary_figure_frames + self._ppt.figure_frames(sub_id)
+                frames = self._summary_homework_frames + self._summary_figure_frames + self._ppt.figure_frames(sub_id)
                 summary, figure_state = add_figures(self._db, self._client, self._summarizer,
                     str(getattr(self, "_homework_course_id", "")), sub_id, summary, kept_pages, transcript_segments,
                     (getattr(self, '_prepared_asr', None) or {}).get('audio_seconds') or self._asr_expected_duration,
                     retained=frames)
                 self._reporter.info(f"    [Figures] {figure_state['status']}; selected={len(figure_state['figures'])}; candidates={figure_state['image_count']}")
+                if figure_state.get('error_code'):
+                    self._reporter.info(f"    [Figures diagnostic] {figure_state['error_code']}; finish={figure_state.get('response_finish_reason')}")
             review_state = summary_review.review(self._db, self._summarizer, course, sub_id,
                 course_title, prompt_text, summary, state=review_state, figures=figure_state)
             self._reporter.info(f"    [Summary review] {review_state['status']}; issues="

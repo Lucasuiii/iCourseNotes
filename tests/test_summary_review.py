@@ -221,3 +221,148 @@ class SummaryReviewTests(unittest.TestCase):
             with self.assertRaises(audit.SummaryReviewBlocked):
                 runner._summarize('2', '概率论', self.material, [])
         llm.summarize.assert_called_once()
+
+    def needs_revision(self):
+        self.response(json.dumps({'verdict': 'needs_revision', 'issues': [
+            {'quote': self.text, 'reason': '补集方向写反', 'suggestion': '改为A的补集'}]}))
+        return self.run_review()
+
+    def correct(self, state, text=None):
+        self.response(json.dumps({'summary': text or '在0<=x<1时，{I_A<=x}=A的补集。'}))
+        return audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material, state=state)
+
+    def test_one_correction_is_accepted_without_claiming_second_review_pass(self):
+        state = self.correct(self.needs_revision())
+        self.assertEqual(state['status'], 'revised')
+        self.assertEqual(state['result']['verdict'], 'needs_revision')
+        self.assertEqual(state['draft_summary'], self.text)
+        self.assertEqual(state['revision']['source_summary'], self.text)
+        self.assertFalse(state['revision']['second_review_performed'])
+        self.assertEqual(state['schema'], 3)
+        audit.require_accepted(state)
+        self.db.update_summary('2', state['reviewed_summary'], 'corrected')
+        validate_database(str(self.path))
+        call = self.api.with_options.return_value.chat.completions.create
+        self.assertEqual(call.call_count, 2)
+        payload = json.loads(call.call_args.kwargs['messages'][1]['content'])
+        self.assertEqual(payload['summary'], self.text)
+        self.assertEqual(payload['issues'][0]['reason'], '补集方向写反')
+        self.assertNotIn('max_tokens', call.call_args.kwargs)
+        self.assertIn('未进行第二次自审', audit.report(state))
+        # Resume starts from the same original draft and figure-selection input.
+        resumed = self.run_review()
+        resumed = audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material, state=resumed)
+        self.assertEqual(resumed, state)
+        self.assertEqual(call.call_count, 2)
+        self.generate.assert_called_once()
+
+    def test_correction_failure_or_unknown_outcome_never_reissues(self):
+        for mode in ('timeout', 'parse', 'truncated', 'empty', 'unchanged', 'no_choices'):
+            with self.subTest(mode=mode):
+                self.db.write_meta(audit.PREFIX+'2', '')
+                self.api.reset_mock()
+                call = self.api.with_options.return_value.chat.completions.create
+                call.side_effect = None
+                state = self.needs_revision()
+                self.response('not json' if mode == 'parse' else json.dumps({'summary':
+                    '' if mode == 'empty' else self.text if mode == 'unchanged' else 'A的补集'}),
+                    finish='length' if mode == 'truncated' else 'stop')
+                if mode == 'timeout': call.side_effect = TimeoutError()
+                if mode == 'no_choices': call.return_value = SimpleNamespace(choices=[])
+                state = audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material, state=state)
+                self.assertEqual(state['status'], 'needs_revision')
+                self.assertEqual(state['revision']['status'], 'failed')
+                with self.assertRaises(audit.SummaryReviewBlocked): audit.require_accepted(state)
+                cached = audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material)
+                self.assertEqual(cached, state)
+                self.assertEqual(call.call_count, 2)
+                if mode == 'parse': self.assertEqual(state['revision']['response_content'], 'not json')
+                if mode == 'truncated': self.assertEqual(state['revision']['error_code'], 'incomplete_response')
+
+    def test_correction_reservation_precedes_transport_and_crash_is_not_replayed(self):
+        state = self.needs_revision()
+        def crashed_call(**kwargs):
+            saved = audit.read_state(self.db, '2')
+            self.assertEqual(saved['revision']['status'], 'reserved')
+            raise KeyboardInterrupt()
+        call = self.api.with_options.return_value.chat.completions.create
+        call.side_effect = crashed_call
+        with self.assertRaises(KeyboardInterrupt):
+            audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material, state=state)
+        state = audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material)
+        self.assertEqual(state['revision']['status'], 'reserved')
+        self.assertEqual(call.call_count, 2)
+        with self.assertRaises(audit.SummaryReviewBlocked): audit.require_accepted(state)
+
+    def test_correction_preserves_images_captions_and_coverage_notices(self):
+        figure = '!['+'集合图'+'](#icourse-figure-'+'a'*64+')'
+        source = self.text+'\n'+figure+'\n*课堂原图 · 00:01:00：集合图*\n> 识别缺口待确认'
+        good = source.replace(self.text, '在0<=x<1时，{I_A<=x}=A的补集。')
+        self.assertEqual(audit.validate_revision({'summary': good}, source), good)
+        for changed in (good.replace(figure, ''), good.replace('a'*64, 'b'*64),
+                        good.replace('00:01:00', '00:02:00'), good.replace('> 识别缺口待确认', ''),
+                        good+'\n![新增图](https://example.com/new.jpg)'):
+            with self.subTest(changed=changed):
+                with self.assertRaises(ValueError): audit.validate_revision({'summary': changed}, source)
+
+    def test_corrected_publication_rejects_tampering_and_retains_original_findings(self):
+        state = self.correct(self.needs_revision()); text = state['reviewed_summary']
+        for mutate in (lambda s: s['revision'].update(source_summary='改过的原稿'),
+                       lambda s: s['revision'].update(response_finish_reason='length'),
+                       lambda s: s['revision'].update(second_review_performed=True),
+                       lambda s: s['revision'].update(response_content='{"summary":"篡改"}'),
+                       lambda s: s['result']['issues'][0].update(reason='其他问题'),
+                       lambda s: s.update(schema=2)):
+            copy = json.loads(json.dumps(state)); mutate(copy)
+            with self.assertRaises(ValueError): audit.validate_published(copy, '1', '2', text, '2026-10-09')
+        self.db.update_summary('2', text, 'corrected')
+        from src.data.sharder import shard_database, reassemble_database
+        root = Path(self.tmp.name)
+        index = shard_database(str(self.path), str(root/'revised-shards'), 'offline-test-password')
+        reassemble_database(index, str(root/'revised-shards/shards'), str(root/'revised-restored.db'), 'offline-test-password')
+        validate_database(str(root/'revised-restored.db'))
+        with sqlite3.connect(root/'revised-restored.db') as conn:
+            restored = json.loads(conn.execute('select value from meta where key=?', (audit.PREFIX+'2',)).fetchone()[0])
+        self.assertEqual(restored, state)
+
+    def test_passed_unavailable_or_failed_review_never_requests_correction(self):
+        for response in ('{"verdict":"pass","issues":[]}', 'not json'):
+            self.db.write_meta(audit.PREFIX+'2', ''); self.api.reset_mock(); self.response(response)
+            state = self.run_review()
+            audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material, state=state)
+            self.assertEqual(self.api.with_options.return_value.chat.completions.create.call_count, 1)
+        self.db.write_meta(audit.PREFIX+'2', ''); self.api.reset_mock()
+        self.summarizer.summary_review_client = lambda: None
+        audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material, state=self.run_review())
+        self.api.with_options.assert_not_called()
+
+    def test_repair_identity_and_input_limits_block_before_request(self):
+        state = self.needs_revision()
+        with self.assertRaises(audit.SummaryReviewBlocked):
+            audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material+'changed', state=state)
+        with self.assertRaises(audit.SummaryReviewBlocked):
+            audit.revise(self.db, self.summarizer, '1', 'different', '概率论', self.material, state=state)
+        self.material = 'A' * (audit.MAX_TEXT+1); state['material_sha256'] = audit.digest(self.material)
+        state = audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material, state=state)
+        self.assertEqual(state['revision']['error_code'], 'input_too_large')
+        self.assertEqual(self.api.with_options.return_value.chat.completions.create.call_count, 1)
+
+    def test_runner_saves_corrected_summary_and_resumes_without_repeating_calls(self):
+        from test_lecture_quality_gate import _load_runner_class
+        Runner = _load_runner_class(); llm = MagicMock(); llm.summarize.return_value = (self.text, 'test')
+        llm.summary_review_client.return_value = (self.api, 'deepseek-flash')
+        corrected = '在0<=x<1时，{I_A<=x}=A的补集。'
+        def response(raw):
+            return SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=json.dumps(raw)))])
+        self.api.with_options.return_value.chat.completions.create.side_effect = [
+            response({'verdict': 'needs_revision', 'issues': [{'quote': self.text, 'reason': '补集写反', 'suggestion': '更正集合'}]}),
+            response({'summary': corrected})]
+        runner = Runner(None, self.db, MagicMock(), MagicMock(), llm, MagicMock()); runner._homework_course_id = '1'
+        with patch.dict('os.environ', {'SUMMARY_FIGURES': 'false'}):
+            self.assertEqual(runner._summarize('2', '概率论', self.material, []), corrected)
+            self.assertEqual(runner._summarize('2', '概率论', self.material, []), corrected)
+        self.assertEqual(self.db.get_lecture('2')['summary'], corrected)
+        self.assertIn('deepseek/deepseek-flash correction', self.db.get_lecture('2')['summary_model'])
+        llm.summarize.assert_called_once()
+        self.assertEqual(self.api.with_options.return_value.chat.completions.create.call_count, 2)
+        validate_database(str(self.path))

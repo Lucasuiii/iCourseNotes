@@ -685,7 +685,14 @@ class LectureRunner:
                 course_title, prompt_text, summary, state=review_state, figures=figure_state)
             self._reporter.info(f"    [Summary review] {review_state['status']}; issues="
                                 f"{len(review_state.get('result', {}).get('issues', []))}")
+            review_state = summary_review.revise(self._db, self._summarizer, course, sub_id,
+                course_title, prompt_text, state=review_state)
+            if review_state.get('revision'):
+                self._reporter.info(f"    [Summary revision] {review_state['revision']['status']}")
             summary_review.require_accepted(review_state)
+            summary = review_state['reviewed_summary']
+            if review_state['status'] == 'revised':
+                model_used += ' + '+review_state['revision']['revision_model']+' correction'
             self._db.update_summary(sub_id, summary, model_used)
             if self._automatic_glossary:
                 try:

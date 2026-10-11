@@ -466,7 +466,9 @@ class LocalHistoryTests(unittest.TestCase):
              patch('scripts.local_history.runtime.choose_access_mode',return_value='webvpn'), \
              patch('src.runtime.scheduler.Scheduler', return_value=scheduler), patch('scripts.local_history.backends.MLXTranscriber', FakeASR), \
              patch('src.runtime.audio_preparation.collect_decode_diagnostics', return_value=diagnostics), \
-             patch('sherpa_onnx.VoiceActivityDetector',FakeVAD), \
+             patch.dict(sys.modules, {'sherpa_onnx': SimpleNamespace(
+                 VadModelConfig=lambda: SimpleNamespace(silero_vad=SimpleNamespace()),
+                 VoiceActivityDetector=FakeVAD)}), \
              patch('src.pipeline.ppt_pipeline.PPTPipeline.submit') as ppt, \
              patch('src.ai.summarizer.Summarizer', return_value=summarizer), patch.object(config,'DOUBAO_ASR_API_KEY','test' if full_review else ''), \
              patch('src.ai.qwen_audio_alignment.align_suspects',side_effect=aligned) as align, \

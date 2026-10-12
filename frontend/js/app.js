@@ -58,6 +58,19 @@ function _purgeLegacyPersistentSecrets() {
   } catch (e) {}
   try { indexedDB.deleteDatabase(_legacyIdbName); } catch (e) {}
 }
+
+function _savedSubscriptionIds(owner, repo) {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(_subscriptionCacheKey(owner, repo)) || "null");
+    if (Array.isArray(cached) && cached.every(id =>
+      (typeof id === "string" || Number.isSafeInteger(id)) && /^[A-Za-z0-9._:-]+$/.test(String(id)))) {
+      return cached.map(String);
+    }
+  } catch {}
+  const canonical = ICS.db.getMeta("subscribed_course_ids");
+  const raw = canonical == null ? (ICS.db.getMeta("course_ids") || "") : canonical;
+  return raw.split(",").map(id => id.trim()).filter(Boolean);
+}
 /* Starred-course IDs are per-browser (localStorage). The school side
    doesn't need to know; the user just wants their favorites pinned to
    the top of their own view. */
@@ -245,6 +258,8 @@ document.addEventListener("alpine:init", () => {
     settingsForm: {}, showSecrets: {},
     exportDialogOpen: false, exportSelection: {}, exportingPdf: false,
     deleteDialogOpen: false, deleteSelection: {}, deletingCourses: false,
+    courseDeleteTarget: null, courseDeleteBusy: false, courseDeleteError: "",
+    courseDeleteRequested: [], courseDeleteTrigger: null,
     repoOwner: "", repoName: "", dataBranch: "data",
     _history: [],
     /* Subscriptions editor state — three-column layout:
@@ -608,6 +623,79 @@ document.addEventListener("alpine:init", () => {
       }
     },
 
+    openCourseDeleteDialog(course, trigger) {
+      if (this.courseDeleteBusy || this.subsSaving) return;
+      const cid = String(course?.course_id || "");
+      if (!cid || !this.courses.some(c => String(c.course_id) === cid)) return;
+      if (this.courseDeleteRequested.includes(cid)) {
+        this._toast("删除请求已提交或结果待确认，请先查看 Actions，再刷新课程列表", "error");
+        return;
+      }
+      this.courseDeleteTarget = { course_id: cid, title: course.title, teacher: course.teacher };
+      this.courseDeleteTrigger = trigger || null;
+      this.courseDeleteError = "";
+      this.$nextTick?.(() => this.$refs.courseDeleteCancel?.focus());
+    },
+    closeCourseDeleteDialog() {
+      if (!this.courseDeleteTarget) return;
+      if (!this.courseDeleteBusy) {
+        this.courseDeleteTarget = null;
+        this.courseDeleteTrigger?.focus();
+      }
+    },
+    trapCourseDeleteFocus(event) {
+      const controls = Array.from(event.currentTarget.querySelectorAll('a[href],button:not([disabled])'))
+        .filter(element => element.getClientRects().length);
+      if (!controls.length) { event.preventDefault(); return; }
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && event.target === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    },
+    async confirmCourseDelete() {
+      if (this.courseDeleteBusy || this.subsSaving || !this.courseDeleteTarget) return;
+      const target = this.courseDeleteTarget;
+      const cid = target.course_id;
+      if (this.courseDeleteRequested.includes(cid)) return;
+      const creds = _loadCreds();
+      if (!creds?.token) {
+        this.courseDeleteError = "删除课程需要管理授权，请先在设置中填写 GitHub PAT。";
+        return;
+      }
+      this.courseDeleteBusy = true;
+      this.courseDeleteError = "";
+      let unsubscribed = false;
+      let dispatchStarted = false;
+      try {
+        // Use the saved subscription, not unsaved edits in the subscription editor.
+        const saved = _savedSubscriptionIds(this.repoOwner, this.repoName);
+        const remaining = saved.filter(id => id !== cid);
+        if (remaining.length !== saved.length) {
+          await ICS.github.setCourseIdsSecret(this.repoOwner, this.repoName, creds.token, remaining);
+          unsubscribed = true;
+          try {
+            sessionStorage.setItem(_subscriptionCacheKey(this.repoOwner, this.repoName), JSON.stringify(remaining));
+          } catch {}
+          this.subscribedIds = this.subscribedIds.filter(id => String(id) !== cid);
+          this.subsSelLeft = this.subsSelLeft.filter(id => String(id) !== cid);
+          this._refreshSubscribedCache();
+        }
+        // A lost POST response is not permission to dispatch the same deletion again.
+        this.courseDeleteRequested = [...this.courseDeleteRequested, cid];
+        dispatchStarted = true;
+        await ICS.github.triggerDeleteWorkflow(
+          this.repoOwner, this.repoName, "main", creds.token, [cid], [],
+        );
+        this.courseDeleteTarget = null;
+        this._toast("已提交整门课删除；Actions 完成后刷新首页，课程将移除", "success");
+      } catch (e) {
+        this.courseDeleteError = dispatchStarted
+          ? (unsubscribed ? "取消订阅已保存。" : "") + "删除请求结果未确认，请查看 Actions；此页面不会重复提交。"
+          : "取消订阅未保存，尚未提交删除：" + (e?.message || "保存失败");
+      } finally {
+        this.courseDeleteBusy = false;
+      }
+    },
+
     _searchTimeout: null,
     get searchCourseLabel() {
       if (!this.searchSelectedCourseIds.length) return "全部课程";
@@ -787,34 +875,12 @@ document.addEventListener("alpine:init", () => {
       this._subsDeptCache = [];
       this.subsError = "";
 
-      // Load subscription (sessionStorage → meta table fallback)
-      this.subscribedIds = [];
-      var cachePresent = false;
+      // Share the saved-list lookup with whole-course removal, including an empty list.
+      this.subscribedIds = _savedSubscriptionIds(this.repoOwner, this.repoName);
       var cacheKey = _subscriptionCacheKey(this.repoOwner, this.repoName);
       try {
-        var cached = JSON.parse(
-          sessionStorage.getItem(cacheKey) || "null"
-        );
-        if (Array.isArray(cached) && cached.every(id =>
-          (typeof id === "string" || Number.isSafeInteger(id)) && /^[A-Za-z0-9._:-]+$/.test(String(id)))) {
-          this.subscribedIds = cached.map(String);
-          cachePresent = true;
-        }
+        sessionStorage.setItem(cacheKey, JSON.stringify(this.subscribedIds));
       } catch {}
-      if (!cachePresent) {
-        try { var metaRaw = ICS.db.getMeta("course_ids"); } catch (e) { metaRaw = null; }
-        if (metaRaw) {
-          this.subscribedIds = metaRaw.split(",")
-            .map(function (s) { return s.trim(); })
-            .filter(Boolean);
-          try {
-            sessionStorage.setItem(
-              cacheKey,
-              JSON.stringify(this.subscribedIds),
-            );
-          } catch {}
-        }
-      }
       this._refreshSubscribedCache();
       this._refreshSingleRunCache();
       this._refreshDeptCache();
@@ -951,7 +1017,7 @@ document.addEventListener("alpine:init", () => {
     },
     // ── Save left column to GitHub Secret ────────────────────────────
     async saveSubscriptions() {
-      if (this.subsSaving) return;
+      if (this.subsSaving || this.courseDeleteBusy) return;
       var creds = _loadCreds();
       if (!creds?.token) {
         this.subsError = "此操作需要管理授权，请在设置中填写 GitHub PAT。";

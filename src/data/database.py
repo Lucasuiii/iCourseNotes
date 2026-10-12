@@ -349,7 +349,8 @@ class Database:
         """Delete course content and its lecture review/figure state atomically."""
         course_id = str(course_id)
         with self._lock, self.conn:
-            for prefix in ("summary_review:", "summary_figures:"):
+            for prefix in ("qwen_pipeline:", "summary_review:", "summary_figures:",
+                           "auto_glossary:" + course_id + ":"):
                 self.conn.execute(
                     """DELETE FROM meta WHERE key IN (
                         SELECT ? || sub_id FROM lectures WHERE course_id = ?
@@ -364,6 +365,13 @@ class Database:
                 "DELETE FROM lectures WHERE course_id = ?", (course_id,),
             ).rowcount
             self.conn.execute("DELETE FROM courses WHERE course_id = ?", (course_id,))
+            for key in ("course_ids", "subscribed_course_ids"):
+                row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+                if row is not None:
+                    ids = [item.strip() for item in (row[0] or "").split(",") if item.strip()]
+                    if course_id in ids:
+                        self.conn.execute("UPDATE meta SET value = ? WHERE key = ?",
+                                          (",".join(item for item in ids if item != course_id), key))
         return deleted
 
     def suppress_lectures(self, course_id: str, sub_ids: list[str]) -> int:

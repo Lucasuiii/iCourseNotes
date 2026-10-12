@@ -758,6 +758,15 @@ document.addEventListener("alpine:init", () => {
       if (c) { await this._loadDB(c); this._toast("Refreshed", "success"); }
     },
 
+    async unlockFromForm(event) {
+      if (this.setupTesting) return;
+      // Password managers may change the input without dispatching an input event.
+      // Read the live form value at submission rather than relying only on x-model.
+      const input = event.currentTarget.elements.namedItem("password");
+      if (input) this.setup.dbkey = input.value;
+      await this.testAndSave();
+    },
+
     async testAndSave() {
       if (this.setupTesting) return;
       this.setupTesting = true; this.setupError = "";

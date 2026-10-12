@@ -38,6 +38,9 @@ class DeleteCourseWorkflowTests(unittest.TestCase):
                         GIT_CONFIG_KEY_0=f'url.{self.remote}.insteadOf',
                         GIT_CONFIG_VALUE_0='https://x-access-token:offline-token@github.com/offline/fixture.git',
                         GIT_TERMINAL_PROMPT='0')
+        # The production delete workflow reshards the stored subscription;
+        # setting this variable to empty would explicitly unsubscribe everyone.
+        self.env.pop('SUBSCRIBED_COURSE_IDS', None)
         self.git(self.root, 'init', '--bare', str(self.remote))
         self.writer.mkdir()
         self.git(self.writer, 'init', '-b', 'data')
@@ -61,6 +64,11 @@ class DeleteCourseWorkflowTests(unittest.TestCase):
             db.write_meta('summary_figures:' + sub, json.dumps({
                 'schema': 1, 'course_id': course, 'sub_id': sub, 'status': 'complete', 'figures': []}))
         db.write_meta('unrelated-setting', 'keep')
+        db.write_meta('course_ids', '10,20')
+        db.write_meta('subscribed_course_ids', '10,20')
+        for course, sub in [('10', '1'), ('10', '2'), ('20', '3')]:
+            db.write_meta('qwen_pipeline:' + sub, 'private recognition review')
+            db.write_meta('auto_glossary:' + course + ':' + sub, 'private terminology review')
         validate_database(str(self.db_path))
         self.publish_writer('base')
         self.base = self.git(self.writer, 'rev-parse', 'HEAD').stdout.strip()
@@ -121,8 +129,11 @@ class DeleteCourseWorkflowTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT sub_id,summary FROM lectures').fetchall(), [('3', 'old notes')])
             self.assertEqual(conn.execute('SELECT sub_id FROM ppt_pages').fetchall(), [('3',)])
             keys = {r[0] for r in conn.execute('SELECT key FROM meta')}
-            self.assertTrue({'summary_review:3', 'summary_figures:3', 'unrelated-setting'} <= keys)
-            self.assertFalse({'summary_review:1', 'summary_review:2', 'summary_figures:1', 'summary_figures:2'} & keys)
+            self.assertTrue({'summary_review:3', 'summary_figures:3', 'qwen_pipeline:3', 'auto_glossary:20:3', 'unrelated-setting'} <= keys)
+            self.assertFalse({'summary_review:1', 'summary_review:2', 'summary_figures:1', 'summary_figures:2',
+                              'qwen_pipeline:1', 'qwen_pipeline:2', 'auto_glossary:10:1', 'auto_glossary:10:2'} & keys)
+            self.assertEqual(conn.execute("SELECT key,value FROM meta WHERE key IN ('course_ids','subscribed_course_ids') ORDER BY key").fetchall(),
+                             [('course_ids', '20'), ('subscribed_course_ids', '20')])
         tip = self.git(self.remote, 'rev-parse', 'refs/heads/data').stdout.strip()
         self.assertEqual(self.git(self.remote, 'rev-parse', tip + '^').stdout.strip(), self.base)
 
@@ -189,4 +200,14 @@ class DeleteCourseWorkflowTests(unittest.TestCase):
         self.assertEqual(self.db.conn.execute('SELECT count(*) FROM ppt_pages').fetchone()[0], 3)
         self.assertIsNotNone(self.db.read_meta('summary_review:1'))
         self.assertIsNotNone(self.db.read_meta('summary_figures:1'))
+        self.assertEqual(self.db.read_meta('qwen_pipeline:1'), 'private recognition review')
+        self.assertEqual(self.db.read_meta('auto_glossary:10:1'), 'private terminology review')
+        self.assertEqual(self.db.read_meta('course_ids'), '10,20')
+        self.assertEqual(self.db.read_meta('subscribed_course_ids'), '10,20')
+
+    def test_last_course_removal_keeps_empty_subscription_instead_of_stale_ids(self):
+        self.db.delete_course('10')
+        self.db.delete_course('20')
+        self.assertEqual(self.db.read_meta('course_ids'), '')
+        self.assertEqual(self.db.read_meta('subscribed_course_ids'), '')
         validate_database(str(self.db_path))

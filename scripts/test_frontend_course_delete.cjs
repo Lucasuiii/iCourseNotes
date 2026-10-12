@@ -92,6 +92,21 @@ function fixture(saved = ['1', '2', '3']) {
   assert.ok(f.app.courseDeleteTarget);
   f.dom.window.close();
 
+  for (const outcome of ['not_sent','rejected']) {
+    f = fixture(['1']);
+    f.w.ICS.github.triggerDeleteWorkflow = async () => {
+      const error = new Error('Secrets 权限不足 HTTP 403');
+      error.dispatchOutcome = outcome;
+      throw error;
+    };
+    f.app.openCourseDeleteDialog(f.app.courses[1]);
+    await f.app.confirmCourseDelete();
+    assert.match(f.app.courseDeleteError, /Secrets 权限不足 HTTP 403/);
+    assert.ok(!f.app.courseDeleteError.includes('结果未确认'));
+    assert.equal(f.app.courseDeleteRequested.length,0,'Known rejection must not leave a permanent pending ticket');
+    f.dom.window.close();
+  }
+
   f = fixture(['2']);
   f.app.openCourseDeleteDialog(f.app.courses[1]);
   await f.app.confirmCourseDelete();

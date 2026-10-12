@@ -295,6 +295,14 @@ async function _triggerSingleRunWorkflow(owner, repo, ref, token, courseIds, use
   throw new Error(`GitHub API error ${res.status}: ${body}`);
 }
 
+function _deleteRequestError(message, phase, outcome, status) {
+  const error = new Error(message);
+  error.deletePhase = phase;
+  error.dispatchOutcome = outcome;
+  if (status !== undefined) error.httpStatus = status;
+  return error;
+}
+
 async function _triggerDeleteWorkflow(owner, repo, ref, token, courseIds, subIds) {
   _requireManagementToken(token);
   const url = `${_GH_API}/repos/${owner}/${repo}/actions/workflows/delete_course.yml/dispatches`;
@@ -303,32 +311,47 @@ async function _triggerDeleteWorkflow(owner, repo, ref, token, courseIds, subIds
   if (!ids) throw new Error("删除列表为空");
   const lectureIds = (Array.isArray(subIds) ? subIds : [])
     .map(String).map((s) => s.trim()).filter(Boolean).join(",");
-  const requestId = _newRequestId();
-  await _setRepoSecrets(owner, repo, token, {
-    DELETE_REQUEST: JSON.stringify({
-      request_id: requestId,
-      course_ids: ids,
-      sub_ids: lectureIds,
-    }),
-  });
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { ..._ghHeaders(token), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ref: ref || "main",
-      inputs: { request_id: requestId },
-    }),
-  });
-  if (res.status === 204) return;
-  const body = await res.text();
-  if (res.status === 403 || res.status === 404) {
-    throw new Error(
-      "无法触发删除 workflow。请确认你的 GitHub PAT 已开启 " +
-      "Actions: Read and write 权限。" +
-      `服务端返回：${res.status} ${body}`
-    );
+  let requestId;
+  try {
+    const workflow = await fetch(url.replace(/\/dispatches$/, ""), { headers: _ghHeaders(token) });
+    if (!workflow.ok) throw new Error("无法检查删除工作流（HTTP " + workflow.status + "），请核对仓库名称及 Actions 权限。");
+    const info = await workflow.json();
+    if (info.state !== "active") throw new Error("删除工作流已停用，请先在 GitHub Actions 中启用 Delete Course Data。");
+    requestId = _newRequestId();
+    await _setRepoSecrets(owner, repo, token, {
+      DELETE_REQUEST: JSON.stringify({
+        request_id: requestId,
+        course_ids: ids,
+        sub_ids: lectureIds,
+      }),
+    });
+  } catch (error) {
+    throw _deleteRequestError(error?.message || "删除请求准备失败", "prepare", "not_sent");
   }
-  throw new Error(`GitHub API error ${res.status}: ${body}`);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { ..._ghHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ref: ref || "main",
+        inputs: { request_id: requestId },
+      }),
+    });
+  } catch (error) {
+    throw _deleteRequestError("删除派发时连接中断，GitHub 是否接受尚未确认。", "dispatch", "unknown");
+  }
+  if (res.status === 204) return;
+  // A complete 4xx status proves rejection even if its optional body is unreadable.
+  if ([400, 401, 403, 404, 409, 422].includes(res.status)) {
+    const detail = res.status === 401 || res.status === 403
+      ? "请检查 PAT 是否有效，以及 Actions: Read and write 权限。"
+      : "请检查删除工作流是否启用、仓库和分支是否正确。";
+    throw _deleteRequestError("GitHub 拒绝了删除派发（HTTP " + res.status + "）。" + detail,
+      "dispatch", "rejected", res.status);
+  }
+  throw _deleteRequestError("删除派发返回 HTTP " + res.status + "，结果尚未确认。",
+    "dispatch", "unknown", res.status);
 }
 
 async function _triggerExportWorkflow(

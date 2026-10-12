@@ -16,6 +16,7 @@ assert.equal(password.autocomplete, 'current-password');
 assert.equal(unlockForm.querySelectorAll('input[type="password"]').length, 1,
   'Management PAT must not compete with the database key for password AutoFill');
 assert.ok(!unlockForm.contains(markup.window.document.querySelector('[name="management-token"]')));
+assert.ok(markup.window.document.body.textContent.includes('输入关键词，搜索已有课程笔记'));
 markup.window.close();
 const dom = new JSDOM('<body></body>', {url:'https://example.github.io/notes/',runScripts:'outside-only'});
 const w = dom.window;
@@ -57,6 +58,18 @@ for (const name of ['github.js','app.js']) w.eval(fs.readFileSync(path.join(root
   w.Alpine={data:(name,factory)=>{assert.equal(name,'app');makeApp=factory;}};
   w.document.dispatchEvent(new w.Event('alpine:init'));
   const app=makeApp();
+  const searches=[];
+  w.ICS.db={searchSummaries:(...args)=>{
+    searches.push(args);
+    return {results:args[0]==='矩阵'?[{sub_id:'search-fixture',summary:'矩阵的秩'}]:[],page:args[2],hasMore:false};
+  }};
+  app.searchQuery='   ';app._loadSearchResults(1);
+  assert.equal(searches.length,0,'An empty search is an input prompt, not a failed database query');
+  assert.equal(app.searchResults.length,0);
+  app.searchQuery='矩阵';app._loadSearchResults(1);
+  assert.equal(searches.length,1);assert.equal(app.searchResults[0].sub_id,'search-fixture');
+  app.searchQuery='没有匹配的关键词';app._loadSearchResults(1);
+  assert.equal(app.searchResults.length,0);assert.equal(app.searchHasMore,false);
   app.lectures = ['ready', 'waiting', 'failed', 'novideo', 'skipped', 'processing'].map(
     (state, i) => ({sub_id: String(i + 1), state})
   );

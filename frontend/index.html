@@ -438,7 +438,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
         <input x-model="searchQuery" @input="doSearch()" type="text"
-               placeholder="Search summaries…" autofocus
+               placeholder="搜索课程笔记…" aria-label="搜索课程笔记" autofocus
                class="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
       </div>
       <div class="relative flex-1 min-w-[150px]" @click.away="searchCourseOpen = false">
@@ -490,8 +490,12 @@
       </div>
     </div>
 
-    <div x-show="searchQuery && searchResults.length === 0" class="text-center py-12 text-gray-400 text-sm">
-      No results.
+    <div x-show="!searchQuery.trim()" class="text-center py-12 text-gray-500 text-sm">
+      <p>输入关键词，搜索已有课程笔记</p>
+      <p class="mt-2 text-xs text-gray-400">可在右侧选择课程和搜索范围。</p>
+    </div>
+    <div x-show="searchQuery.trim() && searchResults.length === 0" class="text-center py-12 text-gray-500 text-sm">
+      没有匹配结果，请换一个关键词或调整搜索范围。
     </div>
 
     <div class="space-y-2">
@@ -966,11 +970,11 @@
 <script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.15/dist/modules/libsodium-wrappers.min.js" integrity="sha384-ybNIPiJO6EYWqgjFY6vMafI6c5AdcUKPozTk0hSkZU22suZVE7PN8E/doGFiPiM0" crossorigin="anonymous"></script>
 <!-- App scripts (defer, in order, before Alpine) -->
 <script defer src="js/crypto.js"></script>
-<script defer src="js/github.js?v=20261009-single-key"></script>
+<script defer src="js/github.js?v=20261012-delete-errors"></script>
 <script defer src="js/schema.js"></script>
 <script defer src="js/db.js"></script>
 <script defer src="js/render.js"></script>
-<script defer src="js/app.js?v=20261009-single-key"></script>
+<script defer src="js/app.js?v=20261012-delete-errors"></script>
 <!-- Alpine.js LAST — auto-starts after all defer scripts -->
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.17.4/dist/cdn.min.js" integrity="sha384-5/joNqFnRyVWzXp99bHot6RHG+EksGp+USSgZwPar7T9SD9PKKER37n/8bXBAZGd" crossorigin="anonymous"></script>
 

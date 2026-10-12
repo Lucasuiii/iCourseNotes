@@ -83,3 +83,10 @@ mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
 .summary-figure-modal::backdrop { background: rgba(15, 23, 42, .75); }
 .summary-figure-modal img { display: block; max-width: 92vw; max-height: 82vh; width: auto; height: auto; object-fit: contain; margin: auto; }
 .summary-figure-close { position: absolute; top: .5rem; right: .75rem; padding: .25rem .75rem; border-radius: .4rem; background: #e2e8f0; color: #263445; cursor: pointer; }
+
+/* Printable notes stay in a local preview; no popup permissions required. */
+.summary-export-preview { width:min(980px,calc(100vw - 24px));height:90vh;max-height:90vh;padding:0;border:0;border-radius:12px;background:white;overflow:hidden; }
+.summary-export-preview::backdrop { background:rgba(0,0,0,.45); }
+.summary-export-toolbar { height:48px;display:flex;align-items:center;justify-content:flex-end;padding:0 16px;border-bottom:1px solid #e5e7eb; }
+.summary-export-toolbar button { font-size:14px;color:#475569;cursor:pointer; }
+.summary-export-preview iframe { width:100%;height:calc(100% - 48px);border:0; }

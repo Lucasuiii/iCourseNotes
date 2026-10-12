@@ -463,14 +463,29 @@ document.addEventListener("alpine:init", () => {
     formatPptTimestamp(sec) { return _formatTimestamp(sec); },
 
     getExportableLectures() {
-      return (this.lectures || []).filter((lec) => lec.summary && lec.summary.trim());
+      return (this.lectures || []).filter((lec) => !lec.deleted_at && lec.summary && lec.summary.trim());
     },
-    openExportDialog() {
+    openExportDialog(subId) {
       const list = this.getExportableLectures();
       if (!list.length) { this._toast("No summarized lectures to export", "error"); return; }
       this.exportSelection = {};
-      list.forEach((lec) => { this.exportSelection[lec.sub_id] = true; });
+      list.forEach((lec) => { this.exportSelection[lec.sub_id] = !subId || String(lec.sub_id) === String(subId); });
       this.exportDialogOpen = true;
+    },
+    selectedExportLectures() {
+      return this.getExportableLectures().filter(lec => this.exportSelection[lec.sub_id])
+        .map(lec => ICS.db.getLecture(lec.sub_id)).filter(lec => lec && !lec.deleted_at)
+        .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.sub_id).localeCompare(String(b.sub_id)));
+    },
+    downloadSelectedMarkdown() {
+      try {
+        ICS.exports.downloadMarkdown(this.currentCourse, this.selectedExportLectures());
+        this._toast('已下载笔记；有配图时同时打包图片', 'success');
+      } catch (e) { this._toast(e.message || '下载失败', 'error'); }
+    },
+    printSelectedPdf() {
+      try { ICS.exports.openPrint(this.currentCourse, this.selectedExportLectures()); }
+      catch (e) { this._toast(e.message || '无法打开打印预览', 'error'); }
     },
     closeExportDialog() {
       if (this.exportingPdf) return;

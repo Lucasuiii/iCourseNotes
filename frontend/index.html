@@ -187,9 +187,16 @@
     <h2 class="text-xl font-bold text-gray-800 mb-1">iCourseNotes</h2>
     <p class="text-sm text-gray-500 mb-6">输入密钥，解锁你的课程笔记。</p>
 
-    <form @submit.prevent="testAndSave()" class="space-y-4">
-      <input type="text" name="username" autocomplete="username" readonly tabindex="-1"
-             :value="repoOwner + '/' + repoName + '/' + dataBranch" class="sr-only" aria-hidden="true">
+    <form id="unlock-form" name="unlock" autocomplete="on"
+          @submit.prevent="unlockFromForm($event)" class="space-y-4">
+      <div>
+        <label for="unlock-username" class="block text-xs text-gray-500 mb-1">密码条目名称</label>
+        <input id="unlock-username" type="text" name="username" autocomplete="username"
+               value="iCourseNotes" autocapitalize="none" spellcheck="false"
+               aria-describedby="unlock-username-help"
+               class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        <p id="unlock-username-help" class="text-xs text-gray-400 mt-1">已为你填好，仅供 Apple 密码等自动填充识别，无需注册账号。</p>
+      </div>
       <div>
         <label for="database-key" class="block text-xs text-gray-500 mb-1">数据库密钥</label>
         <input id="database-key" name="password" x-model="setup.dbkey" type="password"
@@ -213,8 +220,9 @@
         <p class="text-xs text-gray-400 mt-1">选择仅含密钥的文件，不要选择 .env 配置。</p>
       </div>
       <p x-show="setupError" x-text="setupError" role="alert" class="text-sm text-red-600 bg-red-50 rounded-lg p-3"></p>
+    </form>
 
-      <details class="text-sm">
+      <details class="text-sm mt-4">
         <summary class="text-gray-400 cursor-pointer">仓库与管理授权（可选）</summary>
         <div class="mt-3 space-y-3">
           <div class="grid grid-cols-2 gap-3">
@@ -239,14 +247,13 @@
               <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer"
                  class="text-blue-500 underline ml-1">创建</a>
             </label>
-            <input x-model="setup.token" type="password" autocomplete="off" placeholder="github_pat_..."
+            <input x-model="setup.token" name="management-token" type="password" autocomplete="off" placeholder="github_pat_..."
                    class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
             <p class="text-xs text-gray-400 mt-1">公开仓库查看笔记无需填写。保存订阅、导出邮件、删除或启动任务时需要管理授权。私有仓库或读取限流时也可填写。</p>
             <p class="text-xs text-gray-400 mt-1">仅授权本仓库：Contents 只读，Actions 和 Secrets 读写。凭据仅保留在当前标签页会话。</p>
           </div>
         </div>
       </details>
-    </form>
   </div>
 
   <!-- ─── COURSES ─── -->

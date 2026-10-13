@@ -710,9 +710,16 @@ document.addEventListener("alpine:init", () => {
         this.courseDeleteTarget = null;
         this._toast("已提交整门课删除；Actions 完成后刷新首页，课程将移除", "success");
       } catch (e) {
-        this.courseDeleteError = dispatchStarted
-          ? (unsubscribed ? "取消订阅已保存。" : "") + "删除请求结果未确认，请查看 Actions；此页面不会重复提交。"
-          : "取消订阅未保存，尚未提交删除：" + (e?.message || "保存失败");
+        if (dispatchStarted && ["not_sent", "rejected"].includes(e?.dispatchOutcome)) {
+          this.courseDeleteRequested = this.courseDeleteRequested.filter(id => id !== cid);
+          this.courseDeleteError = (unsubscribed ? "取消订阅已保存。" : "") +
+            "删除未提交成功：" + e.message;
+        } else if (dispatchStarted) {
+          this.courseDeleteError = (unsubscribed ? "取消订阅已保存。" : "") +
+            "删除请求结果未确认，请查看 Actions；此页面不会重复提交。";
+        } else {
+          this.courseDeleteError = "取消订阅保存失败或未确认，尚未提交删除：" + (e?.message || "保存失败");
+        }
       } finally {
         this.courseDeleteBusy = false;
       }

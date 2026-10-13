@@ -9,7 +9,7 @@ const username = unlockForm.elements.namedItem('username');
 const password = unlockForm.elements.namedItem('password');
 assert.equal(username.autocomplete, 'username');
 assert.equal(username.readOnly, false);
-assert.equal(username.value, 'iCourseNotes');
+assert.equal(username.value, '', 'Fresh visits do not prefill a password entry name');
 assert.equal(username.hasAttribute('aria-hidden'), false);
 assert.equal(password.type, 'password');
 assert.equal(password.autocomplete, 'current-password');

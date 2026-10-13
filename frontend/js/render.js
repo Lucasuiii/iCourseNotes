@@ -94,7 +94,7 @@ function _releaseFigureUrls(keep) {
   }
 }
 
-function _renderMarkdown(mdText, figures) {
+function _renderMarkdown(mdText, figures, options) {
   if (!mdText) return "";
   var stashed = _stashFormulas(mdText);
   var rawHtml = marked.parse(stashed.text, { breaks: true });
@@ -112,10 +112,18 @@ function _renderMarkdown(mdText, figures) {
   var active = new Set();
   for (var img of wrapper.querySelectorAll('img')) {
     var match = /^#icourse-figure-([0-9a-f]{64})$/.exec(img.getAttribute('src') || '');
+    if (options?.exportImages && !match) { img.remove(); continue; }
     if (!match) continue;
     var id = match[1], image = accepted.get(id);
     if (!image) { img.replaceWith(document.createTextNode('（课堂配图不可用）')); continue; }
     try {
+      if (options?.exportImages) {
+        var decoded = atob(image.data);
+        if (decoded.charCodeAt(0) !== 255 || decoded.charCodeAt(1) !== 216) throw new Error('Invalid JPEG');
+        img.src = 'data:image/jpeg;base64,' + image.data;
+        img.loading = 'eager'; img.className = 'summary-classroom-figure';
+        continue;
+      }
       var url = _figureBlobUrls.get(id);
       if (!url) {
         var raw = atob(image.data), bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
@@ -131,7 +139,7 @@ function _renderMarkdown(mdText, figures) {
       img.replaceWith(link); link.appendChild(img);
     } catch (e) { img.replaceWith(document.createTextNode('（课堂配图不可用）')); }
   }
-  if (Array.isArray(figures)) _releaseFigureUrls(active);
+  if (Array.isArray(figures) && !options?.exportImages) _releaseFigureUrls(active);
   return wrapper.innerHTML;
 }
 

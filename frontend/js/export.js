@@ -81,7 +81,7 @@ window.ICS = window.ICS || {};
     }).join('');
     // Copy only the trusted, pinned KaTeX stylesheet already used by this page.
     const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"]')).filter(x => /\/katex(?:\.min)?\.css(?:\?|$)/.test(x.href)).map(x => x.outerHTML).join('');
-    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+'</title>'+styles+'<style>'+css+'</style></head><body><div class="print-tools"><button id="save-pdf" disabled>正在准备排版…</button></div><h1>'+esc(title)+'</h1>'+body+'</body></html>';
+    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+'</title>'+styles+'<style>'+css+'</style></head><body data-icourse-print><h1>'+esc(title)+'</h1>'+body+'</body></html>';
   }
   function openPrint(course, lectures) {
     const html = buildPrintHtml(course, lectures);
@@ -89,16 +89,24 @@ window.ICS = window.ICS || {};
     dialog.setAttribute('aria-label', 'PDF 预览');
     const bar = document.createElement('div'); bar.className = 'summary-export-toolbar';
     const close = document.createElement('button'); close.type = 'button'; close.textContent = '返回笔记';
-    close.addEventListener('click', () => dialog.close()); bar.appendChild(close);
+    close.addEventListener('click', () => dialog.close());
+    // Safari blocks listeners attached to controls inside a script-disabled
+    // iframe, even when the parent attached them. Keep the trusted control
+    // here and preserve the preview's sandbox instead of allowing scripts.
+    const save = document.createElement('button'); save.type = 'button';
+    save.className = 'summary-export-save'; save.disabled = true; save.textContent = '正在准备排版…';
+    save.addEventListener('click', () => { frame.contentWindow.focus(); frame.contentWindow.print(); });
+    bar.append(close, save);
     const frame = document.createElement('iframe'); frame.title = '课程笔记 PDF 排版预览';
     frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
     frame.addEventListener('load', async () => {
-      const page = frame.contentWindow, button = page.document.getElementById('save-pdf');
-      if (!button) return;
+      if (!dialog.isConnected) return;
+      const page = frame.contentWindow;
+      if (!page?.document?.body?.hasAttribute('data-icourse-print')) return;
       const waitImages = Promise.all(Array.from(page.document.images).map(img => img.decode?.().catch(() => {}) || Promise.resolve()));
       await Promise.race([Promise.all([page.document.fonts?.ready || Promise.resolve(), waitImages]), new Promise(resolve => setTimeout(resolve, 15000))]);
       if (!dialog.isConnected) return;
-      button.disabled = false; button.textContent = '保存为 PDF'; button.addEventListener('click', () => { page.focus(); page.print(); });
+      save.disabled = false; save.textContent = '保存为 PDF';
     });
     frame.srcdoc = html; dialog.append(bar, frame); document.body.appendChild(dialog);
     dialog.addEventListener('close', () => dialog.remove(), {once: true});

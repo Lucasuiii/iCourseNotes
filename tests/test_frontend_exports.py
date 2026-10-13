@@ -2,6 +2,10 @@ import subprocess,tempfile,zipfile
 from pathlib import Path
 import unittest
 class LocalExportTests(unittest.TestCase):
+ def test_separate_local_pdf_downloads(self):
+  root=Path(__file__).resolve().parents[1]
+  r=subprocess.run(['node','scripts/test_frontend_pdf_downloads.cjs'],cwd=root,capture_output=True,text=True,timeout=30)
+  self.assertEqual(r.returncode,0,r.stdout+r.stderr)
  def test_real_dom_and_portable_utf8_zip(self):
   root=Path(__file__).resolve().parents[1]
   with tempfile.TemporaryDirectory() as tmp:

@@ -93,3 +93,9 @@ mark { background: #fef08a; padding: 0 2px; border-radius: 2px; }
 .summary-export-count { margin-right:auto;font-size:12px;color:#64748b; }
 .summary-export-toolbar button:disabled { opacity:.5;cursor:wait; }
 .summary-export-preview iframe { width:100%;height:calc(100% - 48px);border:0; }
+.pdf-download-results { width:min(620px,calc(100vw - 24px));max-height:85vh;overflow:auto;border:0;border-radius:12px;padding:24px;background:white; }
+.pdf-download-results::backdrop { background:rgba(0,0,0,.45); }
+.pdf-download-results h2 { font-size:20px;font-weight:600;margin-bottom:12px; }
+.pdf-download-results p { font-size:14px;color:#64748b;margin-bottom:16px; }
+.pdf-download-results a { display:block;padding:10px 0;color:#2563eb;overflow-wrap:anywhere;border-bottom:1px solid #e5e7eb; }
+.pdf-download-results button { display:block;margin:20px 0 0 auto;padding:8px 16px;border-radius:8px;background:#2563eb;color:white; }

@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css" integrity="sha384-zh0CIslj+VczCZtlzBcjt5ppRcsAmDnRem7ESsYwWwg3m/OaJ2l4x7YBZl9Kxxib" crossorigin="anonymous">
 
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="css/app.css?v=20261013-batch">
+  <link rel="stylesheet" href="css/app.css?v=20261013-separate">
 </head>
 <body class="bg-gray-50 min-h-[100dvh]" x-data="app()" x-cloak>
 
@@ -923,7 +923,8 @@
 
     <div class="px-4 py-2 bg-blue-50 border-t border-blue-100 text-xs text-blue-800 leading-relaxed space-y-1">
       <p>下载 Markdown：保留公式；有配图时下载 ZIP，解压后图片与笔记一起使用。</p>
-      <p>保存 PDF：将勾选课次按时间顺序合并为一个 PDF，每节另起一页；预览后选择“存储为 PDF”。无需管理授权。</p>
+      <p>独立 PDF：一次生成每节各一个文件，直接下载，无需 ZIP、管理授权或邮件。浏览器询问时请允许多个下载。</p>
+      <p>合并 PDF：所有勾选课次合为一个文件，预览后选择“存储为 PDF”。独立 PDF 保留可见排版；需要可复制文字时使用合并打印。</p>
     </div>
 
     <div class="px-4 py-3 border-t border-gray-100 flex flex-wrap justify-end gap-2">
@@ -931,7 +932,10 @@
               class="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50">下载 Markdown</button>
       <button @click="printSelectedPdf()" :disabled="selectedExportCount() === 0"
               class="px-4 py-2 text-sm rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
-              x-text="'保存所选 ' + selectedExportCount() + ' 节为 PDF'">保存所选课次为 PDF</button>
+              x-text="'合并 ' + selectedExportCount() + ' 节为一个 PDF'">合并为一个 PDF</button>
+      <button @click="downloadSeparatePdfs()" :disabled="selectedExportCount() === 0 || downloadingPdfs"
+              class="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+              x-text="downloadingPdfs ? pdfDownloadProgress : '下载 ' + selectedExportCount() + ' 个独立 PDF'">下载独立 PDF</button>
       <button @click="closeExportDialog()"
               :disabled="exportingPdf"
               class="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
@@ -979,8 +983,9 @@
 <script defer src="js/schema.js"></script>
 <script defer src="js/db.js"></script>
 <script defer src="js/render.js?v=20261012-export"></script>
-<script defer src="js/export.js?v=20261013-batch"></script>
-<script defer src="js/app.js?v=20261013-delete-errors"></script>
+<script defer src="js/export.js?v=20261013-separate"></script>
+<script defer src="js/pdf-download.js?v=20261013-separate"></script>
+<script defer src="js/app.js?v=20261013-separate"></script>
 <!-- Alpine.js LAST — auto-starts after all defer scripts -->
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.17.4/dist/cdn.min.js" integrity="sha384-5/joNqFnRyVWzXp99bHot6RHG+EksGp+USSgZwPar7T9SD9PKKER37n/8bXBAZGd" crossorigin="anonymous"></script>
 

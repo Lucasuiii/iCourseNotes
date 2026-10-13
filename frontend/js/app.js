@@ -256,7 +256,7 @@ document.addEventListener("alpine:init", () => {
     setup: { token: "", dbkey: "" },
     setupError: "", setupTesting: false,
     settingsForm: {}, showSecrets: {},
-    exportDialogOpen: false, exportSelection: {}, exportingPdf: false,
+    exportDialogOpen: false, exportSelection: {}, exportingPdf: false, downloadingPdfs: false, pdfDownloadProgress: '',
     deleteDialogOpen: false, deleteSelection: {}, deletingCourses: false,
     courseDeleteTarget: null, courseDeleteBusy: false, courseDeleteError: "",
     courseDeleteRequested: [], courseDeleteTrigger: null,
@@ -494,8 +494,17 @@ document.addEventListener("alpine:init", () => {
       try { ICS.exports.openPrint(this.currentCourse, this.selectedExportLectures()); }
       catch (e) { this._toast(e.message || '无法打开打印预览', 'error'); }
     },
+    async downloadSeparatePdfs() {
+      if (this.downloadingPdfs) return;
+      this.downloadingPdfs = true;
+      try {
+        await ICS.pdfDownloads.download(this.currentCourse, this.selectedExportLectures(),
+          message => { this.pdfDownloadProgress = message; });
+      } catch (e) { this._toast(e.message || 'PDF 生成失败', 'error'); }
+      finally { this.downloadingPdfs = false; this.pdfDownloadProgress = ''; }
+    },
     closeExportDialog() {
-      if (this.exportingPdf) return;
+      if (this.exportingPdf || this.downloadingPdfs) return;
       this.exportDialogOpen = false;
     },
     isLectureSelected(subId) { return !!this.exportSelection[subId]; },

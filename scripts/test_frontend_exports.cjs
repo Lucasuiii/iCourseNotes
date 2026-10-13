@@ -30,5 +30,22 @@ const {marked} = require('marked');
  assert.equal(app.getExportableLectures().length,1);app.lectures=[{...lecture,deleted_at:'now'}];assert.equal(app.getExportableLectures().length,0);
  if(process.argv[2]) fs.writeFileSync(process.argv[2],Buffer.from(await w.ICS.exports.zip(entries).arrayBuffer()));
  w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};const preview=w.ICS.exports.openPrint(course,[lecture]);assert.equal(preview.getAttribute('aria-label'),'PDF 预览');assert.equal(preview.querySelector('iframe').getAttribute('sandbox'),'allow-same-origin allow-modals');assert.ok(preview.querySelector('iframe').srcdoc.includes('data:image/jpeg;base64,'));
- console.log('Local export security, formulas, images, selection and ZIP fixture verified.');
+ // Exercise the actual control after the srcdoc load, rather than only
+ // inspecting generated HTML. Safari does not execute child-frame listeners.
+ const frame=preview.querySelector('iframe'),save=preview.querySelector('.summary-export-save');
+ assert.ok(save,'Save control belongs to the trusted parent toolbar');
+ assert.equal(save.disabled,true,'Printing waits for the actual preview document');
+ assert.ok(!frame.srcdoc.includes('<button'),'Sandboxed document has no interactive print controls');
+ let printed=0;frame.contentWindow.focus=()=>{};frame.contentWindow.print=()=>printed++;
+ frame.dispatchEvent(new w.Event('load'));await Promise.resolve();
+ assert.equal(save.disabled,true,'Blank initial iframe load must not enable printing');
+ frame.contentDocument.body.innerHTML='<article>Rendered lesson</article>';
+ frame.contentDocument.body.setAttribute('data-icourse-print','');
+ frame.dispatchEvent(new w.Event('load'));
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(save.disabled,false);save.click();assert.equal(printed,1);
+ preview.remove();frame.dispatchEvent(new w.Event('load'));
+ assert.equal(printed,1,'Closing does not print');
+ dom.window.close();
+ console.log('Local export security, formulas, images, selection, ZIP and parent-frame printing verified.');
 })().catch(e=>{console.error(e);process.exit(1);});

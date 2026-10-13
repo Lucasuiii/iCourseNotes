@@ -84,7 +84,21 @@ window.ICS = window.ICS || {};
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+'</title>'+styles+'<style>'+css+'</style></head><body data-icourse-print><h1>'+esc(title)+'</h1>'+body+'</body></html>';
   }
   function openPrint(course, lectures) {
-    const html = buildPrintHtml(course, lectures);
+    const rows = selected(lectures), html = buildPrintHtml(course, rows);
+    // Native browser printing targets the top document, which otherwise
+    // contains only the lecture currently being read. Freeze the selected
+    // batch in a dedicated print document for both the button and Cmd/Ctrl-P.
+    const printDocument = new DOMParser().parseFromString(html, 'text/html');
+    const printSurface = document.createElement('div');
+    printSurface.className = 'summary-export-print-document'; printSurface.style.display = 'none';
+    printSurface.innerHTML = printDocument.body.innerHTML;
+    const printStyle = document.createElement('style'); printStyle.media = 'print';
+    printStyle.textContent = css + '\nbody.summary-export-printing > :not(.summary-export-print-document){display:none!important}body.summary-export-printing > .summary-export-print-document{display:block!important}';
+    document.head.appendChild(printStyle); document.body.appendChild(printSurface);
+    const originalTitle = document.title;
+    const beforePrint = () => { document.body.classList.add('summary-export-printing'); document.title = printDocument.title; };
+    const afterPrint = () => { document.body.classList.remove('summary-export-printing'); document.title = originalTitle; };
+    window.addEventListener('beforeprint', beforePrint); window.addEventListener('afterprint', afterPrint);
     const dialog = document.createElement('dialog'); dialog.className = 'summary-export-preview';
     dialog.setAttribute('aria-label', 'PDF 预览');
     const bar = document.createElement('div'); bar.className = 'summary-export-toolbar';
@@ -95,8 +109,10 @@ window.ICS = window.ICS || {};
     // here and preserve the preview's sandbox instead of allowing scripts.
     const save = document.createElement('button'); save.type = 'button';
     save.className = 'summary-export-save'; save.disabled = true; save.textContent = '正在准备排版…';
-    save.addEventListener('click', () => { frame.contentWindow.focus(); frame.contentWindow.print(); });
-    bar.append(close, save);
+    save.addEventListener('click', () => window.print());
+    const count = document.createElement('span'); count.className = 'summary-export-count';
+    count.textContent = '已选 ' + rows.length + ' 节，合并为一个 PDF';
+    bar.append(count, close, save);
     const frame = document.createElement('iframe'); frame.title = '课程笔记 PDF 排版预览';
     frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
     frame.addEventListener('load', async () => {
@@ -109,7 +125,10 @@ window.ICS = window.ICS || {};
       save.disabled = false; save.textContent = '保存为 PDF';
     });
     frame.srcdoc = html; dialog.append(bar, frame); document.body.appendChild(dialog);
-    dialog.addEventListener('close', () => dialog.remove(), {once: true});
+    dialog.addEventListener('close', () => {
+      window.removeEventListener('beforeprint', beforePrint); window.removeEventListener('afterprint', afterPrint);
+      afterPrint(); printSurface.remove(); printStyle.remove(); dialog.remove();
+    }, {once: true});
     dialog.showModal(); return dialog;
   }
   ICS.exports = {markdownEntries, zip, downloadMarkdown, buildPrintHtml, openPrint};

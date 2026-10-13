@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css" integrity="sha384-zh0CIslj+VczCZtlzBcjt5ppRcsAmDnRem7ESsYwWwg3m/OaJ2l4x7YBZl9Kxxib" crossorigin="anonymous">
 
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="css/app.css?v=20261012-export">
+  <link rel="stylesheet" href="css/app.css?v=20261013-batch">
 </head>
 <body class="bg-gray-50 min-h-[100dvh]" x-data="app()" x-cloak>
 
@@ -192,10 +192,10 @@
       <div>
         <label for="unlock-username" class="block text-xs text-gray-500 mb-1">密码条目名称</label>
         <input id="unlock-username" type="text" name="username" autocomplete="username"
-               value="iCourseNotes" autocapitalize="none" spellcheck="false"
+               autocapitalize="none" spellcheck="false" placeholder="可选，填写你的密码条目名称"
                aria-describedby="unlock-username-help"
                class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        <p id="unlock-username-help" class="text-xs text-gray-400 mt-1">已为你填好，仅供 Apple 密码等自动填充识别，无需注册账号。</p>
+        <p id="unlock-username-help" class="text-xs text-gray-400 mt-1">可留空；仅供 Apple 密码等自动填充识别，无需注册账号。</p>
       </div>
       <div>
         <label for="database-key" class="block text-xs text-gray-500 mb-1">数据库密钥</label>
@@ -919,14 +919,15 @@
 
     <div class="px-4 py-2 bg-blue-50 border-t border-blue-100 text-xs text-blue-800 leading-relaxed space-y-1">
       <p>下载 Markdown：保留公式；有配图时下载 ZIP，解压后图片与笔记一起使用。</p>
-      <p>保存 PDF：打开排版预览，在浏览器打印窗口选择“存储为 PDF”。无需管理授权。</p>
+      <p>保存 PDF：将勾选课次按时间顺序合并为一个 PDF，每节另起一页；预览后选择“存储为 PDF”。无需管理授权。</p>
     </div>
 
     <div class="px-4 py-3 border-t border-gray-100 flex flex-wrap justify-end gap-2">
       <button @click="downloadSelectedMarkdown()" :disabled="selectedExportCount() === 0"
               class="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50">下载 Markdown</button>
       <button @click="printSelectedPdf()" :disabled="selectedExportCount() === 0"
-              class="px-4 py-2 text-sm rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50">保存 PDF</button>
+              class="px-4 py-2 text-sm rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+              x-text="'保存所选 ' + selectedExportCount() + ' 节为 PDF'">保存所选课次为 PDF</button>
       <button @click="closeExportDialog()"
               :disabled="exportingPdf"
               class="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
@@ -974,8 +975,8 @@
 <script defer src="js/schema.js"></script>
 <script defer src="js/db.js"></script>
 <script defer src="js/render.js?v=20261012-export"></script>
-<script defer src="js/export.js?v=20261013-print"></script>
-<script defer src="js/app.js?v=20261012-export"></script>
+<script defer src="js/export.js?v=20261013-batch"></script>
+<script defer src="js/app.js?v=20261013-batch"></script>
 <!-- Alpine.js LAST — auto-starts after all defer scripts -->
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.17.4/dist/cdn.min.js" integrity="sha384-5/joNqFnRyVWzXp99bHot6RHG+EksGp+USSgZwPar7T9SD9PKKER37n/8bXBAZGd" crossorigin="anonymous"></script>
 

@@ -474,7 +474,14 @@ document.addEventListener("alpine:init", () => {
     },
     selectedExportLectures() {
       return this.getExportableLectures().filter(lec => this.exportSelection[lec.sub_id])
-        .map(lec => ICS.db.getLecture(lec.sub_id)).filter(lec => lec && !lec.deleted_at)
+        .map(lec => {
+          const full = ICS.db.getLecture(lec.sub_id);
+          if (!full || full.deleted_at || !full.summary?.trim())
+            throw new Error('选中的课次数据不可用，请重新加载后再导出：' + (lec.sub_title || lec.sub_id));
+          if (full.course_id != null && String(full.course_id) !== String(this.currentCourse?.course_id))
+            throw new Error('选中的课次与当前课程不一致，请重新加载后再导出');
+          return full;
+        })
         .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.sub_id).localeCompare(String(b.sub_id)));
     },
     downloadSelectedMarkdown() {

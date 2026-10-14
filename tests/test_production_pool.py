@@ -672,7 +672,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(parent['on']['workflow_dispatch']['inputs']['publish_results']['default'])
         self.assertFalse(parent['on']['workflow_dispatch']['inputs']['send_email']['default'])
         self.assertFalse(routine['jobs']['check']['with']['automatic_terms'])
-        self.assertEqual([i['cron'] for i in routine['on']['schedule']], ['7 9 * * *'])
+        self.assertEqual([i['cron'] for i in routine['on']['schedule']], ['0 10 * * *'])
         env = child['jobs']['execute']['env']; self.assertNotIn('SMTP_EMAIL', env)
         authorization = next(s for s in child['jobs']['execute']['steps'] if s.get('id') == 'authorize')
         self.assertNotIn('env', authorization)

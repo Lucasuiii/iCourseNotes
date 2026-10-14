@@ -238,7 +238,7 @@ class CoordinationRecoveryTests(unittest.TestCase):
             self.assertEqual(concurrency['cancel-in-progress'], 'false', path.name)
         self.assertIn('check.yml', entrants); self.assertIn('parallel_pilot.yml', entrants)
         check = yaml.load((ROOT/'.github/workflows/check.yml').read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(check['on']['schedule'], [{'cron': '7 9 * * *'}])
+        self.assertEqual(check['on']['schedule'], [{'cron': '0 10 * * *'}])
         self.assertTrue(check['jobs']['check']['with']['caller_holds_lock'])
 
 

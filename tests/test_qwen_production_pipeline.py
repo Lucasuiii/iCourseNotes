@@ -599,7 +599,7 @@ class FormalWorkflowTests(unittest.TestCase):
         caller=yaml.load((ROOT/'.github/workflows/check.yml').read_text(),Loader=yaml.BaseLoader)
         formal=yaml.load((ROOT/'.github/workflows/parallel_pilot.yml').read_text(),Loader=yaml.BaseLoader)
         child=yaml.load((ROOT/'.github/workflows/qwen_production_lecture.yml').read_text(),Loader=yaml.BaseLoader)
-        self.assertEqual([v['cron'] for v in caller['on']['schedule']],['7 9 * * *'])
+        self.assertEqual([v['cron'] for v in caller['on']['schedule']],['0 10 * * *'])
         self.assertIn('workflow_dispatch',caller['on'])
         self.assertEqual(set(caller['jobs']),{'check'})
         self.assertNotIn('needs',caller['jobs']['check'])

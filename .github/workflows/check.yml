@@ -17,7 +17,8 @@ jobs:
       actions: write
 'on':
   schedule:
-  - cron: 7 9 * * *
+  # 18:00 Asia/Taipei (UTC+8); exactly one daily schedule.
+  - cron: '0 10 * * *'
   workflow_dispatch: null
 concurrency:
   group: icourse-data-${{ github.repository }}

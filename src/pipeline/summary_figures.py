@@ -288,7 +288,7 @@ def validate_selection(value, candidates, section_rows):
     return accepted
 
 
-def prefer_homework_selection(figures, candidates, section_rows):
+def prefer_homework_selection(figures, candidates, section_rows, summary):
     """Reserve one place when already-read clear references would be omitted.
 
     This only illustrates visible board text. It does not upgrade evidence,
@@ -299,9 +299,16 @@ def prefer_homework_selection(figures, candidates, section_rows):
     section = next((s['id'] for s in section_rows if re.search('作业', s['title'])), None)
     if section is None:
         return figures
+    heading = list(re.finditer(r'^#{1,6} .+$', summary, re.M))[section]
+    end = next(s['end'] for s in section_rows if s['id'] == section)
+    notice = summary[heading.end():end]
+    pages = {int(a or b) for a, b in re.findall(r'(\d{1,3})\s*页|[Pp]\s*(\d{1,3})(?!\d)', notice)}
     for candidate in sorted(candidates, key=lambda c: c['seconds'], reverse=True):
         if not candidate.get('candidate_id'):
             continue
+        visible_pages = {r.get('page') for r in candidate.get('references', []) if r.get('legible') is True}
+        if pages and not pages.intersection(visible_pages):
+            continue  # A clear older assignment must not illustrate a different page.
         labels = [r['text'] for r in candidate.get('references', [])
                   if r.get('legible') is True and isinstance(r.get('text'), str)
                   and re.fullmatch(r'(?:\d{1,3}页|第\d{1,3}(?:\(\d{1,3}\))*题)', r['text'])]
@@ -400,7 +407,7 @@ def add_figures(db, client, summarizer, course, sub, summary, pages, segments, d
         if not isinstance(raw, str):
             raise FigureSelectionError('missing_response_content')
         state['figures'] = prefer_homework_selection(
-            validate_selection(json.loads(raw), candidates, section_rows), candidates, section_rows)
+            validate_selection(json.loads(raw), candidates, section_rows), candidates, section_rows, summary)
         state['status'] = 'complete'; validate_assets(state, sub); save()
         return insert_figures(summary, state['figures']), state
     except Exception as error:

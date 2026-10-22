@@ -203,7 +203,7 @@ class SummaryFiguresTests(unittest.TestCase):
         summary = '### 课程事项提醒\n\n#### 作业与课务\n\n第109页第1题。\n\n### 正文\n'
         candidate = dict(self.image, candidate_id='cue', references=self.homework_frame()['references'])
         ordinary = [dict(self.image, id=str(i)*64, kind='diagram') for i in range(6)]
-        selected = figures.prefer_homework_selection(ordinary, [candidate], figures.sections(summary))
+        selected = figures.prefer_homework_selection(ordinary, [candidate], figures.sections(summary), summary)
         self.assertEqual(len(selected), 6)
         self.assertEqual(selected[-1]['kind'], 'homework')
         self.assertEqual(selected[-1]['section_id'], 1)
@@ -215,9 +215,19 @@ class SummaryFiguresTests(unittest.TestCase):
         for refs in [[], [{'text': '109页', 'legible': False}],
                      [{'text': 'x=1', 'legible': True}], [{'text': '<script>', 'legible': True}]]:
             candidate = dict(self.image, candidate_id='cue', references=refs)
-            self.assertEqual(figures.prefer_homework_selection([], [candidate], figures.sections(summary)), [])
+            self.assertEqual(figures.prefer_homework_selection([], [candidate], figures.sections(summary), summary), [])
         candidate = dict(self.image, candidate_id='cue', references=self.homework_frame()['references'])
-        self.assertEqual(figures.prefer_homework_selection([], [candidate], figures.sections(self.summary)), [])
+        self.assertEqual(figures.prefer_homework_selection([], [candidate], figures.sections(self.summary), self.summary), [])
+
+    def test_older_assignment_page_cannot_replace_current_homework(self):
+        summary = '## 作业\n\n第109页第1题。'
+        older = dict(self.image, candidate_id='old', seconds=200,
+            references=[{'text': '7页', 'page': 7, 'legible': True}])
+        self.assertEqual(figures.prefer_homework_selection([], [older], figures.sections(summary), summary), [])
+        current = dict(self.image, candidate_id='current', seconds=100,
+                       references=self.homework_frame()['references'])
+        selected = figures.prefer_homework_selection([], [older, current], figures.sections(summary), summary)
+        self.assertEqual(selected[0]['seconds'], 100)
 
     def test_draft_failure_can_restore_original_homework_pixels_without_repeating_vision(self):
         figures.cache_homework_frames(self.db, '1', '2', [self.homework_frame()])

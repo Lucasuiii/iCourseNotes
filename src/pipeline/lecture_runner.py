@@ -617,8 +617,10 @@ class LectureRunner:
                                        audio_seconds=(getattr(self, '_prepared_asr', None) or {}).get('audio_seconds'))
 
     def _retain_figure_frame(self, image, row):
-        from src.pipeline.summary_figures import retain_homework_frame
+        from src.pipeline.summary_figures import retain_homework_frame, cache_homework_frames
         retain_homework_frame(self._summary_homework_frames, image, row)
+        cache_homework_frames(self._db, self._homework_course_id, self._homework_sub_id,
+                              self._summary_homework_frames)
 
     def _summarize(self, sub_id: str, course_title: str, transcript: str,
                    transcript_segments: list[dict] | None) -> Optional[str]:

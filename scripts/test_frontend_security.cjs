@@ -79,6 +79,16 @@ assert.equal(target.querySelector('img').getAttribute('loading'), 'lazy');
 assert.equal(target.querySelector('img').getAttribute('src'), 'blob:https://frontend.invalid/test-figure');
 assert.equal(target.querySelector('button').getAttribute('aria-label'), '查看大图：可见原图');
 assert.equal(target.querySelectorAll('a').length, 0);
+const bracketCaption = 'K&#91;x&#93; 与 C&#91;a,b&#93;';
+target.innerHTML = window.ICS.render.renderMarkdown(
+  `![${bracketCaption}](#icourse-figure-${figureId})\n\n*课堂原图：${bracketCaption}*`, [figure]);
+assert.equal(target.querySelector('img').alt, 'K[x] 与 C[a,b]');
+assert.equal(target.querySelector('button').getAttribute('aria-label'), '查看大图：K[x] 与 C[a,b]');
+assert.ok(target.textContent.includes('课堂原图：K[x] 与 C[a,b]'));
+target.innerHTML = window.ICS.render.renderMarkdown(
+  `![&#91;说明&#93;(javascript:alert(1))](#icourse-figure-${figureId})\n\n*课堂原图：&#91;说明&#93;(javascript:alert(1))*`, [figure]);
+assert.equal(target.querySelectorAll('img').length, 1);
+assert.equal(target.querySelectorAll('a,script,[onerror]').length, 0);
 window.ICS.render.renderMarkdown('另一张PPT文字');
 assert.equal(revoked.length, 0, 'hidden PPT rendering must not revoke visible summary pictures');
 target.innerHTML = window.ICS.render.renderMarkdown(figureMd, []);

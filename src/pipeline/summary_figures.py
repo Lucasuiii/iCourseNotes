@@ -6,6 +6,7 @@ transport and is never retried after an ambiguous failure.
 """
 import base64
 import hashlib
+import html
 import io
 import json
 import math
@@ -274,7 +275,7 @@ def validate_selection(value, candidates, section_rows):
         if row.get('kind') not in ('diagram', 'curve', 'table', 'worked_example', 'homework'):
             raise FigureSelectionError('invalid_figure_kind', index)
         if (not isinstance(caption, str) or not 1 <= len(caption.strip()) <= 100
-                or re.search(r'[\n\r\[\]<>*`\\]|https?://', caption)):
+                or re.search(r'[\n\r<>*`\\]|https?://', caption)):
             raise FigureSelectionError('invalid_caption', index)
         if not isinstance(evidence, str) or not 1 <= len(evidence.strip()) <= 300:
             raise FigureSelectionError('invalid_visible_evidence', index)
@@ -328,7 +329,9 @@ def insert_figures(summary, figures):
     by_section = {}
     for row in figures:
         sec = int(row['seconds']); clock = f'{sec//3600:02}:{sec//60%60:02}:{sec%60:02}'
-        block = f"\n\n![{row['caption']}](#icourse-figure-{row['id']})\n\n*课堂原图 · {clock}：{row['caption']}*\n\n"
+        # Keep mathematical brackets visible without making them Markdown syntax.
+        caption = html.escape(row['caption']).replace('[', '&#91;').replace(']', '&#93;')
+        block = f"\n\n![{caption}](#icourse-figure-{row['id']})\n\n*课堂原图 · {clock}：{caption}*\n\n"
         by_section.setdefault(row['section_id'], []).append(block)
     for section in reversed(sections(summary)):
         pos = section['end']

@@ -58,6 +58,36 @@ class SummaryFiguresTests(unittest.TestCase):
             with self.assertRaises(ValueError): figures.validate_selection(selection, [self.image], figures.sections(self.summary))
         self.assertEqual(figures.insert_figures(self.summary, []), self.summary)
 
+    def test_mathematical_brackets_keep_whole_selection_and_export(self):
+        selection = json.loads(json.dumps(self.selection))
+        selection['figures'][0]['caption'] = '多项式空间 K[x] 与连续函数空间 C[a,b]'
+        second = dict(self.image, id='b'*64)
+        selection['figures'].append(dict(selection['figures'][0], image_id=second['id'],
+                                         section_id=1, caption='后续板书'))
+        accepted = figures.validate_selection(selection, [self.image, second], figures.sections(self.summary))
+        self.assertEqual(len(accepted), 2)
+        summary = figures.insert_figures(self.summary, accepted)
+        self.assertEqual(len(figures.FIGURE_REF.findall(summary)), 2)
+        self.assertIn('K&#91;x&#93;', summary)
+        self.assertIn('C&#91;a,b&#93;', summary)
+        # Use a real content-addressed image for database and local export checks.
+        accepted = accepted[:1]
+        summary = figures.insert_figures(self.summary, accepted)
+        state = {'schema':1, 'sub_id':'2', 'course_id':'1', 'status':'complete', 'figures':accepted}
+        self.db.write_meta('summary_figures:2', json.dumps(state))
+        self.db.update_summary('2', summary, 'test')
+        validate_database(str(self.path))
+        exported = figures.export_local(summary, state, self.tmp.name)
+        self.assertIn('K&#91;x&#93;', exported)
+        self.assertIn(str(Path(self.tmp.name)/'figures'/(self.image['id']+'.jpg')), exported)
+
+    def test_caption_brackets_cannot_add_markdown_links_or_images(self):
+        row = dict(self.image, caption='[说明](javascript:alert(1)) ![额外图](data:image/png;base64,AA)', section_id=0)
+        summary = figures.insert_figures(self.summary, [row])
+        self.assertEqual(len(figures.FIGURE_REF.findall(summary)), 1)
+        self.assertNotIn('[说明]', summary)
+        self.assertNotIn('![额外图]', summary)
+
     def test_reserved_or_failed_request_never_replays(self):
         for status in ['reserved', 'failed', 'collecting']:
             self.db.write_meta('summary_figures:2', json.dumps({'schema': 1, 'sub_id': '2', 'status': status,

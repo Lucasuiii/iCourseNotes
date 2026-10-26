@@ -95,6 +95,17 @@ target.innerHTML = window.ICS.render.renderMarkdown(figureMd, []);
 assert.equal(target.querySelectorAll('img').length, 0);
 assert.ok(target.textContent.includes('课堂配图不可用'));
 assert.equal(revoked.length, 1);
+const eightFigures = Array.from({length: 8}, (_, i) => ({...figure, id: (i+1).toString(16).repeat(64)}));
+const eightFigureMd = eightFigures.map(f => `![原图](#icourse-figure-${f.id})`).join('\n\n');
+target.innerHTML = window.ICS.render.renderMarkdown(eightFigureMd, eightFigures);
+assert.equal(target.querySelectorAll('img').length, 8);
+assert.equal(target.querySelectorAll('button').length, 8);
+assert.ok(!target.textContent.includes('课堂配图不可用'));
+const ninthFigure = {...figure, id: '9'.repeat(64)};
+target.innerHTML = window.ICS.render.renderMarkdown(eightFigureMd, [...eightFigures, ninthFigure]);
+assert.equal(target.querySelectorAll('img').length, 0);
+assert.ok(target.textContent.includes('课堂配图不可用'));
+
 target.innerHTML = window.ICS.render.renderMarkdown(figureMd, [{...figure, data: 'aW52YWxpZA=='}]);
 assert.equal(target.querySelectorAll('img').length, 0);
 // Production dependencies use complete versions. Tailwind's Play CDN lacks

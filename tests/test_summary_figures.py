@@ -51,6 +51,30 @@ class SummaryFiguresTests(unittest.TestCase):
         state['figures'][0]['data'] = base64.b64encode(b'not the same pixels').decode()
         with self.assertRaises(ValueError): figures.validate_assets(state, '2')
 
+    def test_eight_figures_roundtrip_and_ninth_is_rejected(self):
+        images = []
+        for index in range(9):
+            canvas = Image.new('RGB', (600, 400), 'white')
+            ImageDraw.Draw(canvas).rectangle((20 + index * 20, 30, 80 + index * 20, 300), fill='black')
+            stream = io.BytesIO(); canvas.save(stream, 'JPEG'); raw = stream.getvalue()
+            images.append(dict(self.image, id=hashlib.sha256(raw).hexdigest(),
+                               data=base64.b64encode(raw).decode()))
+        rows = [dict(self.selection['figures'][0], image_id=image['id']) for image in images]
+        accepted = figures.validate_selection({'figures': rows[:8]}, images, figures.sections(self.summary))
+        self.assertEqual(len(accepted), 8)
+        state = {'schema':1, 'sub_id':'2', 'course_id':'1', 'status':'complete', 'figures':accepted}
+        summary = figures.insert_figures(self.summary, accepted)
+        self.db.write_meta('summary_figures:2', json.dumps(state))
+        self.db.update_summary('2', summary, 'test')
+        validate_database(str(self.path))
+        exported = figures.export_local(summary, state, self.tmp.name)
+        self.assertEqual(len(list((Path(self.tmp.name)/'figures').glob('*.jpg'))), 8)
+        self.assertEqual(exported.count('!['), 8)
+        with self.assertRaises(ValueError):
+            figures.validate_selection({'figures': rows}, images, figures.sections(self.summary))
+        with self.assertRaises(ValueError):
+            figures.validate_assets(dict(state, figures=accepted+[images[8]]), '2')
+
     def test_unknown_identity_unreadable_and_html_captions_rejected(self):
         for key, bad in [('image_id', 'a'*64), ('section_id', 99), ('legible', False),
                          ('caption', '<img src=x>'), ('caption', '猜测\n图注')]:
@@ -229,12 +253,12 @@ class SummaryFiguresTests(unittest.TestCase):
         self.assertEqual(chosen[0]['seconds'], 20)
         self.assertFalse(chosen[0]['homework_complete'])
 
-    def test_homework_gets_slot_when_model_chooses_only_six_diagrams(self):
+    def test_homework_gets_slot_when_model_chooses_fills_eight_diagram_slots(self):
         summary = '### 课程事项提醒\n\n#### 作业与课务\n\n第109页第1题。\n\n### 正文\n'
         candidate = dict(self.image, candidate_id='cue', references=self.homework_frame()['references'])
-        ordinary = [dict(self.image, id=str(i)*64, kind='diagram') for i in range(6)]
+        ordinary = [dict(self.image, id=str(i)*64, kind='diagram') for i in range(8)]
         selected = figures.prefer_homework_selection(ordinary, [candidate], figures.sections(summary), summary)
-        self.assertEqual(len(selected), 6)
+        self.assertEqual(len(selected), 8)
         self.assertEqual(selected[-1]['kind'], 'homework')
         self.assertEqual(selected[-1]['section_id'], 1)
         self.assertIn('画面可见部分', selected[-1]['caption'])

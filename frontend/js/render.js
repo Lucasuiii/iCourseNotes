@@ -102,7 +102,7 @@ function _renderMarkdown(mdText, figures, options) {
   var html = DOMPurify.sanitize(restored, { USE_PROFILES: { html: true } });
   var wrapper = document.createElement('div'); wrapper.innerHTML = html;
   var accepted = new Map();
-  if (Array.isArray(figures) && figures.length <= 6) {
+  if (Array.isArray(figures) && figures.length <= 8) {
     for (var figure of figures) {
       if (figure && /^[0-9a-f]{64}$/.test(figure.id) && figure.mime === 'image/jpeg' &&
           typeof figure.data === 'string' && figure.data.length <= 1048576 &&

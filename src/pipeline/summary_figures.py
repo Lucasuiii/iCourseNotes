@@ -13,7 +13,7 @@ import math
 import re
 
 MAX_CANDIDATES = 12
-MAX_FIGURES = 6
+MAX_FIGURES = 8
 MAX_IMAGE_BYTES = 768 * 1024
 MAX_RESPONSE_CHARS = 64000
 PREFIX = 'summary_figures:'
@@ -26,7 +26,7 @@ PROMPT = '''为已有课程笔记挑选真正有助于理解的课堂原图。�
 不猜题号、页码、符号或老师未说过的结论。
 同一作业优先较晚、较清晰、遮挡更少的画面；局部清楚也可选，图注说明是局部画面，
 不把写到一半的数字猜全，不把局部图说成全部作业。stable不代表整份清单完整。
-图片不能替代正文公式。最多6张，只用给定的image_id和
+图片不能替代正文公式。最多8张，只用给定的image_id和
 section_id；插到该章节末尾。caption为不超过100字的一行纯文本，不要Markdown/HTML。
 返回JSON {"figures":[{"image_id":"给定ID", "section_id":0,
 "caption":"图中可见的内容", "visible_evidence":"图中支撑图注的可见元素",

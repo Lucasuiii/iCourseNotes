@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src blob: data:">
+<title>课程笔记</title>
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="stylesheet" href="note.css">
+</head>
+<body>
+<div id="progress"></div>
+<nav id="toc" hidden></nav>
+<main id="page">
+  <div id="empty" class="empty">
+    <div class="empty-mark">∑</div>
+    <p>从左侧选择一堂课开始阅读</p>
+  </div>
+  <article id="content" hidden></article>
+</main>
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/katex/katex.min.js"></script>
+<script src="vendor/katex/auto-render.min.js"></script>
+<script src="render.js"></script>
+<script src="note.js"></script>
+</body>
+</html>

@@ -15,6 +15,23 @@ CID,SID,DAY=f.CID,f.SID,f.DAY
 def status(**v):
  p=R/'app-publication-status.json';old=json.loads(p.read_text()) if p.exists() else {}
  old.update(v,updated=time.time());f.record(p.name,old)
+def apply_figure_recovery(fresh,meta,audit,figures,summary):
+ """Use the recovered figures only if the reviewed prose is unchanged and figures are merely inserted."""
+ if not f.RECOVERY.exists('app-figure-recovery.enc'):return fresh,meta,figures,summary
+ from src.pipeline.summary_figures import insert_figures,validate_assets
+ artifact=f.RECOVERY.read('app-figure-recovery.enc');state=artifact['figure_state']
+ assert artifact['kind']=='figure_recovery' and artifact['base_summary']==summary==audit['reviewed_summary'],'Recovery base differs from reviewed summary'
+ assert figures.get('status')=='failed' and not figures.get('figures'),'Original selection was not a failed empty selection'
+ validate_assets(state,SID);assert state['status']=='complete' and state['summary_sha256']==figures['summary_sha256']
+ assert state['recovery']['model_calls']==0 and artifact['summary']==insert_figures(summary,state['figures']),'Recovered summary is not figure insertion only'
+ final=artifact['summary'];fresh['lecture']['summary']=final
+ fresh['lecture']['summary_model']=(fresh['lecture'].get('summary_model') or '')+' / figure recovery'
+ fresh['meta']=[x for x in fresh['meta'] if x['key']!='summary_review:'+SID]
+ for x in fresh['meta']:
+  if x['key']=='summary_figures:'+SID:x['value']=json.dumps(state,ensure_ascii=False)
+  if x['key']=='qwen_pipeline:'+SID:
+   q=json.loads(x['value']);q['summary_editorial_update']={'schema':1,'kind':'figure_recovery_after_model_review','original_summary_sha256':f.sha(summary.encode()),'summary_sha256':f.sha(final.encode()),'figures_inserted_only':True,'original_model_review':audit,'final_text_reviewed_by_model':False};x['value']=json.dumps(q,ensure_ascii=False)
+ return fresh,{x['key']:x['value'] for x in fresh['meta']},state,final
 def load_candidate(request):
  from scripts.local_history.runtime import candidate_files
  from src.pipeline.summary_review import validate_published
@@ -33,17 +50,24 @@ def load_candidate(request):
  for fig in figures.get('figures',[]):
   raw=base64.b64decode(fig['data'],validate=True);assert f.sha(raw)==fig['id'];Image.open(io.BytesIO(raw)).verify()
  summary=fresh['lecture']['summary']
+ fresh,meta,figures,summary=apply_figure_recovery(fresh,meta,audit,figures,summary)
  # Exactly the text the user read in the app; anything else is refused.
  assert f.sha(summary.encode())==request['summary_sha256'],'Reviewed summary differs from candidate'
  assert not f.RECOVERY.exists('final-reviewed-editorial-artifact.enc'),'Manual editorial artifact exists; use its delivery flow'
  return path,fresh,state,rows,meta,audit,figures,summary,digest(fresh)
-def build(before,fresh,meta):
+def build(before,fresh,meta,overwrite=None):
+ """Candidate DB for this one lecture. A cloud note is replaced only when the user chose to
+ overwrite exactly that note (its summary hash); otherwise it is preserved."""
+ replaced=None
  with contextlib.closing(sqlite3.connect(before)) as db:
   db.row_factory=sqlite3.Row;old=db.execute('select * from lectures where sub_id=?',(SID,)).fetchone()
   assert db.execute('select 1 from courses where course_id=?',(CID,)).fetchone(),'Course removed; do not recreate'
   if old:
    assert old['course_id']==CID and old['date']==DAY and not old['deleted_at'],'Lecture removed or changed'
-   assert not old['summary'] and not old['emailed_at'],'Remote lesson already processed; preserve it'
+   if old['summary'] or old['emailed_at']:
+    assert old['summary'] and overwrite,'Remote lesson already processed; preserve it'
+    assert f.sha(old['summary'].encode())==overwrite,'Cloud note changed since comparison; compare again'
+    replaced={'summary':old['summary'],'summary_model':old['summary_model'],'processed_at':old['processed_at'],'emailed_at':old['emailed_at']}
   else:
    sel=json.loads((R/'selection.json').read_text());assert sel['historical_exists'] is False and sel['available'] and sel['session_selected']
  candidate=R/'publish-candidate.db';shutil.copyfile(before,candidate)
@@ -60,14 +84,14 @@ def build(before,fresh,meta):
   for k in f.scope_keys(CID,SID):db.execute('delete from meta where key=?',(k,))
   for k,v in meta.items():assert k in f.scope_keys(CID,SID);db.execute('insert into meta(key,value) values (?,?)',(k,v))
  f.validate_database(str(candidate));f.scope(before,candidate)
- return candidate
+ return candidate,replaced
 def dry_run(request):
  path,fresh,state,rows,meta,audit,figures,summary,fingerprint=load_candidate(request)
  before=R/'app-dry-run-before.db'
  try:
   base=f.load_remote(before);assert base
-  candidate=build(before,fresh,meta)
-  result={'status':'passed','base':base,'blocks':len(rows),'figures':len(figures.get('figures',[])),'summary_review_status':audit['status'],'summary_sha256':f.sha(summary.encode()),'candidate_fingerprint':fingerprint,'scope_verified':True,'pushed':False,'mail':False,'checked':time.time()}
+  candidate,replaced=build(before,fresh,meta,request.get('overwrite_remote_sha256'))
+  result={'status':'passed','base':base,'overwrites_remote':bool(replaced),'blocks':len(rows),'figures':len(figures.get('figures',[])),'summary_review_status':audit['status'],'summary_sha256':f.sha(summary.encode()),'candidate_fingerprint':fingerprint,'scope_verified':True,'pushed':False,'mail':False,'checked':time.time()}
  finally:
   for p in [before,R/'publish-candidate.db']:
    for suffix in ['','-wal','-shm']:Path(str(p)+suffix).unlink(missing_ok=True)
@@ -78,8 +102,9 @@ def export_outputs(summary,figures,audit):
  f.OUT.mkdir(parents=True,exist_ok=True,mode=0o700)
  f.atomic(f.OUT/'summary.md',(export_local(summary,figures,f.OUT) if figures else summary).encode())
  f.atomic(f.OUT/'summary-review.md',report(audit).encode())
-def cleanup():
- """Only after published + remote readback verified. Keeps outputs, state and checkpoints."""
+def cleanup(keep_remote_backup=False):
+ """Only after published + remote readback verified. Keeps outputs, state and checkpoints;
+ after an overwrite also keeps the encrypted pre-publication data with the replaced cloud note."""
  journal=json.loads((R/'notes-publication.json').read_text());assert journal['status']=='published' and journal['remote_readback_verified']
  protected=[p for p in f.OUT.rglob('*') if p.is_file()];hashes={str(p):f.sha(p.read_bytes()) for p in protected}
  assert (f.OUT/'summary.md').exists() and (f.OUT/'transcript.md').exists() and (f.OUT/'asr-transcript.md').exists(),'Transcripts not exported'
@@ -91,7 +116,8 @@ def cleanup():
   if not p.is_file():continue
   name=p.name
   if name.endswith(('.db','.db-wal','.db-shm','.raw','.wav','.m4a','.mp4','.aac','private.log')):remove.append(p)
-  elif rel.parts[0]=='recovery' and name.endswith('.db.enc'):remove.append(p)
+  elif rel.parts[0]=='recovery' and name.endswith('.db.enc'):
+   if not (keep_remote_backup and name.startswith('remote-before-')):remove.append(p)
   elif name=='baseline.db.enc':remove.append(p)
  removed=[]
  for p in remove:
@@ -115,7 +141,11 @@ def publish(request):
  export_outputs(summary,figures,audit);f.durable_backup(path,'local-reviewed-candidate')
  status(status='publishing')
  before=R/'publish-before.db';base=f.load_remote(before);assert base;f.durable_backup(before,'remote-before-'+base)
- candidate=build(before,fresh,meta)
+ candidate,replaced=build(before,fresh,meta,request.get('overwrite_remote_sha256'))
+ if replaced:
+  # Keep a readable copy of the cloud note being replaced; the encrypted full backup stays too.
+  f.atomic(f.OUT/'replaced-cloud-summary.md',('# 被本机版本替换的云端笔记\n\n模型：'+str(replaced['summary_model'])+'；处理时间：'+str(replaced['processed_at'])+'\n\n'+replaced['summary']+'\n').encode())
+  status(overwrote_remote=True,replaced_summary_sha256=f.sha(replaced['summary'].encode()),remote_backup='recovery/remote-before-'+base+'.db.enc')
  commit=f.publish(candidate,before,base,'notes')
  status(status='published',notes_commit=commit)
  email_status='not_requested';final=commit
@@ -145,7 +175,7 @@ def publish(request):
  f.record('delivery-result.json',result)
  f.atomic(f.OUT/'completion-report.md',('# 本机新课已发布\n\n@@COURSE_TITLE@@，@@DAY@@。\n\n'+str(len(rows))+' 块覆盖核验通过；理论审核 '+audit['status']+'，配图 '+str(result['figures'])+' 张。在本地应用中人工审核后发布，远端回读一致。\n\n邮件：'+{'not_requested':'未选择发送','sent':'SMTP 已接受（不等于已验证收件箱送达）','already_emailed':'data 中已有回执，未重发'}[email_status]+'。\n\n笔记提交：https://github.com/Lucasuiii/iCourseNotes/commit/'+commit+'\n').encode())
  status(status='cleaning',data_commit=final,email_status=email_status)
- freed=cleanup()
+ freed=cleanup(keep_remote_backup=bool(replaced))
  st=json.loads((R/'execution-status.json').read_text());st.update(status='completed',phase='complete',updated=time.time(),pid=None,worker_pid=None,data_commit=final,email_status=email_status,figures=result['figures'],cleanup_complete=True);f.record('execution-status.json',st)
  status(status='completed',cleanup_complete=True,bytes_freed=freed)
 if __name__=='__main__':

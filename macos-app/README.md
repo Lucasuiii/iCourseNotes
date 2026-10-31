@@ -20,6 +20,10 @@
 - “拉取最新”：从 GitHub data 解密最新笔记，加密缓存在本机（只读，不改云端）。
 - “推送”：已审核课次逐堂推送，复用 `finalize.py` 的既有保护：备份最新 data、只替换这一堂并核对范围、加密往返、普通推送（不强推）、远端回读。成功后清理音频、明文数据库、临时 checkout、私密日志与冗余加密数据库备份；保留摘要、两份转录、精选图、运行状态与识别检查点。失败不自动重试。
 - 邮件在推送对话框单独开启，默认关闭，只尝试一次。“检查”按推送流程在本机构建并校验候选库，不推送、不发邮件。
+- 云端与本机冲突：推送前会读取最新 data。如果这堂课云端已有笔记（例如云端每日任务也识别了），对话框并排显示两份的字数、配图、模型和邮件状态，由你选择：
+  - **保留云端**：本机结果标记为“已由云端版本取代”，不写入 data，本机文件保留。
+  - **用本机覆盖云端**：需勾选确认；覆盖绑定你对比时看到的那份云端内容，若之后云端又变了会拒绝。被替换的云端笔记随推送前的整库加密备份保留（清理时不删），并另存 `replaced-cloud-summary.md`；邮件回执保留，不会因覆盖重发。已删除并永久忽略的课次不能覆盖。
+  - 推送失败且没有写入 GitHub 时，可以重新选择后再推送；之前的尝试记录归档在 `app-attempt-N/`。
 
 ## 运行前提
 
@@ -48,9 +52,11 @@ work/qwen-local-asr-test-env/bin/python  共用 Python 环境
 ```
 Sources/ICourseNotes/   SwiftUI 应用
 bridge/app_bridge.py    应用与后端之间的 JSON 命令桥（status / scan / start / pause / resume /
-                        notes-sync / notes-list / note / approve / unapprove / push / remote）
+                        notes-sync / notes-list / note / approve / unapprove / push / compare /
+                        keep-remote / remote）
 bridge/templates/       应用启动时渲染到各课次目录的队列、单堂与推送脚本
-bridge/tests/           模拟后端的队列 → 暂停 → 续跑端到端测试（需要本机运行目录）
+bridge/tests/           test_queue_flow.py：模拟后端的队列 → 暂停 → 续跑（需要本机运行目录）；
+                        test_overwrite.py：云端冲突时保留 / 覆盖规则（独立运行）
 web/                    阅读页；KaTeX 0.16.21、marked 15.0.12、DOMPurify 3.4.16 离线副本，
                         与线上前端 SRI 一致；render.js 取自生产前端
 tools/make_icon.swift   生成应用图标

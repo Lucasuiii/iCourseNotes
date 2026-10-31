@@ -328,10 +328,26 @@ final class AppModel {
         return nil
     }
 
-    func push(control: String, email: Bool) async {
+    func compare(control: String) async -> CompareResult? {
+        guard let bridge else { return nil }
+        do { return try await bridge.run(["compare", "--control", control], as: CompareResult.self, timeout: 120) }
+        catch { show(error.localizedDescription, error: true); return nil }
+    }
+
+    func keepRemote(control: String) async {
+        guard let bridge else { return }
+        do {
+            let r = try await bridge.run(["keep-remote", "--control", control], as: ActionResponse.self, timeout: 120)
+            r.ok ? show("已保留云端版本，本机结果不会写入 data") : show(r.message ?? r.errorType ?? "操作失败", error: true)
+        } catch { show(error.localizedDescription, error: true) }
+        await loadNotes(); await checkRemote()
+    }
+
+    func push(control: String, email: Bool, overwrite: String? = nil) async {
         guard let bridge else { return }
         var args = ["push", "--control", control]
         if email { args.append("--email") }
+        if let overwrite { args += ["--overwrite-remote", overwrite] }
         do {
             let r = try await bridge.run(args, as: ActionResponse.self)
             guard r.ok else { show(r.message ?? r.errorType ?? "推送未开始", error: true); return }

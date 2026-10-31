@@ -193,6 +193,29 @@ struct LocalNoteIndex: Decodable, Hashable, Identifiable {
     let updated: Double?
     let term: String?
     let termLabel: String?
+    let publicationConflict: Bool?
+}
+
+struct CompareSide: Decodable {
+    let hasSummary: Bool?
+    let deleted: Bool?
+    let emailed: Bool?
+    let summarySha256: String?
+    let summaryChars: Int?
+    let transcriptChars: Int?
+    let summaryModel: String?
+    let processedAt: String?
+    let figures: Int?
+    let review: String?
+    let figuresStatus: String?
+}
+
+struct CompareResult: Decodable {
+    let ok: Bool
+    let revision: String?
+    let conflict: Bool
+    let remote: CompareSide?
+    let local: CompareSide?
 }
 
 struct RemoteInfo: Decodable {

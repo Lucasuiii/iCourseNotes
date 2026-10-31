@@ -504,15 +504,51 @@ def review_payload(raw):
     return {'status': safe_code(audit.get('status')), 'issues': len(audit.get('issues', []) or [])}
 
 
-def cmd_notes_sync(args):
+def provider_env():
+    """Load the configured private env files for GitHub/data access; nothing is printed."""
     source = str(active_source())
-    sys.path.insert(0, source); os.chdir(source)
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    os.chdir(source)
     from scripts.local_history_refresh import load_env
     cfg = json.loads((active_source()/'.local-history-refresh/settings.json').read_text())
     with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
         for path in cfg['env_files']:
             load_env(path)
     os.environ.update(GITHUB_REPOSITORY='Lucasuiii/iCourseNotes', DB_ENCRYPTION_KEY=key())
+
+
+def remote_lecture(cid, sid):
+    """Read one lecture from the current data branch; plaintext is removed before returning."""
+    provider_env()
+    from scripts.production_db import load_remote
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    tmp = STATE/'compare-tmp'; shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(mode=0o700)
+    try:
+        db = tmp/'remote.db'
+        with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            revision = load_remote(db)
+        with contextlib.closing(sqlite3.connect(db.as_uri()+'?mode=ro', uri=True)) as c:
+            c.row_factory = sqlite3.Row
+            r = c.execute('select * from lectures where sub_id=?', (sid,)).fetchone()
+            figs = c.execute('select value from meta where key=?', ('summary_figures:'+sid,)).fetchone()
+        if not r:
+            return revision, None
+        if str(r['course_id']) != cid:
+            raise Refused('云端同编号课次属于其他课程，不能处理')
+        summary = r['summary'] or ''
+        return revision, {'has_summary': bool(summary), 'deleted': bool(r['deleted_at']), 'emailed': bool(r['emailed_at']),
+                          'summary_sha256': hashlib.sha256(summary.encode()).hexdigest() if summary else None,
+                          'summary_chars': len(summary), 'transcript_chars': len(r['transcript'] or ''),
+                          'summary_model': safe_code((r['summary_model'] or '').split(' ')[0]) if r['summary_model'] else None,
+                          'processed_at': safe_code(r['processed_at']),
+                          'figures': len(figure_payload(figs[0] if figs else None)['figures'])}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def cmd_notes_sync(args):
+    provider_env()
     from scripts.production_db import load_remote
     STATE.mkdir(mode=0o700, exist_ok=True)
     tmp = STATE/'notes-sync-tmp'; shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(mode=0o700)
@@ -579,6 +615,7 @@ def local_lectures():
                      'app_managed': (p/'app_publish.py').exists(),
                      'publication_status': safe_code(publication.get('status')),
                      'publication_error': safe_code(publication.get('error_type')),
+                     'publication_conflict': 'already processed' in str(publication.get('detail') or '') or 'changed since comparison' in str(publication.get('detail') or ''),
                      'notes_commit': safe_code(publication.get('notes_commit')),
                      'email_status': safe_code(publication.get('email_status') or st.get('email_status')),
                      'updated': publication.get('updated') or st.get('updated')})
@@ -615,6 +652,15 @@ def local_note(control):
             payload['coverage'] = {'missing_seconds': number(cov.get('missing_seconds')), 'complete': cov.get('complete')}
         except ValueError:
             pass
+        recovery = control/'recovery'/'app-figure-recovery.enc'
+        if recovery.exists():
+            # Figures recovered after a rejected selection: same reviewed prose, figures inserted.
+            artifact = store(control/'recovery').read('app-figure-recovery.enc')
+            if artifact.get('base_summary') == payload['summary']:
+                fs = artifact['figure_state']
+                payload.update(summary=artifact['summary'], figures=figure_payload(json.dumps(fs)),
+                               figure_recovery={'figures': len(fs['figures']),
+                                                'dropped': len(fs.get('recovery', {}).get('dropped', []))})
         payload['summary_sha256'] = hashlib.sha256(payload['summary'].encode()).hexdigest()
     else:
         # Already cleaned: rebuild the portable export into the same figure-ref shape.
@@ -646,6 +692,7 @@ def local_note(control):
                               and not (control/'app-publication-started.json').exists())
     if not payload['publishable']:
         payload['publish_block_reason'] = ('已发布或已开始发布' if (control/'notes-publication.json').exists() or (control/'app-publication-started.json').exists()
+                                           else '已保留云端版本' if (control/'app-superseded.json').exists()
                                            else '已由旧流程开始交付' if (control/'finalization-started.json').exists()
                                            else '候选数据已清理' if not candidate.exists() else '当前状态不可发布')
     return payload
@@ -701,10 +748,35 @@ def cmd_unapprove(args):
     out({'ok': True, 'approved': False})
 
 
+def reset_failed_attempt(control):
+    """A failed push that never reached GitHub (no notes journal) may be retried once the user
+    has chosen again; earlier attempt files are archived, never deleted."""
+    status = read_json(control/'app-publication-status.json') or {}
+    if status.get('status') != 'failed' or (control/'notes-publication.json').exists():
+        raise Refused('已经开始或完成推送，不会重复推送')
+    n = 1
+    while (control/f'app-attempt-{n}').exists():
+        n += 1
+    archive = control/f'app-attempt-{n}'; archive.mkdir(mode=0o700)
+    for name in ('app-publication-started.json', 'app-publication-request.json', 'app-publication-status.json', 'editorial-approval.json'):
+        if (control/name).exists():
+            (control/name).rename(archive/name)
+    st = read_json(control/'execution-status.json') or {}
+    st.update(status='awaiting_content_review', phase='independent_review', error_type=None, updated=time.time())
+    write_json(control/'execution-status.json', st)
+
+
 def cmd_push(args):
     control = lecture_control(args.control)
     if not (control/'app_publish.py').exists():
         raise Refused('该课次不是由本地应用启动，缺少应用发布脚本')
+    if not args.dry_run and (control/'app-publication-started.json').exists():
+        reset_failed_attempt(control)
+    if not args.dry_run:
+        sel = read_json(control/'selection.json')
+        _, remote = remote_lecture(sel['course_id'], sel['sub_id'])
+        if remote and remote['has_summary'] and remote['summary_sha256'] != args.overwrite_remote:
+            out({'ok': False, 'conflict': True, 'message': '云端已经有这堂课的笔记，请先选择保留云端或用本机覆盖'}); return
     approval = read_json(control/'app-approval.json')
     note = local_note(control)
     if not note['publishable']:
@@ -717,6 +789,11 @@ def cmd_push(args):
     if approval['summary_sha256'] != note.get('summary_sha256'):
         raise Refused('审核后内容已变化，请重新审核')
     request = dict(approval, email=bool(args.email), dry_run=bool(args.dry_run), requested=time.time())
+    if args.overwrite_remote:
+        if not re.fullmatch(r'[0-9a-f]{64}', args.overwrite_remote):
+            raise Refused('覆盖确认无效')
+        # Bound to the exact cloud summary the user compared; a newer cloud edit refuses the push.
+        request['overwrite_remote_sha256'] = args.overwrite_remote
     name = 'app-dry-run-request.json' if args.dry_run else 'app-publication-request.json'
     if not args.dry_run and (control/name).exists():
         raise Refused('已经提交过推送请求，不会重复推送')
@@ -731,16 +808,38 @@ def cmd_push(args):
     out({'ok': True, 'started': True, 'pid': child.pid})
 
 
+def cmd_compare(args):
+    """Is this lecture already in data? Shows both versions so the user can choose."""
+    control = lecture_control(args.control)
+    note = local_note(control)
+    revision, remote = remote_lecture(note['course_id'], note['sub_id'])
+    figs = (note.get('figures') or {}).get('figures') or []
+    out({'ok': True, 'revision': safe_code(revision), 'conflict': bool(remote and remote['has_summary']), 'remote': remote,
+         'local': {'summary_sha256': note.get('summary_sha256'), 'summary_chars': len(note.get('summary') or ''),
+                   'transcript_chars': len(note.get('transcript') or ''), 'figures': len(figs),
+                   'review': (note.get('review') or {}).get('status'), 'figures_status': (note.get('figures') or {}).get('status')}})
+
+
+def cmd_keep_remote(args):
+    """Keep the cloud note: the local result is set aside, never written to data."""
+    control = lecture_control(args.control)
+    if (control/'app-publication-started.json').exists():
+        reset_failed_attempt(control)
+    sel = read_json(control/'selection.json')
+    revision, remote = remote_lecture(sel['course_id'], sel['sub_id'])
+    if not (remote and remote['has_summary']):
+        raise Refused('云端目前没有这堂课的笔记，无需保留云端版本')
+    write_json(control/'app-superseded.json', {'kept_remote': True, 'remote_revision': revision,
+                                               'remote_summary_sha256': remote['summary_sha256'], 'decided_at': time.time()})
+    st = read_json(control/'execution-status.json') or {}
+    st.update(status='superseded_by_remote', phase='complete', updated=time.time())
+    write_json(control/'execution-status.json', st)
+    out({'ok': True, 'kept_remote': True})
+
+
 def cmd_remote(args):
     """Cheap remote check: the data branch head versus the local notes cache."""
-    source = str(active_source())
-    sys.path.insert(0, source); os.chdir(source)
-    from scripts.local_history_refresh import load_env
-    cfg = json.loads((active_source()/'.local-history-refresh/settings.json').read_text())
-    with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-        for path in cfg['env_files']:
-            load_env(path)
-    os.environ.setdefault('GITHUB_REPOSITORY', 'Lucasuiii/iCourseNotes')
+    provider_env()
     from scripts.production_db import auth_env
     url = 'https://github.com/'+os.environ['GITHUB_REPOSITORY']+'.git'
     refs = subprocess.run(['git', 'ls-remote', '--heads', url, 'refs/heads/data'], env=auth_env(),
@@ -775,13 +874,16 @@ def main():
     s.add_argument('--checks', required=True); s.add_argument('--notes')
     s = sub.add_parser('unapprove'); s.add_argument('--control', required=True)
     s = sub.add_parser('push'); s.add_argument('--control', required=True); s.add_argument('--email', action='store_true')
-    s.add_argument('--dry-run', action='store_true')
+    s.add_argument('--dry-run', action='store_true'); s.add_argument('--overwrite-remote')
+    s = sub.add_parser('compare'); s.add_argument('--control', required=True)
+    s = sub.add_parser('keep-remote'); s.add_argument('--control', required=True)
     sub.add_parser('remote')
     args = p.parse_args()
     try:
         {'status': cmd_status, 'scan': cmd_scan, 'inventory': cmd_inventory, 'start': cmd_start, 'pause': cmd_pause,
          'resume': cmd_resume, 'notes-sync': cmd_notes_sync, 'notes-list': cmd_notes_list, 'note': cmd_note,
-         'approve': cmd_approve, 'unapprove': cmd_unapprove, 'push': cmd_push, 'remote': cmd_remote}[args.command](args)
+         'approve': cmd_approve, 'unapprove': cmd_unapprove, 'push': cmd_push, 'remote': cmd_remote,
+         'compare': cmd_compare, 'keep-remote': cmd_keep_remote}[args.command](args)
     except Refused as e:
         out({'ok': False, 'message': str(e)})
     except Exception as e:

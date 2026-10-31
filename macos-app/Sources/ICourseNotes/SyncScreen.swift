@@ -101,8 +101,13 @@ struct SyncScreen: View {
                 }))
             }
             ForEach(failed) { item in
-                row(item, accessory: AnyView(Label(item.publicationError ?? "失败", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red).help("推送不会自动重试；断点与备份已保留，请检查后处理")))
+                row(item, accessory: AnyView(HStack(spacing: 8) {
+                    Label(item.publicationConflict == true ? "云端已有这堂课" : (item.publicationError ?? "失败"),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(item.publicationConflict == true ? .orange : .red)
+                        .help("没有写入 data；断点与备份已保留")
+                    Button(item.publicationConflict == true ? "选择版本…" : "重新推送…") { pushTarget = item }
+                }))
             }
             ForEach(reviewing) { item in
                 row(item, accessory: AnyView(Button("去审核") {
@@ -153,9 +158,75 @@ struct SyncScreen: View {
     }
 
     private func pushSheet(_ item: LocalNoteIndex) -> some View {
+        PushSheet(item: item) { pushTarget = nil }
+    }
+
+    private func dryRun(_ item: LocalNoteIndex) async {
+        checking = item.control
+        defer { checking = nil }
+        if let r = await model.dryRun(control: item.control) { dryRuns[item.control] = r }
+    }
+}
+
+/// Push dialog. It first compares with data; when the cloud already has this lecture the user
+/// picks which version stays.
+struct PushSheet: View {
+    @Environment(AppModel.self) private var model
+    let item: LocalNoteIndex
+    let close: () -> Void
+    @State private var result: CompareResult?
+    @State private var failed = false
+    @State private var email = false
+    @State private var confirmOverwrite = false
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("推送到 GitHub data").font(.title2.weight(.semibold))
-            Text("\(item.courseTitle) · \(shortDate(item.date ?? ""))").foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result?.conflict == true ? "云端已有这堂课" : "推送到 GitHub data").font(.title2.weight(.semibold))
+                Text("\(item.courseTitle) · \(shortDate(item.date ?? ""))").foregroundStyle(.secondary)
+            }
+            if let r = result {
+                if r.conflict { conflict(r) } else { plain }
+            } else if failed {
+                Label("无法读取云端 data，请稍后再试", systemImage: "wifi.exclamationmark").foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在与云端对比…").foregroundStyle(.secondary) }
+                    .frame(maxWidth: .infinity, minHeight: 80)
+            }
+            HStack {
+                Spacer()
+                Button("取消") { close() }.keyboardShortcut(.cancelAction)
+                if let r = result {
+                    if r.conflict {
+                        Button("保留云端") {
+                            close(); Task { await model.keepRemote(control: item.control) }
+                        }
+                        Button("用本机覆盖云端") {
+                            let sha = r.remote?.summarySha256, mail = email
+                            close(); Task { await model.push(control: item.control, email: mail, overwrite: sha) }
+                        }
+                        .buttonStyle(.borderedProminent).tint(.orange)
+                        .disabled(!confirmOverwrite || r.remote?.summarySha256 == nil || r.remote?.deleted == true)
+                    } else {
+                        Button(email ? "推送并发邮件" : "推送") {
+                            let mail = email
+                            close(); Task { await model.push(control: item.control, email: mail) }
+                        }
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    }
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .task {
+            result = await model.compare(control: item.control)
+            failed = result == nil
+        }
+    }
+
+    private var plain: some View {
+        VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
                 Label("先备份最新 data，再只替换这一堂并核对范围", systemImage: "externaldrive.badge.checkmark")
                 Label("加密往返核验后普通推送，不强推；推送后从云端回读比对", systemImage: "arrow.up.circle")
@@ -163,32 +234,70 @@ struct SyncScreen: View {
             }
             .font(.callout).foregroundStyle(.secondary)
             Divider()
-            Toggle(isOn: $email) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("同时发送邮件")
-                    Text("只尝试一次，结果不明确时不会重发").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            HStack {
-                Text("此操作只执行一次，不能撤销").font(.caption).foregroundStyle(.orange)
-                Spacer()
-                Button("取消") { pushTarget = nil }.keyboardShortcut(.cancelAction)
-                Button(email ? "推送并发邮件" : "推送") {
-                    let target = item, mail = email
-                    pushTarget = nil
-                    Task { await model.push(control: target.control, email: mail) }
-                }
-                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-            }
+            emailToggle
+            Text("此操作只执行一次，不能撤销").font(.caption).foregroundStyle(.orange)
         }
-        .padding(24)
-        .frame(width: 460)
     }
 
-    private func dryRun(_ item: LocalNoteIndex) async {
-        checking = item.control
-        defer { checking = nil }
-        if let r = await model.dryRun(control: item.control) { dryRuns[item.control] = r }
+    private func conflict(_ r: CompareResult) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("云端 data 里这堂课已经有笔记（可能是云端每日任务识别的）。选择保留哪一份：")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 12) {
+                side("云端版本", tint: .blue, rows: [
+                    ("摘要", "\(r.remote?.summaryChars ?? 0) 字"),
+                    ("配图", "\(r.remote?.figures ?? 0) 张"),
+                    ("转录", "\(r.remote?.transcriptChars ?? 0) 字"),
+                    ("模型", r.remote?.summaryModel ?? "—"),
+                    ("邮件", r.remote?.emailed == true ? "已发送" : "未发送"),
+                ])
+                side("本机版本", tint: .purple, rows: [
+                    ("摘要", "\(r.local?.summaryChars ?? 0) 字"),
+                    ("配图", "\(r.local?.figures ?? 0) 张"),
+                    ("转录", "\(r.local?.transcriptChars ?? 0) 字"),
+                    ("理论审核", r.local?.review == "passed" ? "通过" : r.local?.review == "revised" ? "修订一次" : (r.local?.review ?? "—")),
+                    ("审核", "已由你审核"),
+                ])
+            }
+            Button {
+                close()
+                model.section = .notes
+                model.selectedNote = model.noteRows.first { !$0.isLocal && $0.subId == item.subId }
+            } label: { Label("先在笔记里对照阅读两份", systemImage: "book.pages") }
+            .buttonStyle(.link)
+            Divider()
+            if r.remote?.deleted == true {
+                Label("这堂课在 data 中已删除并永久忽略，不能覆盖", systemImage: "nosign").foregroundStyle(.red)
+            } else {
+                Toggle(isOn: $confirmOverwrite) {
+                    Text("我确认用本机版本替换云端笔记。被替换的云端版本会加密备份在本机，并另存一份可读副本。")
+                        .font(.callout).fixedSize(horizontal: false, vertical: true)
+                }
+                .toggleStyle(.checkbox)
+                emailToggle
+            }
+        }
+    }
+
+    private var emailToggle: some View {
+        Toggle(isOn: $email) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("同时发送邮件")
+                Text("只尝试一次；云端已发过邮件的不会重发").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .toggleStyle(.switch)
+    }
+
+    private func side(_ title: String, tint: Color, rows: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline).foregroundStyle(tint)
+            ForEach(rows, id: \.0) { k, v in
+                HStack { Text(k).foregroundStyle(.secondary); Spacer(); Text(v) }.font(.callout)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
     }
 }

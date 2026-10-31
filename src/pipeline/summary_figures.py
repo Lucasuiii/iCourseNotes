@@ -253,38 +253,58 @@ def collect(client, course, sub, pages, segments, duration, *, retained=()):
     return spread(candidates, MAX_CANDIDATES), errors
 
 
-def validate_selection(value, candidates, section_rows):
+MAX_EVIDENCE_CHARS = 300
+
+
+def validate_selection(value, candidates, section_rows, rejected=None):
+    """Accept each valid row on its own; one bad row no longer voids the others.
+
+    Rows with an unknown or repeated image, an unknown section, an unreadable
+    image or an unsafe/over-long caption are skipped and recorded in `rejected`
+    (index and reason). An over-long `visible_evidence`, which is never shown to
+    readers, is cut to the limit, and an unknown `kind` is treated as a diagram.
+    The reply still fails as a whole when it is not a list or no row survives.
+    """
     rows = value.get('figures') if isinstance(value, dict) else None
     if not isinstance(rows, list):
         raise FigureSelectionError('invalid_selection_list')
     images = {c['id']: c for c in candidates}
     ids = {s['id'] for s in section_rows}
-    seen, accepted = set(), []
+    seen, accepted, skipped = set(), [], []
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
-            raise FigureSelectionError('invalid_selection_row', index)
+            skipped.append({'index': index, 'code': 'invalid_selection_row'}); continue
         ident, section = row.get('image_id'), row.get('section_id')
         caption, evidence = row.get('caption'), row.get('visible_evidence')
-        if not isinstance(ident, str) or ident not in images or ident in seen:
-            raise FigureSelectionError('invalid_image_identity', index)
-        if type(section) is not int or section not in ids:
-            raise FigureSelectionError('invalid_section', index)
-        if row.get('legible') is not True:
-            raise FigureSelectionError('unreadable_image', index)
-        if row.get('kind') not in ('diagram', 'curve', 'table', 'worked_example', 'homework'):
-            raise FigureSelectionError('invalid_figure_kind', index)
-        if (not isinstance(caption, str) or not 1 <= len(caption.strip()) <= 100
+        code = None
+        if not isinstance(ident, str) or ident not in images:
+            code = 'invalid_image_identity'
+        elif ident in seen:
+            code = 'duplicate_image'
+        elif type(section) is not int or section not in ids:
+            code = 'invalid_section'
+        elif row.get('legible') is not True:
+            code = 'unreadable_image'
+        elif (not isinstance(caption, str) or not 1 <= len(caption.strip()) <= 100
                 or re.search(r'[\n\r<>*`\\]|https?://', caption)):
-            raise FigureSelectionError('invalid_caption', index)
-        if not isinstance(evidence, str) or not 1 <= len(evidence.strip()) <= 300:
-            raise FigureSelectionError('invalid_visible_evidence', index)
-        assignment = (images[ident].get('candidate_id') or row.get('kind') == 'homework'
+            code = 'invalid_caption'
+        elif not isinstance(evidence, str) or not evidence.strip():
+            code = 'invalid_visible_evidence'
+        if code:
+            skipped.append({'index': index, 'code': code}); continue
+        kind = row.get('kind') if row.get('kind') in ('diagram', 'curve', 'table', 'worked_example', 'homework') else 'diagram'
+        assignment = (images[ident].get('candidate_id') or kind == 'homework'
                       or re.search('作业|题号|习题清单', caption)
                       or any(s['id'] == section and re.search('作业', s['title']) for s in section_rows))
         seen.add(ident)
         accepted.append({k: v for k, v in images[ident].items() if k != 'nearby_transcript'} |
                         {'section_id': section, 'caption': caption.strip(),
-                         'visible_evidence': evidence.strip(), 'kind': 'homework' if assignment else row['kind']})
+                         'visible_evidence': evidence.strip()[:MAX_EVIDENCE_CHARS],
+                         'kind': 'homework' if assignment else kind})
+    if rejected is not None:
+        rejected.extend(skipped)
+    if rows and not accepted:
+        raise FigureSelectionError(skipped[0]['code'], skipped[0]['index'])
     return accepted
 
 
@@ -408,8 +428,11 @@ def add_figures(db, client, summarizer, course, sub, summary, pages, segments, d
             raise FigureSelectionError('incomplete_response')
         if not isinstance(raw, str):
             raise FigureSelectionError('missing_response_content')
+        rejected = []
         state['figures'] = prefer_homework_selection(
-            validate_selection(json.loads(raw), candidates, section_rows), candidates, section_rows, summary)
+            validate_selection(json.loads(raw), candidates, section_rows, rejected), candidates, section_rows, summary)
+        if rejected:
+            state['rejected_rows'] = rejected
         state['status'] = 'complete'; validate_assets(state, sub); save()
         return insert_figures(summary, state['figures']), state
     except Exception as error:

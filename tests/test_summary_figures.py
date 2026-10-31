@@ -70,9 +70,11 @@ class SummaryFiguresTests(unittest.TestCase):
         exported = figures.export_local(summary, state, self.tmp.name)
         self.assertEqual(len(list((Path(self.tmp.name)/'figures').glob('*.jpg'))), 24)
         self.assertEqual(exported.count('!['), 24)
-        # Large valid selections still reject duplicate assets and identities.
-        with self.assertRaises(ValueError):
-            figures.validate_selection({'figures': rows+[rows[0]]}, images, figures.sections(self.summary))
+        # A repeated identity is skipped and recorded; assets still reject duplicates.
+        rejected = []
+        again = figures.validate_selection({'figures': rows+[rows[0]]}, images, figures.sections(self.summary), rejected)
+        self.assertEqual(len(again), 24)
+        self.assertEqual(rejected, [{'index': 24, 'code': 'duplicate_image'}])
         with self.assertRaises(ValueError):
             figures.validate_assets(dict(state, figures=accepted+[accepted[0]]), '2')
 
@@ -82,6 +84,30 @@ class SummaryFiguresTests(unittest.TestCase):
             selection = json.loads(json.dumps(self.selection)); selection['figures'][0][key] = bad
             with self.assertRaises(ValueError): figures.validate_selection(selection, [self.image], figures.sections(self.summary))
         self.assertEqual(figures.insert_figures(self.summary, []), self.summary)
+
+    def test_one_bad_row_does_not_void_the_others(self):
+        second = dict(self.image, id='b'*64)
+        good = dict(self.selection['figures'][0], image_id=second['id'], section_id=1)
+        for key, bad in [('image_id', 'c'*64), ('section_id', 99), ('legible', False), ('caption', '<img src=x>'),
+                         ('caption', '长'*101), ('visible_evidence', ' ')]:
+            row = dict(self.selection['figures'][0]); row[key] = bad
+            rejected = []
+            accepted = figures.validate_selection({'figures': [row, good]}, [self.image, second],
+                                                  figures.sections(self.summary), rejected)
+            self.assertEqual([a['id'] for a in accepted], [second['id']])
+            self.assertEqual(rejected[0]['index'], 0)
+
+    def test_long_evidence_is_cut_and_unknown_kind_kept(self):
+        row = dict(self.selection['figures'][0], visible_evidence='证'*344, kind='photo')
+        accepted = figures.validate_selection({'figures': [row]}, [self.image], figures.sections(self.summary))
+        self.assertEqual(len(accepted[0]['visible_evidence']), figures.MAX_EVIDENCE_CHARS)
+        self.assertEqual(accepted[0]['kind'], 'diagram')
+
+    def test_reply_fails_only_when_no_row_survives(self):
+        bad = dict(self.selection['figures'][0], legible=False)
+        with self.assertRaisesRegex(ValueError, 'unreadable_image'):
+            figures.validate_selection({'figures': [bad, dict(bad)]}, [self.image], figures.sections(self.summary))
+        self.assertEqual(figures.validate_selection({'figures': []}, [self.image], figures.sections(self.summary)), [])
 
     def test_mathematical_brackets_keep_whole_selection_and_export(self):
         selection = json.loads(json.dumps(self.selection))
@@ -198,6 +224,20 @@ class SummaryFiguresTests(unittest.TestCase):
         self.assertEqual(state['error_code'], 'invalid_caption')
         self.assertEqual(state['response_finish_reason'], 'stop')
         self.assertEqual(state['figures'], [])
+
+    def test_partly_invalid_reply_keeps_valid_figures(self):
+        reply = json.loads(json.dumps(self.selection))
+        reply['figures'].insert(0, dict(reply['figures'][0], image_id='c'*64))
+        reply['figures'][1]['visible_evidence'] = '证' * 344
+        api = MagicMock(); api.with_options.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=json.dumps(reply)))])
+        with patch.object(figures, 'collect', return_value=([self.image], [])):
+            summary, state = figures.add_figures(self.db, MagicMock(), SimpleNamespace(summary_figure_client=lambda: (api, 'm')),
+                                                 '1', '2', self.summary, [], [], 3600)
+        self.assertEqual(state['status'], 'complete')
+        self.assertEqual(len(state['figures']), 1)
+        self.assertEqual(state['rejected_rows'], [{'index': 0, 'code': 'invalid_image_identity'}])
+        self.assertEqual(len(figures.FIGURE_REF.findall(summary)), 1)
 
     def test_homework_retains_later_complete_frames_and_never_partial_list(self):
         frames = []

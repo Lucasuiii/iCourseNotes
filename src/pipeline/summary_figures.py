@@ -13,7 +13,6 @@ import math
 import re
 
 MAX_CANDIDATES = 12
-MAX_FIGURES = 8
 MAX_IMAGE_BYTES = 768 * 1024
 MAX_RESPONSE_CHARS = 64000
 PREFIX = 'summary_figures:'
@@ -26,7 +25,7 @@ PROMPT = '''为已有课程笔记挑选真正有助于理解的课堂原图。�
 不猜题号、页码、符号或老师未说过的结论。
 同一作业优先较晚、较清晰、遮挡更少的画面；局部清楚也可选，图注说明是局部画面，
 不把写到一半的数字猜全，不把局部图说成全部作业。stable不代表整份清单完整。
-图片不能替代正文公式。最多8张，只用给定的image_id和
+图片不能替代正文公式。张数不设固定上限，按实际教学价值选择，不凑数量。只用给定的image_id和
 section_id；插到该章节末尾。caption为不超过100字的一行纯文本，不要Markdown/HTML。
 返回JSON {"figures":[{"image_id":"给定ID", "section_id":0,
 "caption":"图中可见的内容", "visible_evidence":"图中支撑图注的可见元素",
@@ -256,7 +255,7 @@ def collect(client, course, sub, pages, segments, duration, *, retained=()):
 
 def validate_selection(value, candidates, section_rows):
     rows = value.get('figures') if isinstance(value, dict) else None
-    if not isinstance(rows, list) or len(rows) > MAX_FIGURES:
+    if not isinstance(rows, list):
         raise FigureSelectionError('invalid_selection_list')
     images = {c['id']: c for c in candidates}
     ids = {s['id'] for s in section_rows}
@@ -320,7 +319,7 @@ def prefer_homework_selection(figures, candidates, section_rows, summary):
                'visible_evidence': '、'.join(labels)[:300], 'kind': 'homework', 'legible': True}
         selected = validate_selection({'figures': [row]}, candidates, section_rows)[0]
         remaining = [f for f in figures if f['id'] != selected['id']]
-        return remaining[:MAX_FIGURES-1] + [selected]
+        return remaining + [selected]
     return figures
 
 
@@ -425,8 +424,8 @@ def add_figures(db, client, summarizer, course, sub, summary, pages, segments, d
 
 
 def validate_assets(state, sub):
-    if (state.get('schema') != 1 or state.get('sub_id') != sub or not isinstance(state.get('figures'), list)
-            or len(state['figures']) > MAX_FIGURES):
+    if (state.get('schema') != 1 or state.get('sub_id') != sub
+            or not isinstance(state.get('figures'), list)):
         raise ValueError('Invalid figure assets')
     if state.get('status') != 'complete' and state['figures']:
         raise ValueError('Incomplete figure selection has assets')

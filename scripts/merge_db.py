@@ -294,6 +294,15 @@ def merge_delta(local_path: str, remote_path: str):
                     except (ValueError,TypeError,KeyError,AttributeError):
                         continue
 
+            # Local recognition claims (see src/runtime/local_claims.py): the later claim wins,
+            # so neither a cloud nor a local publication drops the other side's claim.
+            if conn.execute("SELECT 1 FROM local.sqlite_master WHERE type='table' AND name='meta'").fetchone():
+                from src.runtime import local_claims
+                for key, value in conn.execute("SELECT key,value FROM local.meta WHERE key GLOB 'local_claim:*'").fetchall():
+                    old = conn.execute('SELECT value FROM main.meta WHERE key=?', (key,)).fetchone()
+                    if local_claims.newer(value, old[0] if old else None):
+                        conn.execute('INSERT OR REPLACE INTO main.meta(key,value) VALUES (?,?)', (key, value))
+
             if conn.execute("SELECT 1 FROM local.sqlite_master WHERE type='table' AND name='meta'").fetchone():
                 for key, value in conn.execute("SELECT key,value FROM local.meta WHERE key GLOB 'summary_figures:*' OR key GLOB 'summary_review:*'").fetchall():
                     sid = key.partition(':')[2]

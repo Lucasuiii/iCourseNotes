@@ -351,6 +351,38 @@ def render_template(text, row, run_name, mode):
     return text.replace("'--campus-mode','direct'", "'--campus-mode',"+repr(mode))
 
 
+def publish_claims(rows):
+    """Tell the daily cloud run that these lectures are being recognised on this Mac.
+
+    Writes ``local_claim:<course>:<sub>`` (timestamps only, expires in 48 h) through the
+    existing meta-only publication path. A failure never blocks local recognition; the
+    cloud may then process the lecture too, and data still keeps whichever note lands first.
+    """
+    source = active_source()
+    if not (source/'src/runtime/local_claims.py').exists():
+        return {'status': 'skipped', 'reason': 'source_without_claim_support'}
+    try:
+        provider_env()
+        from src.runtime import local_claims
+        from src.data.database import Database
+        from scripts.production_db import publish
+        tmp = STATE/'claim-tmp'; shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True, mode=0o700)
+        try:
+            db = Database(str(tmp/'claims.db'))
+            with db.conn:
+                for row in rows:
+                    db.conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)',
+                                    local_claims.make(row['course_id'], row['sub_id']))
+            db.conn.close()
+            with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+                publish(tmp/'claims.db')
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return {'status': 'published', 'lectures': len(rows)}
+    except Exception as e:
+        return {'status': 'failed', 'error_type': type(e).__name__}
+
+
 def cmd_start(args):
     control = Path(args.control).resolve(); control.relative_to(WORK.resolve())
     inv = read_json(control/'inventory.json')
@@ -406,10 +438,12 @@ def cmd_start(args):
     write_json(control/'targets.json', prepared)
     shutil.copyfile(TEMPLATES/'app_queue.py', control/'app_queue.py')
     shutil.copyfile(RUNTIME/'templates/read_queue.py', control/'read_progress.py')
+    claim = publish_claims(prepared)
+    write_json(control/'local-claim.json', dict(claim, time=time.time()))
     pid = launch_queue(control, [])
     write_json(LAUNCH, {'control': str(control), 'started': time.time(), 'scope': 'local app: user-selected new lectures; newest-first',
                         'ready_lectures': len(prepared), 'deferred_lectures': len(inv.get('deferred_unavailable', []))})
-    out({'ok': True, 'started': True, 'pid': pid, 'control': str(control),
+    out({'ok': True, 'started': True, 'pid': pid, 'control': str(control), 'claim': claim,
          'lectures': [{'date': x['date'], 'course_title': x['course_title'], 'sub_id': x['sub_id']} for x in prepared]})
 
 

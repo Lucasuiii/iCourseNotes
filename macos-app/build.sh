@@ -19,6 +19,8 @@ iconutil -c icns "$ICONSET" -o "$BUILD/AppIcon.icns"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/ICourseNotes"
+# Drop debug symbols: they record the builder's source paths (including the user name).
+strip -S -x "$APP/Contents/MacOS/ICourseNotes"
 cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp -R "$HERE/web" "$APP/Contents/Resources/web"
 mkdir -p "$APP/Contents/Resources/bridge"

@@ -98,6 +98,28 @@ def number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) and value == value else None
 
 
+def apply_summary_formatting(summary, artifact, course_id, sub_id, date):
+    """Apply a separately recorded, reviewed typesetting edit without forging model review."""
+    sha = lambda text: hashlib.sha256(text.encode()).hexdigest()
+    if (artifact.get('kind') != 'summary_formatting' or artifact.get('schema') != 1
+            or (artifact.get('course_id'), artifact.get('sub_id'), artifact.get('date')) != (course_id, sub_id, date)
+            or artifact.get('model_calls') != 0 or artifact.get('figures_unchanged') is not True):
+        raise Refused('公式排版修订的课次或记录不匹配')
+    base, final = artifact.get('base_summary'), artifact.get('summary')
+    if (not isinstance(base, str) or not isinstance(final, str)
+            or sha(base) != artifact.get('base_summary_sha256') or sha(final) != artifact.get('summary_sha256')):
+        raise Refused('公式排版修订校验失败')
+    before, after = base.split('\n\n'), final.split('\n\n')
+    # Display delimiters must stay inside their original paragraph. Figure and heading lines stay exact.
+    protected = lambda text: [line for line in text.splitlines() if line.startswith(('#', '![', '*课堂原图'))]
+    if protected(base) != protected(final) or len(before) != len(after):
+        raise Refused('公式排版修订改变了章节或配图')
+    edits = [{'before': a, 'after': b} for a, b in zip(before, after) if a != b]
+    if edits != artifact.get('edits') or summary not in (base, final):
+        raise Refused('笔记内容已变化，请重新核对公式排版修订')
+    return final
+
+
 # ------------------------------------------------------------------ terms
 
 def term_for(course_id, date, known):
@@ -710,6 +732,14 @@ def local_note(control):
         text = EXPORTED_REF.sub(swap, text)
         payload.update(summary=text, transcript=(output/'transcript.md').read_text().removeprefix('# 课堂整理转录\n\n') if (output/'transcript.md').exists() else '',
                        figures={'status': 'complete', 'figures': figs}, review=None, exported_copy=True)
+    formatting_store = store(control/'recovery')
+    if formatting_store.exists('app-summary-formatting.enc'):
+        artifact = formatting_store.read('app-summary-formatting.enc')
+        payload['summary'] = apply_summary_formatting(payload['summary'], artifact, cid, sid, sel['date'])
+        payload['summary_sha256'] = hashlib.sha256(payload['summary'].encode()).hexdigest()
+        payload['formatting_revision'] = {'kind': artifact['kind'], 'model_review_of_formatted_text': False}
+        # The exact formatted bytes were not reviewed by the model; retain the real audit in the candidate.
+        payload['review'] = None
     asr = output/'asr-transcript.md'
     payload['asr_transcript'] = asr.read_text() if asr.exists() else ''
     status = read_json(control/'execution-status.json') or {}

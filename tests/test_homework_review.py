@@ -23,6 +23,20 @@ def aligned(report, selected, *_args, **_kwargs):
 
 
 class AssignmentEvidenceTests(unittest.TestCase):
+    def test_late_page_and_review_instruction_selects_capture_without_homework_keyword(self):
+        chunks=[{'start':0,'end':120,'text':'翻到一百三十页看定义。'},
+                {'start':5950,'end':6070,'text':'大家回去先好好复习，然后开始做做题啊，一百三十页，一、二、三、四、八、九、十。'}]
+        found=assignment_candidates(chunks)
+        self.assertEqual(len(found),1)
+        self.assertEqual(found[0]['id'],1)
+        self.assertIn('一百三十页',found[0]['quote'])
+        self.assertIn(found[0]['quote'],chunks[1]['text'])
+
+    def test_page_number_alone_or_early_worked_example_is_not_assignment(self):
+        chunks=[{'start':0,'end':120,'text':'我们开始做做题，130页这个例题先做一遍。'},
+                {'start':5950,'end':6070,'text':'翻到130页看这个定义。'}]
+        self.assertEqual(assignment_candidates(chunks),[])
+
     def test_fresh_theory_mode_keeps_images_without_alignment_or_speech_review(self):
         state = {}; saved = []; image_reader = MagicMock(return_value={'status': 'unavailable', 'frames': []})
         with patch('src.ai.qwen_quality.review_quality') as select, \

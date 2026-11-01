@@ -28,6 +28,49 @@ def client_response(client, data):
 
 
 class DirectVisionTests(unittest.TestCase):
+    def test_missing_tail_window_gets_two_final_probes_without_extra_calls(self):
+        client=MagicMock();client.get_ppt_list.return_value=[]
+        client.get_video_url.return_value='private';client.get_stream_params.return_value=('private','')
+        candidate={'id':0,'quote':'作业里用到这个结论','block_start':4980,'block_end':5100}
+        reader=MagicMock(side_effect=lambda frames:validated_frames(response(len(frames)),len(frames)))
+        with patch('src.pipeline.homework_visual.video_frame',return_value=board_png()) as capture:
+            result=collect_visual_evidence(client,'10','1',[candidate],[],audio_seconds=6390,vision_reader=reader)
+        self.assertEqual(capture.call_count,12)
+        self.assertTrue(result['windows'][0]['range']['independent_tail_probe'])
+        self.assertEqual(result['windows'][0]['range']['cue_window_end_ms'],5280000)
+        self.assertEqual([f['seconds'] for f in result['frames']][-2:],[6360,6389.9])
+        reader.assert_called_once()
+
+    def test_request_jpegs_fit_budget_without_dropping_temporal_frames(self):
+        import random,base64
+        from PIL import Image
+        from src.ai.homework_vision import encoded_image_content
+        import io
+        image=Image.frombytes('RGB',(640,360),random.Random(7).randbytes(640*360*3))
+        png=io.BytesIO();image.save(png,format='PNG');raw=png.getvalue()
+        views=lambda data:[('full',data,(640,360))]
+        frames=[dict(image=raw,seconds=t,candidate_id='cue') for t in [10,20]]
+        def size(q):
+            buf=io.BytesIO();image.save(buf,format='JPEG',quality=q)
+            return len(base64.b64encode(buf.getvalue()))*2
+        budget=(size(92)+size(88))//2
+        with patch('src.ai.homework_vision.MAX_INLINE',budget):
+            content,count,profile=encoded_image_content(frames,views)
+        self.assertEqual(count,2)
+        self.assertEqual(profile['jpeg_quality'],88)
+        self.assertLessEqual(profile['inline_bytes'],budget)
+        self.assertEqual(sum(p['type']=='image_url' for p in content),2)
+        self.assertEqual([f['image'] for f in frames],[raw,raw])
+
+    def test_preflight_budget_failure_has_safe_code_and_no_transport(self):
+        from src.ai.homework_vision import VisionInputError
+        client=MagicMock()
+        with patch('src.ai.homework_vision.MAX_INLINE',1):
+            with self.assertRaises(VisionInputError) as error:
+                read_images(client,'deepseek-flash',inputs(),[],lambda:None)
+        self.assertEqual(error.exception.code,'vision_image_byte_budget')
+        client.with_options.assert_not_called()
+
     def test_subquestions_preserved_and_flattened_lists_rejected(self):
         data = response(1)
         raw = 'P69 1(1)(3)、2（1）（3）、3'

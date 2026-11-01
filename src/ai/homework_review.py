@@ -4,14 +4,25 @@ import re
 
 MAX_FOCUS = 4
 CUES = re.compile(r'作业|习题|课后题|课后练习|布置|提交|截止|交到|交上来|homework', re.I)
+PAGE_CUES = re.compile(r'[一二三四五六七八九十百零〇两\d]{1,8}\s*页')
 
 
 def assignment_candidates(chunks):
     """Unique verbatim quotes for alignment; block times are not word times."""
     candidates = []
+    lecture_end = max((chunk.get('end', 0) for chunk in chunks), default=0)
     for index, chunk in enumerate(chunks):
         text = str(chunk.get('text') or '')
         matches = list(CUES.finditer(text))
+        # Late announcements may say only "复习一下，开始做做题，一百三十页".
+        # This is a capture cue, never proof that the visible tasks were assigned.
+        if chunk.get('end', 0) >= lecture_end-600:
+            for page in PAGE_CUES.finditer(text):
+                nearby = text[max(0, page.start()-80):page.end()+50]
+                if re.search(r'复习|回去|课后|开始做|做做题|完成|练习', nearby):
+                    if not any(abs(page.start()-old.start()) < 65 for old in matches):
+                        matches.append(page)
+        matches.sort(key=lambda match: match.start())
         # Nearby cues describe the same announcement, not separate cloud calls.
         last = -100
         for match in matches:

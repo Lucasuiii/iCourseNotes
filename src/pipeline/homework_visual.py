@@ -129,11 +129,20 @@ def collect_visual_evidence(client, course_id, sub_id, candidates, intervals, *,
         pages = []
     results, seen, windows, ids = [], set(), [], []
     video_count = 0
+    latest_cue_end = max((c.get('block_end', 0) for c in candidates[:MAX_FOCUS]), default=0)
     for candidate in candidates[:MAX_FOCUS]:
         cid = candidate_key(candidate['id'], candidate['quote']); ids.append(cid)
         interval = next((row for row in intervals if row.get('chunk_id') == candidate['id']
                          and row.get('text') == candidate['quote']), None)
         window = visual_window(candidate, interval, audio_seconds, delay_seconds=delay_seconds)
+        if (window and isinstance(audio_seconds, (int, float)) and audio_seconds >= 600
+                and candidate.get('block_end') == latest_cue_end
+                and 300 < audio_seconds-latest_cue_end <= 1800):
+            # Two of the existing twelve probes inspect the final board. Preserve
+            # the real quote anchor; a tail probe is not a new speech timestamp.
+            window = dict(window, cue_window_end_ms=window['end_ms'],
+                          end_ms=round(audio_seconds*1000), includes_lecture_end=True,
+                          independent_tail_probe=True)
         windows.append({'candidate_id': cid, 'range': window, 'aligned': bool(interval),
                         'anchor': 'forced_alignment' if interval else 'asr_block'})
         shots = nearby_pages(pages, window or candidate)
@@ -170,7 +179,7 @@ def collect_visual_evidence(client, course_id, sub_id, candidates, intervals, *,
                 captured.append({'image': image, 'source': 'video_frame', 'seconds': seconds,
                                  'candidate_id': cid, 'capture_error_code': error})
         valid = [row for row in captured if row['image']]
-        readings, vision_error = None, None
+        readings, vision_error, vision_error_code = None, None, None
         if callable(vision_reader) and valid:
             try:
                 readings = vision_reader(valid)
@@ -178,6 +187,7 @@ def collect_visual_evidence(client, course_id, sub_id, candidates, intervals, *,
                     raise ValueError('Incomplete image readings')
             except Exception as error:
                 readings = None; vision_error = type(error).__name__
+                vision_error_code = getattr(error, 'code', None)
         index = 0
         for capture in captured:
             image = capture['image']
@@ -189,6 +199,8 @@ def collect_visual_evidence(client, course_id, sub_id, candidates, intervals, *,
                            vision_status='failed' if vision_error else 'unavailable')
                 if vision_error:
                     row['vision_error_type'] = vision_error
+                    if vision_error_code:
+                        row['vision_error_code'] = vision_error_code
             row.update({k: v for k, v in capture.items() if k != 'image' and v is not None})
             results.append(row)
             if callable(frame_observer):

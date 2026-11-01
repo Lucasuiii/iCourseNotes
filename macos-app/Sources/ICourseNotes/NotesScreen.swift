@@ -33,7 +33,8 @@ struct NotesScreen: View {
     @State private var report = RenderReport()
     @State private var showApproval = false
     @AppStorage("noteTerm") private var chosenTerm = ""
-    @State private var collapsed: Set<String> = []
+    /// Courses the reader opened or closed by hand ("term|course" → open?), remembered across launches.
+    @AppStorage("courseExpansion") private var expansionRaw = "{}"
 
     var body: some View {
         @Bindable var model = model
@@ -79,7 +80,13 @@ struct NotesScreen: View {
         .onChange(of: model.selectedNote) { _, row in
             if let row { Task { await load(row) } } else { payload = nil }
         }
-        .task { if let row = model.selectedNote, payload == nil { await load(row) } }
+        .task {
+            if model.selectedNote == nil { model.selectedNote = model.noteRows.first { !$0.isLocal } }
+            if let row = model.selectedNote, payload == nil { await load(row) }
+        }
+        .onChange(of: model.noteRows.count) { _, _ in
+            if model.selectedNote == nil { model.selectedNote = model.noteRows.first { !$0.isLocal } }
+        }
     }
 
     // MARK: list
@@ -111,7 +118,7 @@ struct NotesScreen: View {
             ForEach(terms(inTerm), id: \.0) { term, courses in
                 Section(query.isEmpty ? "课程" : term) {
                     ForEach(courses, id: \.0) { course, items in
-                        DisclosureGroup(isExpanded: expansion(term + course)) {
+                        DisclosureGroup(isExpanded: expansion(term + "|" + course)) {
                             ForEach(items) { NoteListRow(row: $0, showCourse: false).tag($0) }
                         } label: {
                             HStack(spacing: 6) {
@@ -168,8 +175,21 @@ struct NotesScreen: View {
         }
     }
 
+    /// Collapsed by default; the course of the open note is expanded, and everything is open while searching.
     private func expansion(_ key: String) -> Binding<Bool> {
-        Binding(get: { !collapsed.contains(key) }, set: { if $0 { collapsed.remove(key) } else { collapsed.insert(key) } })
+        Binding(get: {
+            if !query.isEmpty { return true }
+            if let choice = expansionState[key] { return choice }
+            guard let row = model.selectedNote else { return false }
+            return key == row.termLabel + "|" + row.courseTitle
+        }, set: { open in
+            var state = expansionState; state[key] = open
+            expansionRaw = (try? String(data: JSONEncoder().encode(state), encoding: .utf8)) ?? "{}"
+        })
+    }
+
+    private var expansionState: [String: Bool] {
+        (try? JSONDecoder().decode([String: Bool].self, from: Data(expansionRaw.utf8))) ?? [:]
     }
 
     // MARK: reader

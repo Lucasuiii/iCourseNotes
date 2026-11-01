@@ -234,6 +234,32 @@ def latest_validation_task(runtime, client, db, course, *, today=None, rank=1, b
     raise ValueError('Requested playable non-future lecture rank unavailable')
 
 
+def daily_filter(tasks, db, client, *, now=None):
+    """Keep only lectures the daily run should start now.
+
+    A lecture claimed by a local Mac run is skipped until the claim expires. A
+    lecture with no playable recording yet is deferred to a later day instead of
+    failing its acquisition stage. A failed lookup keeps the lecture, so a
+    transient API error never silently drops work.
+    """
+    from src.runtime import local_claims
+    def lookup(key):
+        row = db.conn.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+        return row[0] if row else None
+    tasks, claimed = local_claims.without_claimed(tasks, lookup, now=now)
+    ready, deferred = [], 0
+    for task in tasks:
+        try:
+            playable = client.get_video_url(str(task[0]), str(task[2]['sub_id']))
+        except Exception:
+            playable = True
+        if playable:
+            ready.append(task)
+        else:
+            deferred += 1
+    return ready, claimed, deferred
+
+
 def plan(runtime):
     historical = os.environ.get('HISTORY_REFRESH_TARGETS', '').strip()
     if historical:
@@ -292,6 +318,9 @@ def plan(runtime):
                 enumeration = _enumerate_lectures(client, db, reporter)
                 tasks = enumeration.lectures
                 tasks = [t for t in tasks if (db.get_lecture(str(t[2]['sub_id'])).get('error_count') or 0) < 3]
+                tasks, claimed, deferred = daily_filter(tasks, db, client)
+                print(f'Skipped {claimed} lectures claimed by local recognition; '
+                      f'deferred {deferred} without a playable recording yet', flush=True)
             if len(tasks) > runtime.MAX_TASKS:
                 raise ValueError('Queue exceeds 256 tasks; narrow the subscribed course scope')
             if not historical:

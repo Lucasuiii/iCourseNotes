@@ -6,12 +6,12 @@ struct Bridge: Sendable {
     let projectRoot: URL
 
     var python: URL { projectRoot.appending(path: "work/qwen-local-asr-test-env/bin/python") }
-    /// The bridge ships inside the app bundle; a development build falls back to the source tree.
+    /// The bridge ships inside the app bundle; `swift run` falls back to the project's local-app copy.
+    /// No compile-time source path is used, so builds do not embed the builder's directories.
     var script: URL {
         if let bundled = Bundle.main.resourceURL?.appending(path: "bridge/app_bridge.py"),
            FileManager.default.fileExists(atPath: bundled.path) { return bundled }
-        return URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appending(path: "bridge/app_bridge.py")
+        return projectRoot.appending(path: "local-app/bridge/app_bridge.py")
     }
 
     static func isProject(_ url: URL) -> Bool {

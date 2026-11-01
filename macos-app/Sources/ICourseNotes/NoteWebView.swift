@@ -1,7 +1,7 @@
 import SwiftUI
 import WebKit
 
-struct RenderReport: Equatable { var katex = 0; var katexErrors = 0; var figures = 0 }
+struct RenderReport: Equatable { var katex = 0; var katexErrors = 0; var figures = 0; var unformattedMath = false }
 
 /// Renders notes with the production render.js pipeline (marked → DOMPurify → KaTeX)
 /// from vendored, offline copies. Nothing is loaded from the network.
@@ -63,7 +63,8 @@ struct NoteWebView: NSViewRepresentable {
                 ready = true; shownPayload = nil; shownScale = nil; apply()
             case "rendered":
                 let r = RenderReport(katex: body["katex"] as? Int ?? 0, katexErrors: body["katexErrors"] as? Int ?? 0,
-                                     figures: body["figures"] as? Int ?? 0)
+                                     figures: body["figures"] as? Int ?? 0,
+                                     unformattedMath: body["unformattedMath"] as? Bool ?? false)
                 DispatchQueue.main.async { self.parent.report = r }
             default: break
             }

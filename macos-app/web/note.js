@@ -120,7 +120,11 @@
       });
       return;
     }
+    var mathCount = content.querySelectorAll('.katex').length;
+    // Zero parser errors is not proof of success when the model omitted every math delimiter.
+    var unformattedMath = mathCount === 0 && /(?:\bO\((?:n|log|lg|h|1)|\bT\([nk]\)\s*[=≤>=]|2\^\{|Σ_)/.test(note.summary || '');
     post({ type: 'rendered', katexErrors: content.querySelectorAll('.katex-error').length,
+           unformattedMath: unformattedMath,
            katex: content.querySelectorAll('.katex').length, figures: content.querySelectorAll('.summary-classroom-figure').length,
            homework: !!content.querySelector('.callout:not(.pending)') });
   }

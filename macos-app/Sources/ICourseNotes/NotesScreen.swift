@@ -223,6 +223,9 @@ struct NotesScreen: View {
             if report.katexErrors > 0 {
                 Label("\(report.katexErrors) 处公式无法渲染", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
             }
+            if report.unformattedMath {
+                Label("检测到未排版的数学表达式", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+            }
             if meta.approved {
                 Button("撤回审核") { Task { await model.unapprove(meta.control ?? ""); if let r = model.selectedNote { await load(r) } } }
                 Button("去同步") { model.section = .sync }.buttonStyle(.borderedProminent)

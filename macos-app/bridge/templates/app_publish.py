@@ -51,6 +51,19 @@ def load_candidate(request):
   raw=base64.b64decode(fig['data'],validate=True);assert f.sha(raw)==fig['id'];Image.open(io.BytesIO(raw)).verify()
  summary=fresh['lecture']['summary']
  fresh,meta,figures,summary=apply_figure_recovery(fresh,meta,audit,figures,summary)
+ if f.RECOVERY.exists('app-summary-formatting.enc'):
+  bridge_spec=importlib.util.spec_from_file_location('formatting_bridge',f.BASE/'local-app/bridge/app_bridge.py')
+  bridge=importlib.util.module_from_spec(bridge_spec);bridge_spec.loader.exec_module(bridge)
+  artifact=f.RECOVERY.read('app-summary-formatting.enc')
+  summary=bridge.apply_summary_formatting(summary,artifact,CID,SID,DAY)
+  fresh['lecture']['summary']=summary
+  fresh['meta']=[x for x in fresh['meta'] if x['key']!='summary_review:'+SID]
+  for x in fresh['meta']:
+   if x['key']=='summary_figures:'+SID:
+    figures=json.loads(x['value']);figures['editorial_summary_sha256']=f.sha(summary.encode());x['value']=json.dumps(figures,ensure_ascii=False)
+   if x['key']=='qwen_pipeline:'+SID:
+    q=json.loads(x['value']);q['summary_formatting_update']={'kind':'summary_formatting','base_summary_sha256':artifact['base_summary_sha256'],'summary_sha256':artifact['summary_sha256'],'original_model_review':audit,'final_text_reviewed_by_model':False,'model_calls':0};x['value']=json.dumps(q,ensure_ascii=False)
+  meta={x['key']:x['value'] for x in fresh['meta']}
  # Exactly the text the user read in the app; anything else is refused.
  assert f.sha(summary.encode())==request['summary_sha256'],'Reviewed summary differs from candidate'
  assert not f.RECOVERY.exists('final-reviewed-editorial-artifact.enc'),'Manual editorial artifact exists; use its delivery flow'

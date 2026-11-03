@@ -336,8 +336,13 @@ def prepare(runtime):
             # authenticated playback fallback chain; no benchmark acquisition cap.
             specification['prepare_phase'] = 'login'
             from src.api.auth_recovery import fresh_media_session
-            reporter = Reporter(); client = ICourseClient(login_with_retry(), media_reauth_factory=fresh_media_session)
+            from functools import partial
+            reporter = Reporter(); client = ICourseClient(login_with_retry(),
+                media_reauth_factory=partial(fresh_media_session, read_timeout=45, max_attempts=2))
+            client._media_reauth_timeout = 180
+            client._media_max_fresh_sessions = 3
             scheduler = Scheduler(reporter)
+            scheduler.audio_downloader.allow_fresh_session_escalation = True
             specification['prepare_phase'] = 'ppt'
             ppt = PPTPipeline(db, scheduler, reporter).submit(client, course, sub_id, defer_ocr=True)
             from src.runtime import config
@@ -370,7 +375,7 @@ def prepare(runtime):
                     specification['glossary_snapshot'] = glossary_snapshot
                 specification['prepare_phase'] = 'audio_download'
                 scheduler.audio_downloader.schedule(client, course, sub_id, preserve_timestamps=True)
-                handle = scheduler.audio_downloader.get(sub_id, timeout=180)
+                handle = scheduler.audio_downloader.get(sub_id, timeout=420)
                 if handle is None:
                     specification['audio_startup_diagnostics'] = scheduler.audio_downloader.startup_failure(sub_id)
                     raise ValueError('No playable production audio')

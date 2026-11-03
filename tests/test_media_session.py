@@ -119,6 +119,18 @@ class SessionOrigin:
 
 
 class MediaSessionTests(unittest.TestCase):
+    def test_mixed_network_and_auth_failures_stop_without_last_unused_login(self):
+        client=SimpleNamespace(_media_max_fresh_sessions=3)
+        relay=SignedRangeRelay(client,'https://vpn.example/media',allow_session_refresh=True)
+        failures=[MediaTransportError('upstream_timeout')]+[MediaTransportError('media_session_refresh_needed')]*4
+        with patch.object(relay,'_signed_request',side_effect=failures), \
+             patch.object(relay,'_can_refresh_session',return_value=True), \
+             patch.object(relay,'_refresh_session') as refresh:
+            with self.assertRaises(MediaTransportError) as caught:
+                relay._read_range(0,4095)
+        self.assertEqual(caught.exception.code,'media_session_unavailable')
+        self.assertEqual(refresh.call_count,3)
+
     def relay(self,origin,**kwargs):
         return SignedRangeRelay(origin.client,origin.signed,prefix_bytes=4096,
                                 chunk_bytes=16384,**kwargs)
@@ -343,6 +355,24 @@ class MediaSessionTests(unittest.TestCase):
                     self.assertEqual(audit['upstream_bytes'],4096)
                     self.assertEqual(audit['fresh_session_attempts'],1)
                     origin.client._media_reauth_factory.assert_called_once()
+
+    def test_production_budget_recovers_another_expired_fresh_session(self):
+        with SessionOrigin('persistent') as origin:
+            old=origin.client.vpn
+            calls=[]
+            def factory(cancelled,deadline):
+                calls.append(True)
+                candidate=type(old)()
+                if len(calls)==2:origin.mode='ok'
+                candidate.session.cookies.set('media_token','refreshed',domain='127.0.0.1',path='/')
+                return candidate
+            origin.client._media_reauth_factory=MagicMock(side_effect=factory)
+            origin.client._media_max_fresh_sessions=3
+            with self.relay(origin,allow_session_refresh=True,allow_fresh_session_escalation=True) as relay:
+                self.assertEqual(requests.get(relay.url,timeout=20).content,origin.DATA)
+                self.assertEqual(relay.audit()['fresh_session_attempts'],2)
+                self.assertEqual(relay.audit()['upstream_bytes'],len(origin.DATA))
+                self.assertIs(origin.client.vpn,old)
 
     def test_fresh_login_cannot_accept_another_account_or_tenant(self):
         for user in ({'id':'another'}, {'id':'cached-private-user','tenant_id':'another'}):

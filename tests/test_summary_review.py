@@ -325,6 +325,23 @@ class SummaryReviewTests(unittest.TestCase):
             restored = json.loads(conn.execute('select value from meta where key=?', (audit.PREFIX+'2',)).fetchone()[0])
         self.assertEqual(restored, state)
 
+    def test_theory_correction_can_fix_an_ordinary_blockquote(self):
+        source = '> 《乐记》：“大音希声”。\n\n这是原来的归属。'
+        corrected = '> 《老子》：“大音希声”。\n\n已纠正引文归属。'
+        self.assertEqual(audit.validate_revision({'summary':corrected}, source), corrected)
+
+    def test_explicit_evidence_limit_still_cannot_disappear(self):
+        source = '> 证据不足，题号待确认\n\n理论原稿。'
+        with self.assertRaises(ValueError):
+            audit.validate_revision({'summary':'理论修订稿。'}, source)
+
+    def test_caption_copyedit_is_restored_without_rejecting_prose_correction(self):
+        figure='![课件写羽毛](#icourse-figure-'+'a'*64+')'
+        source='错误的理论。\n'+figure+'\n*课堂原图 · 00:01:00：课件写羽毛*'
+        proposed=source.replace('错误的理论','已修正的理论').replace('羽毛','羽旄')
+        expected=source.replace('错误的理论','已修正的理论')
+        self.assertEqual(audit.validate_revision({'summary':proposed},source),expected)
+
     def test_passed_unavailable_or_failed_review_never_requests_correction(self):
         for response in ('{"verdict":"pass","issues":[]}', 'not json'):
             self.db.write_meta(audit.PREFIX+'2', ''); self.api.reset_mock(); self.response(response)

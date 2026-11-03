@@ -119,6 +119,18 @@ class SessionOrigin:
 
 
 class MediaSessionTests(unittest.TestCase):
+    def test_mixed_network_and_auth_failures_stop_without_last_unused_login(self):
+        client=SimpleNamespace(_media_max_fresh_sessions=3)
+        relay=SignedRangeRelay(client,'https://vpn.example/media',allow_session_refresh=True)
+        failures=[MediaTransportError('upstream_timeout')]+[MediaTransportError('media_session_refresh_needed')]*4
+        with patch.object(relay,'_signed_request',side_effect=failures), \
+             patch.object(relay,'_can_refresh_session',return_value=True), \
+             patch.object(relay,'_refresh_session') as refresh:
+            with self.assertRaises(MediaTransportError) as caught:
+                relay._read_range(0,4095)
+        self.assertEqual(caught.exception.code,'media_session_unavailable')
+        self.assertEqual(refresh.call_count,3)
+
     def relay(self,origin,**kwargs):
         return SignedRangeRelay(origin.client,origin.signed,prefix_bytes=4096,
                                 chunk_bytes=16384,**kwargs)

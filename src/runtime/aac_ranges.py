@@ -276,7 +276,9 @@ class AACRangeTransport(SignedRangeRelay):
                 self._transition('recovering', error=code, offset=ranges[0][0])
                 policy_attempt = (0 if code == 'media_session_refresh_needed'
                                   and self._max_fresh_sessions > 1 else attempt)
-                action = self._recovery.decide(code, policy_attempt, can_refresh=self._can_refresh_session())
+                can_refresh = (self._can_refresh_session()
+                               and attempt+1 < self._recovery.attempts+self._max_fresh_sessions-1)
+                action = self._recovery.decide(code, policy_attempt, can_refresh=can_refresh)
                 if action is RecoveryAction.STOP: self._fail(self._recovery.terminal_code(code))
                 if action is RecoveryAction.REFRESH: self._refresh_session()
                 self._count('retries')

@@ -335,7 +335,8 @@ class SignedRangeRelay:
                 self._transition('recovering', error=error_code, offset=start+len(data))
                 # Header validation can already have marked a permanent failure.
                 if self.audit()['terminal_error_code']: self._fail(error_code)
-                can_refresh = self._can_refresh_session()
+                can_refresh = (self._can_refresh_session()
+                               and attempt+1 < self._recovery.attempts+self._max_fresh_sessions-1)
                 policy_attempt = (0 if error_code == 'media_session_refresh_needed'
                                   and self._max_fresh_sessions > 1 else attempt)
                 action = self._recovery.decide(error_code, policy_attempt, can_refresh=can_refresh)

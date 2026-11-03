@@ -344,6 +344,24 @@ class MediaSessionTests(unittest.TestCase):
                     self.assertEqual(audit['fresh_session_attempts'],1)
                     origin.client._media_reauth_factory.assert_called_once()
 
+    def test_production_budget_recovers_another_expired_fresh_session(self):
+        with SessionOrigin('persistent') as origin:
+            old=origin.client.vpn
+            calls=[]
+            def factory(cancelled,deadline):
+                calls.append(True)
+                candidate=type(old)()
+                if len(calls)==2:origin.mode='ok'
+                candidate.session.cookies.set('media_token','refreshed',domain='127.0.0.1',path='/')
+                return candidate
+            origin.client._media_reauth_factory=MagicMock(side_effect=factory)
+            origin.client._media_max_fresh_sessions=3
+            with self.relay(origin,allow_session_refresh=True,allow_fresh_session_escalation=True) as relay:
+                self.assertEqual(requests.get(relay.url,timeout=20).content,origin.DATA)
+                self.assertEqual(relay.audit()['fresh_session_attempts'],2)
+                self.assertEqual(relay.audit()['upstream_bytes'],len(origin.DATA))
+                self.assertIs(origin.client.vpn,old)
+
     def test_fresh_login_cannot_accept_another_account_or_tenant(self):
         for user in ({'id':'another'}, {'id':'cached-private-user','tenant_id':'another'}):
             with self.subTest(user=user), SessionOrigin('cold') as origin:

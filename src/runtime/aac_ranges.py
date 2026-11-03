@@ -186,7 +186,7 @@ class AACRangeTransport(SignedRangeRelay):
             # At most 4KiB part headers, 70-byte boundary and delimiters per part.
             cap = payload_size + (len(ranges)*4200+2128 if len(ranges)>1 else 0)
             if cap > self.limits.body_bytes: fail('response_body_limit')
-            for attempt in range(self._recovery.attempts):
+            for attempt in range(self._recovery.attempts + self._max_fresh_sessions - 1):
                 response = None
                 before = self.audit()['upstream_bytes']
                 try:
@@ -274,7 +274,9 @@ class AACRangeTransport(SignedRangeRelay):
                 self._count('retry_bytes', self.audit()['upstream_bytes']-before)
                 self.check()
                 self._transition('recovering', error=code, offset=ranges[0][0])
-                action = self._recovery.decide(code, attempt, can_refresh=self._can_refresh_session())
+                policy_attempt = (0 if code == 'media_session_refresh_needed'
+                                  and self._max_fresh_sessions > 1 else attempt)
+                action = self._recovery.decide(code, policy_attempt, can_refresh=self._can_refresh_session())
                 if action is RecoveryAction.STOP: self._fail(self._recovery.terminal_code(code))
                 if action is RecoveryAction.REFRESH: self._refresh_session()
                 self._count('retries')

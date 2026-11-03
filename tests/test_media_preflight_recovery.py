@@ -12,6 +12,28 @@ from test_initial_auth_recovery import slow_headers_portal
 
 
 class MediaPreflightRecoveryTests(unittest.TestCase):
+    def test_opt_in_retries_transient_flow_with_a_new_session(self):
+        from src.api import auth_recovery as auth
+        first=self.vpn([None]);second=self.vpn([None])
+        first.login.side_effect=requests.exceptions.ReadTimeout()
+        original=auth.authenticated_session
+        with patch.object(auth,'WebVPNSession',side_effect=[first,second]), \
+             patch.object(auth.time,'monotonic',return_value=0), \
+             patch.object(auth,'authenticated_session',side_effect=lambda **kw:original(sleep=MagicMock(),**kw)):
+            self.assertIs(auth.fresh_media_session(threading.Event(),180,max_attempts=2),second)
+        first.login.assert_called_once();second.login.assert_called_once()
+        self.assertIsNot(first.session,second.session)
+        second.session.close()
+
+    def test_opt_in_does_not_retry_rejected_credentials(self):
+        from src.api import auth_recovery as auth
+        vpn=self.vpn([None]);vpn.login.side_effect=AuthenticationError('authentication_rejected')
+        with patch.object(auth,'WebVPNSession',return_value=vpn) as factory, \
+             patch.object(auth.time,'monotonic',return_value=0):
+            with self.assertRaises(AuthenticationError):
+                auth.fresh_media_session(threading.Event(),180,max_attempts=2)
+        factory.assert_called_once();vpn.login.assert_called_once()
+
     def vpn(self, failures):
         vpn = WebVPNSession()
         vpn.probe_login_service = MagicMock(side_effect=failures)

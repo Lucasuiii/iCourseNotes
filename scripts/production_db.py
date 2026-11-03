@@ -51,6 +51,11 @@ def lecture_snapshot(db, path, course_id, sub_id):
         from src.pipeline.history_refresh import scope_keys
         allowed = scope_keys(str(course_id), str(sub_id))
         conn.execute('DELETE FROM meta WHERE key NOT IN (?, ?, ?, ?)', allowed)
+    # DELETE leaves the full catalog's free pages in every single-lecture
+    # snapshot. Compact before encryption so failure batches do not multiply
+    # the original database size (16 x 32 MiB exceeded the bundle limit).
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute('VACUUM')
     validate_database(str(path))
     return Path(path).read_bytes()
 

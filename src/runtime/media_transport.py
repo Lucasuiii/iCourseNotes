@@ -35,6 +35,10 @@ class SignedRangeRelay:
         self.session_factory, self.timeout = session_factory, timeout
         self.allow_session_refresh = allow_session_refresh
         self.allow_fresh_session_escalation = allow_fresh_session_escalation
+        self._max_fresh_sessions = vars(client).get('_media_max_fresh_sessions', 1)
+        if type(self._max_fresh_sessions) is not int or not 1 <= self._max_fresh_sessions <= 3:
+            raise ValueError('Invalid bounded media recovery budget')
+        self._fresh_session_count = 0
         self._fresh_auth_used = False
         self._session = None
         self._source = MediaSource(signed_url)
@@ -169,7 +173,7 @@ class SignedRangeRelay:
                 and callable(getattr(self.client, 'refresh_media_session', None))
                 and (not self._session_refreshed or
                      self.allow_fresh_session_escalation and self._owns_client
-                     and not self._fresh_auth_used))
+                     and self._fresh_session_count < self._max_fresh_sessions))
 
     def _refresh_session(self):
         refresh = getattr(self.client, 'refresh_media_session', None)
@@ -187,6 +191,7 @@ class SignedRangeRelay:
             reauthenticate = getattr(self.client, "reauthenticate_media_session", None)
             if not success and self._owns_client and callable(reauthenticate):
                 self._fresh_auth_used = True
+                self._fresh_session_count += 1
                 self._count('fresh_session_attempts')
                 timeout = getattr(self.client, '_media_reauth_timeout', None)
                 options = {'timeout': timeout} if timeout is not None else {}
@@ -280,7 +285,7 @@ class SignedRangeRelay:
                 self._count('cache_hits'); self._count('cached_bytes_served', len(cached))
                 return cached
             data = bytearray()
-            for attempt in range(self._recovery.attempts):
+            for attempt in range(self._recovery.attempts + self._max_fresh_sessions - 1):
                 if self._stop.is_set(): raise MediaTransportError('stopped')
                 response = None
                 error_code = None
@@ -331,7 +336,9 @@ class SignedRangeRelay:
                 # Header validation can already have marked a permanent failure.
                 if self.audit()['terminal_error_code']: self._fail(error_code)
                 can_refresh = self._can_refresh_session()
-                action = self._recovery.decide(error_code, attempt, can_refresh=can_refresh)
+                policy_attempt = (0 if error_code == 'media_session_refresh_needed'
+                                  and self._max_fresh_sessions > 1 else attempt)
+                action = self._recovery.decide(error_code, policy_attempt, can_refresh=can_refresh)
                 if action is RecoveryAction.STOP:
                     self._fail(self._recovery.terminal_code(error_code))
                 if action is RecoveryAction.REFRESH:

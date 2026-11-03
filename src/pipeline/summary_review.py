@@ -47,7 +47,7 @@ REVISION_PROMPT = '''依据理论审核发现的具体问题，修订课程摘�
 返回完整的修订后摘要，不要返回审核报告、修改说明或仅返回修改片段。
 保留原稿的课程风格、其余内容、课务、作业和明确的不确定事项，不添加没有依据的课堂事实。
 保留所有图片引用、图注和课堂原图时间行原样，不改图、不增删图。
-保留以 > 开头的识别缺口或证据限制提示。
+保留识别缺口或证据限制提示。普通引用块可以随理论纠错修改，保留引用格式。
 无需再对修订稿自审，也不要宣称它已经经过第二次审查或保证正确。
 仅返回JSON：{"summary":"完整修订后的Markdown摘要"}。
 '''
@@ -212,7 +212,9 @@ def protected_lines(summary):
     """Keep existing images and evidence notices; this is not a theory check."""
     return [line for line in summary.splitlines()
             if re.search(r'!\[[^\]]*\]\([^\n)]*\)', line)
-            or line.lstrip().startswith(('>', '*课堂原图'))]
+            or line.lstrip().startswith('*课堂原图')
+            or (line.lstrip().startswith('>') and re.search(
+                r'识别缺口|未识别|转录缺口|证据不足|证据限制|待确认|待核实|无法确认', line))]
 
 
 def validate_revision(value, source):
@@ -222,8 +224,26 @@ def validate_revision(value, source):
     summary = summary.strip()
     if summary == source.strip():
         raise ValueError('Unchanged revised summary')
+    # The asset metadata owns the original captions and capture times. A
+    # theory-only correction may inadvertently copy-edit these; restore their
+    # exact source text without discarding the useful prose correction.
+    images = re.compile(r'!\[[^\]\n]*\]\(([^\n)]*)\)')
+    original = list(images.finditer(source))
+    if [m[1] for m in images.finditer(summary)] != [m[1] for m in original]:
+        raise ValueError('Revision changed image identities')
+    refs = iter(original)
+    summary = images.sub(lambda _: next(refs)[0], summary)
+    captures = re.compile(r'^\*课堂原图[^\n]*$', re.M)
+    before, after = captures.findall(source), captures.findall(summary)
+    clocks = lambda rows: [re.findall(r'\d{2}:\d{2}:\d{2}', row) for row in rows]
+    if len(before) != len(after) or clocks(before) != clocks(after):
+        raise ValueError('Revision changed capture times')
+    rows = iter(before)
+    summary = captures.sub(lambda _: next(rows), summary)
     if protected_lines(summary) != protected_lines(source):
         raise ValueError('Revision changed images or evidence notices')
+    if summary == source.strip():
+        raise ValueError('Unchanged revised summary')
     return summary
 
 

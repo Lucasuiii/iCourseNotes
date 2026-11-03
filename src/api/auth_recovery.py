@@ -165,7 +165,8 @@ class DeadlineSession(requests.Session):
         return super().send(request, **kwargs)
 
 
-def fresh_media_session(cancelled, deadline, *, read_timeout=30, access_mode='webvpn'):
+def fresh_media_session(cancelled, deadline, *, read_timeout=30, access_mode='webvpn',
+                        max_attempts=1):
     """One new ticket flow from configured credentials, never a media Location."""
     def factory():
         vpn = WebVPNSession(access_mode=access_mode)
@@ -174,7 +175,10 @@ def fresh_media_session(cancelled, deadline, *, read_timeout=30, access_mode='we
         from src.runtime import config
         vpn.session.headers.update({'User-Agent': config.USER_AGENT})
         return vpn
-    # Three credential-free probes with cooldowns, within the same 75-second
-    # deadline. Still one fresh login only, no retry after login begins.
-    return authenticated_session(max_attempts=1, factory=factory, probe_attempts=3,
+    # Defaults stay one flow; long production downloads may opt into two
+    # fresh flows for classified transient failures within the same deadline.
+    # Each starts a new Session/ticket; rejected credentials and TLS fail fast.
+    if type(max_attempts) is not int or not 1 <= max_attempts <= 2:
+        raise ValueError('Invalid bounded media authentication attempts')
+    return authenticated_session(max_attempts=max_attempts, factory=factory, probe_attempts=3,
                                  probe_backoff=(5, 15))

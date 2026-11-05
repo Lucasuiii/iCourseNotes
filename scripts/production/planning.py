@@ -317,7 +317,6 @@ def plan(runtime):
                 _crawl_semester_catalog(client, db, reporter)
                 enumeration = _enumerate_lectures(client, db, reporter)
                 tasks = enumeration.lectures
-                tasks = [t for t in tasks if (db.get_lecture(str(t[2]['sub_id'])).get('error_count') or 0) < 3]
                 tasks, claimed, deferred = daily_filter(tasks, db, client)
                 print(f'Skipped {claimed} lectures claimed by local recognition; '
                       f'deferred {deferred} without a playable recording yet', flush=True)
@@ -326,7 +325,13 @@ def plan(runtime):
             if not historical:
                 files = {'queue.json': runtime.shards.encoded(tasks), 'database.db': runtime.snapshot(db, runtime.root()/'snapshot.db')}
                 if courses: files['history.db'] = history
-                else: files['enumeration.json'] = runtime.shards.encoded(enumeration.public_audit())
+                else:
+                    audit = enumeration.public_audit()
+                    audit.update(lecture_count=len(tasks), local_claim_count=claimed,
+                                 deferred_count=deferred, repeated_failure_count=sum(
+                                     (db.get_lecture(str(t[2]['sub_id'])).get('error_count') or 0) >= 3
+                                     for t in tasks))
+                    files['enumeration.json'] = runtime.shards.encoded(audit)
         finally:
             db.conn.close()
     tasks = runtime.read_json(files['queue.json'])

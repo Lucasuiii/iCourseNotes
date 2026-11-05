@@ -301,7 +301,7 @@ jobs:
         default: true
         type: boolean
       retry_all_failed:
-        description: Retry all paused failed lectures
+        description: Reset failure history for repeatedly failed lectures
         required: false
         default: false
         type: boolean

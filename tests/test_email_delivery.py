@@ -206,6 +206,8 @@ class EmailDeliveryTests(unittest.TestCase):
         )
         self.assertIn("课程 A", body)
         self.assertIn("摘要生成", body)
+        self.assertIn("不会因失败次数自动排除", body)
+        self.assertNotIn("已暂停自动重试", body)
         self.assertNotIn("secret signed URL", body)
 
     @patch("src.api.emailer.smtplib.SMTP_SSL", _FakeSMTP)

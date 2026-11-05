@@ -132,9 +132,6 @@ def _enumerate_lectures(client: ICourseClient, db: Database,
                 sub_id = str(lec["sub_id"])
                 if sub_id in known_processed:
                     continue
-                stored = db.get_lecture(sub_id)
-                if stored and (stored.get("error_count") or 0) >= 3:
-                    continue
                 new_lectures.append(lec)
             unprocessed = db.get_unprocessed_lectures(course_id)
             new_ids = {str(lec["sub_id"]) for lec in new_lectures}
@@ -276,7 +273,7 @@ def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
 def _selected_attention_lectures(
     db: Database, only_unnotified: bool = True
 ) -> list[dict]:
-    """Return paused failures still covered by the private course rules."""
+    """Return repeated failures still covered by the private course rules."""
     if not config.COURSE_IDS:
         return []
     rows = db.get_attention_lectures(
@@ -293,13 +290,13 @@ def _selected_attention_lectures(
 
 def _send_failure_notices(emailer: Emailer | None, db: Database,
                           reporter: Reporter) -> None:
-    """Send one notice for newly-paused failures and mark only on success."""
+    """Send one deduplicated notice for repeated failures."""
     items = _selected_attention_lectures(db)
     if not items:
         return
     if emailer is None:
         reporter.info(
-            f"[Attention] {len(items)} paused lecture(s); email is not configured."
+            f"[Attention] {len(items)} repeatedly failed lecture(s); email is not configured."
         )
         return
     reporter.info(f"[Attention] Sending notice for {len(items)} lecture(s).")
@@ -397,7 +394,7 @@ def run():
             [row["sub_id"] for row in attention]
         )
         reporter.info(
-            f"[Attention] Re-armed {retried} paused lecture(s) for manual retry."
+            f"[Attention] Reset failure history for {retried} lecture(s) for manual retry."
         )
     corrected = db.sync_dates_from_sub()
     if corrected:

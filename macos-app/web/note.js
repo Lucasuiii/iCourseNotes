@@ -7,6 +7,8 @@
   var empty = document.getElementById('empty');
   var toc = document.getElementById('toc');
   var bar = document.getElementById('progress');
+  var tocToggle = document.getElementById('toc-toggle');
+  var page = document.getElementById('page');
   var esc = function (s) { return window.ICS.render.escapeHtmlText(s == null ? '' : s); };
 
   function post(message) {
@@ -48,14 +50,36 @@
 
   function buildToc(root) {
     var heads = Array.from(root.querySelectorAll('h3'));
-    if (heads.length < 3) { toc.hidden = true; return; }
+    if (heads.length < 3) { toc.hidden = true; layout(); return; }
     toc.innerHTML = '<div class="toc-title">目录</div>' + heads.map(function (h, i) {
       h.id = 'sec-' + i;
       var copy = h.cloneNode(true); copy.querySelectorAll('.katex-mathml').forEach(function (n) { n.remove(); });
       return '<a href="#sec-' + i + '">' + esc(copy.textContent.trim()) + '</a>';
     }).join('');
     toc.hidden = false;
+    layout();
   }
+
+  /* Wide: outline beside the centred page. Medium: page shifts left to make room.
+     Narrow (note list open): outline folds into a pill with the current section. */
+  function layout() {
+    var root = document.documentElement;
+    var scale = parseFloat(getComputedStyle(root).getPropertyValue('--scale')) || 1;
+    var w = innerWidth, pageW = Math.min(700 * scale, w), side = pageW + 8 + 200;
+    var mode = toc.hidden || opts.print ? 'none' : w >= 700 * scale + 512 ? 'rail' : w >= side + 24 ? 'side' : 'drawer';
+    root.classList.toggle('toc-drawer', mode === 'drawer');
+    if (mode !== 'drawer') root.classList.remove('toc-open');
+    tocToggle.hidden = mode !== 'drawer';
+    var left = Math.max(8, (w - side) / 2);
+    page.style.marginLeft = mode === 'side' ? left + 'px' : '';
+    toc.style.left = mode === 'side' ? (left + pageW + 8) + 'px' : '';
+  }
+  function closeToc() { document.documentElement.classList.remove('toc-open'); }
+  tocToggle.addEventListener('click', function (e) { e.stopPropagation(); document.documentElement.classList.toggle('toc-open'); });
+  toc.addEventListener('click', function (e) { if (e.target.closest('a')) closeToc(); });
+  document.addEventListener('click', function (e) { if (!e.target.closest('#toc')) closeToc(); });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') closeToc(); });
+  addEventListener('resize', layout);
 
   function transcriptFold(text) {
     var paras = String(text || '').replace(/^# 课堂整理转录\s*/, '').split(/\n+/).filter(function (x) { return x.trim(); });
@@ -134,7 +158,13 @@
     bar.style.width = (max > 0 ? Math.min(100, scrollY / max * 100) : 0) + '%';
     var links = toc.querySelectorAll('a'), current = null;
     Array.from(document.querySelectorAll('#prose h3')).forEach(function (h) { if (h.getBoundingClientRect().top < 120) current = h.id; });
-    links.forEach(function (a) { a.classList.toggle('active', a.getAttribute('href') === '#' + current); });
+    var label = '';
+    links.forEach(function (a) {
+      var on = a.getAttribute('href') === '#' + current;
+      a.classList.toggle('active', on);
+      if (on) label = a.textContent;
+    });
+    tocToggle.querySelector('.toc-current').textContent = label;
   }
   var pinTop = false;
   addEventListener('scroll', onScroll, { passive: true });
@@ -185,8 +215,8 @@
       out.push(total);
       return out;
     },
-    clear: function () { note = null; content.hidden = true; toc.hidden = true; empty.hidden = false; },
-    setScale: function (x) { document.documentElement.style.setProperty('--scale', x); onScroll(); },
+    clear: function () { note = null; content.hidden = true; toc.hidden = true; empty.hidden = false; layout(); },
+    setScale: function (x) { document.documentElement.style.setProperty('--scale', x); layout(); onScroll(); },
   };
   post({ type: 'ready' });
 })();

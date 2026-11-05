@@ -20,6 +20,7 @@ class SessionOrigin:
     def __init__(self, mode='rotate', *, connection_bound=False):
         self.mode=mode; self.token='first'; self.calls=[]; self.cookies=[]
         self.connection_bound=connection_bound; self.connection_mismatches=0
+        self.served={}; self.per_session=1
 
     def __enter__(self):
         owner=self
@@ -58,6 +59,12 @@ class SessionOrigin:
                 match=re.fullmatch(r'bytes=(\d+)-(\d*)',self.headers.get('Range',''))
                 if not match: self.reply(400);return
                 start=int(match[1]);end=min(int(match[2]) if match[2] else len(owner.DATA)-1,len(owner.DATA)-1)
+                if start and owner.mode == 'expiring':
+                    # Every login serves a bounded number of ranges, then expires.
+                    served=owner.served.get(cookie,0)
+                    if cookie!='media_token='+str(owner.token) or served>=owner.per_session:
+                        self.reply(302,b'private-login-html',[('Location','/login?private-ticket')]);return
+                    owner.served[cookie]=served+1
                 if start and owner.mode in ('foreign','same_media','wrapped_foreign'):
                     if owner.mode=='foreign':location='https://untrusted.invalid/login?private-ticket'
                     elif owner.mode=='wrapped_foreign':location=get_vpn_url('https://untrusted.invalid/cas/login')+'?private-ticket'
@@ -373,6 +380,57 @@ class MediaSessionTests(unittest.TestCase):
                 self.assertEqual(relay.audit()['fresh_session_attempts'],2)
                 self.assertEqual(relay.audit()['upstream_bytes'],len(origin.DATA))
                 self.assertIs(origin.client.vpn,old)
+
+    def expiring(self, origin):
+        old=origin.client.vpn
+        logins=[]
+        def factory(cancelled,deadline):
+            logins.append(True)
+            candidate=type(old)();origin.token=f'renewed{len(logins)}'
+            candidate.session.cookies.set('media_token',origin.token,domain='127.0.0.1',path='/')
+            return candidate
+        origin.client._media_reauth_factory=MagicMock(side_effect=factory)
+        origin.client._media_max_fresh_sessions=3
+        origin.per_session=2
+        return logins
+
+    def test_sessions_expiring_after_progress_keep_recovering_within_total_cap(self):
+        with SessionOrigin('expiring') as origin:
+            logins=self.expiring(origin)
+            origin.client._media_max_total_fresh_sessions=8
+            with SignedRangeRelay(origin.client,origin.signed,prefix_bytes=4096,chunk_bytes=4096,
+                                  allow_session_refresh=True,allow_fresh_session_escalation=True,
+                                  progress_refund_bytes=8192) as relay:
+                self.assertEqual(requests.get(relay.url,timeout=30).content,origin.DATA)
+                audit=relay.audit()
+                self.assertGreater(len(logins),3)
+                self.assertLessEqual(len(logins),8)
+                self.assertEqual(audit['fresh_session_attempts'],len(logins))
+                self.assertGreater(audit['session_budget_refunds'],0)
+                self.assertEqual(audit['upstream_bytes'],len(origin.DATA))
+                self.assertNotIn('private',json.dumps(audit))
+
+    def test_expiring_sessions_stop_without_progress_or_at_the_total_cap(self):
+        for total,refund in ((8,1<<30),(3,8192)):
+            with self.subTest(total=total,refund=refund), SessionOrigin('expiring') as origin:
+                logins=self.expiring(origin)
+                origin.client._media_max_total_fresh_sessions=total
+                with SignedRangeRelay(origin.client,origin.signed,prefix_bytes=4096,chunk_bytes=4096,
+                                      allow_session_refresh=True,allow_fresh_session_escalation=True,
+                                      progress_refund_bytes=refund) as relay:
+                    with self.assertRaises(requests.RequestException):requests.get(relay.url,timeout=30)
+                    audit=relay.audit()
+                    self.assertEqual(audit['terminal_error_code'],'media_session_unavailable')
+                    self.assertEqual(len(logins),3)
+                    # Without sustained progress nothing is refunded; with it, the total cap still stops.
+                    self.assertEqual(audit['session_budget_refunds']>0,refund==8192)
+
+    def test_total_media_login_cap_is_bounded(self):
+        for total in (2,13,'8'):
+            with self.subTest(total=total):
+                client=SimpleNamespace(_media_max_fresh_sessions=3,_media_max_total_fresh_sessions=total)
+                with self.assertRaises(ValueError):
+                    SignedRangeRelay(client,'https://vpn.example/media',allow_session_refresh=True)
 
     def test_fresh_login_cannot_accept_another_account_or_tenant(self):
         for user in ({'id':'another'}, {'id':'cached-private-user','tenant_id':'another'}):

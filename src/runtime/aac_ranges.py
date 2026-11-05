@@ -257,10 +257,8 @@ class AACRangeTransport(SignedRangeRelay):
                         output = parse_multipart(bytes(body), response.headers['Content-Type'], ranges, self.total)
                         self._count('multipart_body_bytes', len(body))
                         self._count('range_verified', len(ranges))
-                    if self._resume_pending:
-                        self._count('session_refresh_successes')
-                        self._session_event('media_resumed', ranges[0][0])
-                        self._resume_pending = False
+                    if self._resume_pending: self._session_resumed(ranges[0][0])
+                    self._note_progress()
                     self._transition('ready')
                     return output
                 except MediaTransportError as error:

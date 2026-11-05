@@ -109,12 +109,24 @@ body { font: calc(17.5px * var(--scale))/1.95 var(--sans); letter-spacing: .012e
 .modal-hint { position: fixed; top: 20px; left: 20px; color: rgba(255,255,255,.5); font: 12px var(--sans); }
 
 /* table of contents */
-#toc { position: fixed; top: 64px; left: calc(50% + 350px * var(--scale) + 40px); width: 200px; font-size: 12.5px; line-height: 1.5; }
+#toc { position: fixed; top: 64px; left: calc(50% + 350px * var(--scale) + 40px); width: 200px; max-height: calc(100vh - 96px); overflow-y: auto; scrollbar-width: none; font-size: 12.5px; line-height: 1.5; }
+#toc::-webkit-scrollbar { display: none; }
 #toc .toc-title { font-weight: 600; color: var(--faint); letter-spacing: .1em; margin-bottom: 10px; font-size: 11px; }
 #toc a { display: block; padding: 4px 0 4px 12px; color: var(--faint); text-decoration: none; border-left: 1px solid var(--rule); scroll-behavior: smooth; }
 #toc a:hover { color: var(--text); }
 #toc a.active { color: var(--accent); border-left-color: var(--accent); }
-@media (max-width: 1240px) { #toc { display: none; } }
+/* Narrow reader (e.g. with the note list open): the outline folds into a pill. */
+#toc-toggle { position: fixed; top: 14px; right: 16px; z-index: 6; display: flex; align-items: center; gap: 8px; max-width: min(300px, 60vw);
+  padding: 5px 12px; border: 1px solid var(--rule); border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 82%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  color: var(--faint); font: 12px/1.5 var(--sans); letter-spacing: .04em; transition: color .15s, border-color .15s; }
+#toc-toggle:hover, html.toc-open #toc-toggle { color: var(--text); border-color: var(--faint); }
+#toc-toggle .toc-label { font-weight: 600; flex: none; }
+#toc-toggle .toc-current { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+#toc-toggle .toc-current:empty { display: none; }
+html.toc-drawer #toc { display: none; }
+html.toc-drawer.toc-open #toc { display: block; left: auto; right: 16px; top: 50px; width: min(280px, calc(100vw - 32px)); max-height: calc(100vh - 76px);
+  padding: 14px 16px 12px 10px; border-radius: 12px; background: var(--card); box-shadow: var(--shadow); z-index: 6; }
 
 /* transcripts at the end */
 .appendix { margin-top: 64px; border-top: 1px solid var(--rule); padding-top: 20px; }
@@ -138,7 +150,7 @@ html.print { --bg: #ffffff; --text: #222; --muted: #555; --faint: #888; --rule: 
   --accent: #a04820; --callout: #fbf3e2; --callout-edge: #d99a30; --pending: #f0f2f5; --pending-edge: #8a97ab; --shadow: none; color-scheme: light; }
 html.print body { font-size: 15.5px; line-height: 1.85; }
 html.print #page { max-width: none; padding: 0; }
-html.print #toc, html.print #progress { display: none !important; }
+html.print #toc, html.print #toc-toggle, html.print #progress { display: none !important; }
 html.print .note-head { margin-bottom: 26px; }
 html.print .note-title { font-size: 30px; }
 html.print .summary-classroom-figure { max-height: 300px; border-radius: 4px; box-shadow: none; border: 1px solid var(--rule); }

@@ -47,7 +47,8 @@ jobs:
       with:
         python-version: '3.12'
         cache: pip
-    - run: python -m pip install cryptography pycryptodome requests
+    # Publication validates saved JPEGs even though it does not load ASR models.
+    - run: python -m pip install cryptography pycryptodome requests Pillow
     - name: Verify journal-bound stage before credentials or models
       id: authorize
       run: python -m scripts.production_pool_stage bootstrap

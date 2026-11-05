@@ -21,7 +21,7 @@ from src.runtime.enumeration import CourseEnumerationError
 
 
 class EnumerationSafetyTests(unittest.TestCase):
-    def test_catalog_cannot_requeue_paused_failures_until_explicit_reset(self):
+    def test_catalog_requeues_repeated_failures_without_resetting_history(self):
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             stack.enter_context(patch.object(main.config, 'COURSE_IDS', ['10']))
             stack.enter_context(patch.object(main.config, 'RERUN_TARGET_IDS', set()))
@@ -47,12 +47,12 @@ class EnumerationSafetyTests(unittest.TestCase):
                 result = main._enumerate_lectures(client, db, MagicMock())
                 result.require_success()
                 return [str(t[2]['sub_id']) for t in result.lectures]
-            self.assertEqual(set(tasks()), {'retryable', 'new', 'absent'})
+            self.assertEqual(set(tasks()), {'paused', 'retryable', 'new', 'absent'})
             self.assertEqual(db.get_lecture('paused')['error_count'], 3)
-            self.assertEqual(db.retry_attention_lectures(['paused']), 1)
             ids = tasks()
             self.assertEqual(set(ids), {'paused', 'retryable', 'new', 'absent'})
             self.assertEqual(len(ids), len(set(ids)))
+            self.assertEqual(db.get_lecture('paused')['error_count'], 3)
 
     def fixture(self, outcomes, new=False):
         client = MagicMock(); client.check_alive.return_value = True

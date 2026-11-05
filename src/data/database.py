@@ -204,21 +204,19 @@ class Database:
                                   max_errors: int = 3) -> list[dict]:
         """Return lectures that need (re-)processing.
 
-        Only returns lectures whose ``error_count`` is below *max_errors* —
-        a repeatedly-failing lecture is paused after that many attempts and
-        surfaced through the attention notification path rather than
-        clogging every workflow run or disappearing silently.
+        Failure counts are diagnostic history, not an exclusion rule.
+        ``max_errors`` is accepted for compatibility but no longer limits
+        eligibility. Processed and explicitly deleted lectures stay excluded.
         """
         query = (
             "SELECT * FROM lectures"
             " WHERE processed_at IS NULL"
             "   AND deleted_at IS NULL"
-            "   AND (error_count IS NULL OR error_count < ?)"
         )
-        params: tuple = (max_errors,)
+        params: tuple = ()
         if course_id:
             query += " AND course_id = ?"
-            params = (max_errors, course_id)
+            params = (course_id,)
         with self._lock:
             rows = self.conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
@@ -289,7 +287,7 @@ class Database:
         self, course_ids: list[str] | None = None, max_errors: int = 3,
         only_unnotified: bool = True,
     ) -> list[dict]:
-        """Return paused failures, optionally limited to unsent notices."""
+        """Return repeated failures, optionally limited to unsent notices."""
         query = (
             "SELECT l.*, c.title AS course_title, c.teacher "
             "FROM lectures l JOIN courses c ON l.course_id = c.course_id "
@@ -324,7 +322,7 @@ class Database:
             )
 
     def retry_attention_lectures(self, sub_ids: list[str]) -> int:
-        """Re-arm selected paused failures for an immediate manual retry.
+        """Reset selected failure histories for an explicit manual retry.
 
         ``retry_generation`` makes the reset survive the additive database
         merge used by the deployment workflow.

@@ -425,7 +425,7 @@ class Emailer:
         return False
 
     def send_failure_notice(self, items: list[dict]) -> bool:
-        """Send one private, deduplicated digest for paused lecture failures.
+        """Send one private, deduplicated digest for repeated lecture failures.
 
         Raw exception messages and identifiers are deliberately excluded:
         only course/lecture labels, the processing stage, and attempt count
@@ -446,7 +446,7 @@ class Emailer:
             "pipeline": "课程处理",
         }
         plain_lines = [
-            "以下课次连续处理失败，已暂停自动重试：",
+            "以下课次连续处理失败，仍保留在后续自动任务的待处理范围：",
             "",
         ]
         html_rows = []
@@ -468,13 +468,13 @@ class Emailer:
             )
 
         instruction = (
-            "系统不会继续每天重复尝试。如需重试，请手动运行 Single Run，"
-            "并勾选“Retry all paused failed lectures”。"
+            "系统会在后续正常任务中继续检查和尝试这些课次，不会因失败次数自动排除。"
+            "本提醒按课次去重，不会每次失败都重复发送。"
         )
         plain_lines.extend(["", instruction])
         html = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"
-            "<p>以下课次连续处理失败，已暂停自动重试：</p>"
+            "<p>以下课次连续处理失败，仍保留在后续自动任务的待处理范围：</p>"
             "<table style='border-collapse:collapse' border='1' cellpadding='6'>"
             "<thead><tr><th>课程</th><th>课次</th><th>阶段</th>"
             "<th>失败次数</th></tr></thead><tbody>"

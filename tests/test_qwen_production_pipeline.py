@@ -114,6 +114,47 @@ class ClassroomSelectionTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('scripts.production_pool.verify_previous_pool'))
 
+    def test_daily_plan_keeps_repeated_failures_and_reports_queue_counts(self):
+        from src.runtime.enumeration import EnumerationResult
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+                'RUNNER_TEMP':tmp, 'GITHUB_RUN_ID':'99', 'GITHUB_RUN_ATTEMPT':'1',
+                'GITHUB_REPOSITORY':'owner/repo', 'DB_ENCRYPTION_KEY':'k'*32,
+                'VALIDATION_COURSE_ID':'', 'VALIDATION_SOURCE_RUN_ID':'',
+                'VALIDATION_SELECTION_RUN_ID':'', 'HISTORY_REFRESH_TARGETS':'',
+                'QWEN_PRODUCTION_TASK':'true',
+                'SHARD_MODE':'legacy', 'COURSE_IDS':'10'}):
+            root = pipeline.root()
+            db = database(root/'fixture.db')
+            for _ in range(5):
+                db.update_error('1', 'prepare', 'temporary session failure')
+            original = snapshot(db, root/'original.db'); db.conn.close()
+            task = ('10', '课程', {'sub_id':'1', 'date':'2026-10-04'})
+            enumeration = EnumerationResult(lectures=[task], successful_courses=['10'])
+            fake_main = SimpleNamespace(login_with_retry=lambda:None,
+                _enumerate_lectures=MagicMock(return_value=enumeration),
+                _crawl_semester_catalog=MagicMock())
+            client = MagicMock(); client.get_video_url.return_value = 'https://private.example/video'
+            with patch.dict('sys.modules', {'main':fake_main}), \
+                 patch.object(pipeline, 'artifact', return_value=False), \
+                 patch.object(pipeline, 'load_remote', side_effect=lambda path:path.write_bytes(original)), \
+                 patch('src.api.icourse.ICourseClient', return_value=client), \
+                 patch.object(pipeline, 'write_outputs'):
+                pipeline.plan()
+            saved = pipeline.decode(root/'out'/'queue.enc', 'queue')
+            self.assertEqual(json.loads(saved['queue.json']), [['10', '课程', task[2]]])
+            audit = json.loads((root/'out'/'plan-audit.json').read_text())
+            self.assertEqual(audit['lecture_count'], 1)
+            self.assertEqual(audit['repeated_failure_count'], 1)
+            self.assertEqual(audit['deferred_count'], 0)
+            self.assertEqual(audit['local_claim_count'], 0)
+            self.assertNotIn('private.example', json.dumps(audit))
+            (root/'restored.db').write_bytes(saved['database.db'])
+            restored = Database(str(root/'restored.db'))
+            try:
+                self.assertEqual(restored.get_lecture('1')['error_count'], 5)
+            finally:
+                restored.conn.close()
+
     def test_new_fixed_trial_reuses_exact_failed_selection_and_frozen_terms(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
                 'RUNNER_TEMP':tmp,'GITHUB_RUN_ID':'100','GITHUB_REPOSITORY':'owner/repo',

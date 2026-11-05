@@ -16,13 +16,16 @@ class FailureAttentionTests(unittest.TestCase):
         db.insert_lecture("lecture-1", "course-1", "第一讲", "2026-09-18")
         return db
 
-    def test_third_failure_pauses_and_notice_is_deduplicated(self):
+    def test_repeated_failures_stay_eligible_and_notice_is_deduplicated(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self._database(Path(tmp) / "icourse.db")
             for _ in range(3):
                 db.update_error("lecture-1", "summarize", "provider timeout")
 
-            self.assertEqual(db.get_unprocessed_lectures("course-1"), [])
+            self.assertEqual([row['sub_id'] for row in db.get_unprocessed_lectures("course-1")],
+                             ['lecture-1'])
+            self.assertEqual([row['sub_id'] for row in db.get_unprocessed_lectures()],
+                             ['lecture-1'])
             attention = db.get_attention_lectures(["course-1"])
             self.assertEqual([row["sub_id"] for row in attention], ["lecture-1"])
 
@@ -37,6 +40,12 @@ class FailureAttentionTests(unittest.TestCase):
             self.assertIsNotNone(
                 db.get_lecture("lecture-1")["failure_notified_at"]
             )
+            # A notice, further failures, or a legacy limit cannot hide the lecture.
+            for _ in range(3):
+                db.update_error("lecture-1", "summarize", "provider timeout")
+            self.assertEqual([row['sub_id'] for row in db.get_unprocessed_lectures(
+                "course-1", max_errors=1)], ['lecture-1'])
+            self.assertEqual(db.get_lecture('lecture-1')['error_count'], 6)
             db.conn.close()
 
     def test_no_audio_failure_is_not_silently_marked_processed(self):

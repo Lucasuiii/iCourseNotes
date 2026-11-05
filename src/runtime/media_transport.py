@@ -25,7 +25,7 @@ class SignedRangeRelay:
                  prefix_bytes=64*1024, attempts=3, max_upstream_bytes=None,
                  session_factory=requests.Session, timeout=(10, 15),
                  allow_session_refresh=False, cache_bytes=0,
-                 allow_fresh_session_escalation=False):
+                 allow_fresh_session_escalation=False, progress_refund_bytes=32*1024*1024):
         factory = getattr(client, "_media_reauth_factory", None)
         self._owns_client = callable(factory) and allow_session_refresh
         self.client = client.fork_for_media() if self._owns_client else client
@@ -38,7 +38,20 @@ class SignedRangeRelay:
         self._max_fresh_sessions = vars(client).get('_media_max_fresh_sessions', 1)
         if type(self._max_fresh_sessions) is not int or not 1 <= self._max_fresh_sessions <= 3:
             raise ValueError('Invalid bounded media recovery budget')
+        # A media session can expire again after a verified recovery. Only
+        # consecutive logins without sustained progress use the short budget;
+        # the absolute cap still bounds logins for one relay.
+        self._max_total_fresh_sessions = vars(client).get('_media_max_total_fresh_sessions',
+                                                          self._max_fresh_sessions)
+        if (type(self._max_total_fresh_sessions) is not int
+                or not self._max_fresh_sessions <= self._max_total_fresh_sessions <= 12):
+            raise ValueError('Invalid bounded media recovery budget')
+        if type(progress_refund_bytes) is not int or progress_refund_bytes < 1:
+            raise ValueError('Invalid media recovery progress threshold')
+        self.progress_refund_bytes = progress_refund_bytes
         self._fresh_session_count = 0
+        self._fresh_since_progress = 0
+        self._progress_mark = None
         self._fresh_auth_used = False
         self._session = None
         self._source = MediaSource(signed_url)
@@ -66,7 +79,7 @@ class SignedRangeRelay:
                            upstream_status_counts={}, range_rejections=0,
                            redirect_counts={}, cookie_updates=0,
                            session_refresh_attempts=0, session_refresh_successes=0,
-                           fresh_session_attempts=0,
+                           fresh_session_attempts=0, session_budget_refunds=0,
                            session_identity_verifications=0, session_resume_attempts=0,
                            session_recovery_events=[],
                            last_failure_offset=None, last_error_code=None, state='idle',
@@ -101,7 +114,7 @@ class SignedRangeRelay:
     def _session_event(self, event, offset=None):
         with self._audit_lock:
             events = self._audit['session_recovery_events']
-            if len(events) < (12 if self.allow_fresh_session_escalation else 8):
+            if len(events) < (24 if self.allow_fresh_session_escalation else 8):
                 events.append({'event':event, 'elapsed_seconds':round(time.monotonic()-self._started, 3),
                                'offset':offset if offset is not None else self._audit['last_failure_offset']})
 
@@ -173,7 +186,8 @@ class SignedRangeRelay:
                 and callable(getattr(self.client, 'refresh_media_session', None))
                 and (not self._session_refreshed or
                      self.allow_fresh_session_escalation and self._owns_client
-                     and self._fresh_session_count < self._max_fresh_sessions))
+                     and self._fresh_since_progress < self._max_fresh_sessions
+                     and self._fresh_session_count < self._max_total_fresh_sessions))
 
     def _refresh_session(self):
         refresh = getattr(self.client, 'refresh_media_session', None)
@@ -192,6 +206,7 @@ class SignedRangeRelay:
             if not success and self._owns_client and callable(reauthenticate):
                 self._fresh_auth_used = True
                 self._fresh_session_count += 1
+                self._fresh_since_progress += 1
                 self._count('fresh_session_attempts')
                 timeout = getattr(self.client, '_media_reauth_timeout', None)
                 options = {'timeout': timeout} if timeout is not None else {}
@@ -212,6 +227,22 @@ class SignedRangeRelay:
             self._session.close()
             self._session = None
         self._resume_pending = True
+        self._progress_mark = self.audit()['upstream_bytes']
+
+    def _session_resumed(self, offset):
+        self._count('session_refresh_successes')
+        self._session_event('media_resumed', offset)
+        self._resume_pending = False
+
+    def _note_progress(self):
+        # Refund the consecutive-login budget only after the recovered
+        # session has delivered a sustained amount of verified media.
+        if self._progress_mark is None: return
+        if self.audit()['upstream_bytes']-self._progress_mark >= self.progress_refund_bytes:
+            self._progress_mark = None
+            if self._fresh_since_progress:
+                self._fresh_since_progress = 0
+                self._count('session_budget_refunds')
 
     def _verify_response(self, response, start, end, *, open_ended=False):
         with self._audit_lock:
@@ -311,10 +342,8 @@ class SignedRangeRelay:
                     self._transition('reading')
                     self._read_verified_body(response, remaining, data)
                     if self._stop.is_set(): raise MediaTransportError('stopped')
-                    if self._resume_pending:
-                        self._count('session_refresh_successes')
-                        self._session_event('media_resumed', offset)
-                        self._resume_pending = False
+                    if self._resume_pending: self._session_resumed(offset)
+                    self._note_progress()
                     result = bytes(data)
                     self._buffer.put(start, result)
                     with self._audit_lock: self._audit['cache_bytes'] = self._buffer.bytes

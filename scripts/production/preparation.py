@@ -341,6 +341,9 @@ def prepare(runtime):
                 media_reauth_factory=partial(fresh_media_session, read_timeout=45, max_attempts=2))
             client._media_reauth_timeout = 180
             client._media_max_fresh_sessions = 3
+            # Long lectures outlive several media sessions; each later login
+            # needs sustained verified progress since the previous recovery.
+            client._media_max_total_fresh_sessions = 8
             scheduler = Scheduler(reporter)
             scheduler.audio_downloader.allow_fresh_session_escalation = True
             specification['prepare_phase'] = 'ppt'

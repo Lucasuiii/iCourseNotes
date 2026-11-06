@@ -78,7 +78,11 @@ html.native-selection .katex *::selection { background: transparent; }
 .prose h2, .prose h3, .prose h4 { font-family: var(--serif); line-height: 1.45; scroll-margin-top: 24px; }
 .prose h2 { font-size: 1.4em; margin: 2.4em 0 .7em; }
 .prose h3 { font-size: 1.28em; font-weight: 600; margin: 2.6em 0 .8em; }
-.prose h4 { font-size: 1.06em; font-weight: 600; margin: 1.9em 0 .5em; }
+/* Sub-section label: lighter than the serif section title, bound to the text it introduces. */
+.prose h4 { font-family: var(--sans); font-size: .9em; font-weight: 600; letter-spacing: .06em; color: var(--muted);
+  margin: 2.1em 0 .45em; display: flex; align-items: center; gap: .6em; }
+.prose h4::before { content: ""; flex: none; width: 3px; height: 1.05em; border-radius: 2px; background: var(--accent); opacity: .75; }
+.prose h4 + p { margin-top: 0; }
 .prose > h3:first-child, .prose > section:first-child > h3 { margin-top: 0; }
 .prose p { margin: 0 0 1.05em; }
 .prose ul, .prose ol { padding-left: 1.5em; margin: .4em 0 1.1em; }

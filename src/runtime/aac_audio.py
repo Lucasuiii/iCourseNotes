@@ -88,7 +88,7 @@ class AACDecodeProcess:
         self._thread.start()
 
     @classmethod
-    def spawn(cls, reader, prepared, path):
+    def spawn(cls, reader, prepared, path, *, with_side=False):
         index = prepared[0]
         offset = index.presentation_offset/index.timescale
         end = (index.presentation_offset+index.duration)/index.timescale
@@ -96,8 +96,9 @@ class AACDecodeProcess:
         # 1024 samples. Restore the edit offset and trim only final AAC padding.
         filters = (f'asetpts=N/SR/TB+{offset:.12f}/TB,atrim=end={end:.12f},'
                    'aresample=async=1:first_pts=0')
-        decoder = subprocess.Popen(['ffmpeg', '-nostdin', '-y', '-f', 'aac', '-i', 'pipe:0',
-            '-vn', '-af', filters, '-ar', '16000', '-ac', '1', '-f', 'f32le', str(path)],
+        from src.runtime.audio_preparation import downmix_outputs
+        decoder = subprocess.Popen(['ffmpeg', '-nostdin', '-y', '-f', 'aac', '-i', 'pipe:0', '-vn',
+            *downmix_outputs(path, prefix_filters=filters+',', with_side=with_side)],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
             return cls(decoder, reader, prepared, path)

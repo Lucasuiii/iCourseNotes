@@ -169,6 +169,11 @@ def lecture_status(item, crypto, queue_entry=None):
         try:
             saved = crypto(lecture_dir).read(tag); spec = saved.get('spec', {})
             coverage = saved.get('recognition_coverage') or {}
+            rows = saved.get('final_rows', saved.get('rows')) or []
+            if rows and all(not str(r.get('text') or '').strip() for r in rows):
+                # Every recognized block is empty: the material gate stops before summary.
+                row['failure_reason'] = ('no_speech_old_downmix' if 'channel_mix' not in
+                                         (spec.get('audio_diagnostics') or {}) else 'no_speech')
             row.update(stage=safe_code(saved.get('stage')), saved_blocks=len(saved.get('rows', [])),
                        planned_blocks=len(spec.get('plan', {}).get('blocks', [])) or row['planned_blocks'],
                        audio_seconds=number(spec.get('audio_seconds')),

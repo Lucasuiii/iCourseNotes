@@ -186,6 +186,11 @@ struct LectureRunCard: View {
                     StatusPill(status: lecture.status)
                 }
                 StageStepper(current: currentStep, status: lecture.status)
+                if let why = lecture.failureExplanation {
+                    Label(why, systemImage: "waveform.slash")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if showBlocks {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {

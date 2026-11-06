@@ -210,7 +210,8 @@ def run(store, manifest, args):
         store.save('progress.enc', progress)
         try:
             process(store, manifest, target, deadline,
-                    allow_active_actions=getattr(args, 'allow_active_actions', False))
+                    allow_active_actions=getattr(args, 'allow_active_actions', False),
+                    retry_failed=bool(getattr(args, 'retry_failed', False)))
             progress['lectures'][tag] = {'status': 'complete'}
         except PreflightBlocked as error:
             progress['lectures'][tag] = {'status': 'blocked', 'reason': error.code, 'actions': error.runs}

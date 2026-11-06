@@ -183,6 +183,9 @@ class AudioDownloader:
         self._reporter = reporter
         self.audio_mode = config.AUDIO_ACQUISITION if audio_mode is None else audio_mode
         self.allow_fresh_session_escalation = False
+        # Opt-in: also write the (L-R)/2 side signal so a caller that waits for
+        # the complete file can recover polarity-inverted stereo recordings.
+        self.write_side_channel = False
         if self.audio_mode not in ('aac_auto', 'mp4'):
             raise ValueError('Invalid audio acquisition mode')
         self._startup_failures = {}
@@ -298,8 +301,10 @@ class AudioDownloader:
                     network_options = ['-reconnect','1','-reconnect_streamed','1','-reconnect_delay_max','5']
                 # A cancelled generation's cleanup cannot delete a replacement.
                 path = os.path.join(self._dir, f"{pending.file_token}.raw")
-                if os.path.exists(path):
-                    os.remove(path)
+                from src.runtime.audio_preparation import downmix_outputs, side_path
+                for stale in (path, side_path(path)):
+                    if os.path.exists(stale):
+                        os.remove(stale)
 
                 cmd = [
                     "ffmpeg", "-y",
@@ -310,16 +315,15 @@ class AudioDownloader:
                     # Raw PCM has no timestamps. Fill actual source timestamp
                     # gaps before discarding them so later ASR/visual offsets
                     # stay on the playback timeline. Do not invent a video tail.
-                    *(["-af", "aresample=async=1:first_pts=0"] if preserve_timestamps else []),
-                    "-ar", "16000",
-                    "-ac", "1",
-                    "-f", "f32le",
-                    path,
+                    *downmix_outputs(path, prefix_filters=("aresample=async=1:first_pts=0,"
+                                                           if preserve_timestamps else ""),
+                                     with_side=self.write_side_channel),
                 ]
                 phase = 'decoder_spawn'
                 check_pending()
                 if prepared_aac is not None:
-                    proc = AACDecodeProcess.spawn(transport, prepared_aac, path)
+                    proc = AACDecodeProcess.spawn(transport, prepared_aac, path,
+                                                  with_side=self.write_side_channel)
                 else:
                     proc = subprocess.Popen(
                         cmd, stdout=subprocess.DEVNULL,
@@ -384,11 +388,12 @@ class AudioDownloader:
                         proc.wait()
                     if transport is not None: transport.close()
                     self._sem.release()
-                    if os.path.exists(path):
-                        try:
-                            os.remove(path)
-                        except OSError:
-                            pass
+                    for leftover in (path, side_path(path)):
+                        if os.path.exists(leftover):
+                            try:
+                                os.remove(leftover)
+                            except OSError:
+                                pass
                     return
 
                 # Background monitor: release the semaphore slot when
@@ -475,11 +480,13 @@ class AudioDownloader:
                 proc.wait()
         if handle.media_transport is not None: handle.media_transport.close()
         # The monitor thread releases the semaphore on its own.
-        if os.path.exists(handle.path):
-            try:
-                os.remove(handle.path)
-            except OSError:
-                pass
+        from src.runtime.audio_preparation import side_path
+        for leftover in (handle.path, side_path(handle.path)):
+            if os.path.exists(leftover):
+                try:
+                    os.remove(leftover)
+                except OSError:
+                    pass
 
     def shutdown(self) -> None:
         """Kill every in-flight ffmpeg and wipe the scratch directory."""

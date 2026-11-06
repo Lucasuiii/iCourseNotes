@@ -65,6 +65,7 @@ struct LectureRun: Decodable, Identifiable, Hashable {
     let missingSeconds: Double?
     let checkpointTime: Double?
     let runtimeErrorType: String?
+    let failureReason: String?
     let workerAlive: Bool?
     let safeToPause: Bool?
     let performance: PerfPoint?
@@ -73,6 +74,16 @@ struct LectureRun: Decodable, Identifiable, Hashable {
     var fraction: Double? {
         guard let s = savedBlocks, let p = plannedBlocks, p > 0 else { return nil }
         return min(1, s / p)
+    }
+
+    /// Plain-language reason for a stopped lecture, when the backend could classify it.
+    var failureExplanation: String? {
+        guard ["failed", "paused"].contains(status) else { return nil }
+        switch failureReason {
+        case "no_speech_old_downmix": return "所有识别块都是空的：音频来自旧的单声道混音，可能被反相立体声抵消。点“重试失败课次”会重新获取音频后识别。"
+        case "no_speech": return "所有识别块都是空的：录音里没有识别到语音，已停在摘要之前。"
+        default: return nil
+        }
     }
 }
 

@@ -20,6 +20,68 @@ ERROR_PATTERNS = {
 }
 
 
+# Some classroom recorders store the same signal on both stereo channels with
+# inverted polarity. A plain (L+R)/2 downmix then cancels the lecture almost
+# completely (about -38 dB), which recognition sees as silence. Decoders may
+# therefore write the side signal (L-R)/2 next to the usual mid signal; the
+# side file is used only when it is clearly louder than the mid signal.
+SIDE_SUFFIX = '.side'
+PHASE_FLIP_MARGIN_DB = 12.0
+PHASE_MIN_SIDE_DBFS = -55.0
+
+
+def side_path(path):
+    return str(path)+SIDE_SUFFIX
+
+
+def downmix_outputs(path, *, prefix_filters='', with_side=False):
+    """FFmpeg arguments that write mono 16 kHz float PCM, optionally plus the side signal."""
+    tail = ['-ar', str(PCM_RATE), '-f', 'f32le']
+    if not with_side:
+        return [*(['-af', prefix_filters.rstrip(',')] if prefix_filters else []),
+                '-ac', '1', *tail, str(path)]
+    graph = (f'[0:a:0]{prefix_filters}aformat=channel_layouts=stereo,asplit=2[mix][dif];'
+             '[mix]pan=mono|c0=0.5*c0+0.5*c1[mid];[dif]pan=mono|c0=0.5*c0-0.5*c1[side]')
+    return ['-filter_complex', graph, '-map', '[mid]', *tail, str(path),
+            '-map', '[side]', *tail, side_path(path)]
+
+
+def _mean_power(path, *, chunk_samples=PCM_RATE*60):
+    import numpy as np
+    total, count = 0.0, 0
+    with open(path, 'rb') as stream:
+        while True:
+            block = stream.read(chunk_samples*PCM_SAMPLE_BYTES)
+            if not block: break
+            samples = np.frombuffer(block[:len(block)//PCM_SAMPLE_BYTES*PCM_SAMPLE_BYTES], dtype='<f4')
+            samples = samples[np.isfinite(samples)].astype(np.float64)
+            total += float(np.dot(samples, samples)); count += samples.size
+    return total/count if count else 0.0
+
+
+def resolve_channel_phase(path):
+    """Keep the mid downmix unless the side signal shows polarity-inverted stereo.
+
+    Returns public diagnostics (levels only). The side file is always removed.
+    """
+    side = Path(side_path(path))
+    if not side.exists():
+        return {'channel_mix': 'mono_downmix'}
+    try:
+        pcm = Path(path)
+        if not pcm.exists() or side.stat().st_size != pcm.stat().st_size:
+            return {'channel_mix': 'mid', 'side_check': 'size_mismatch'}
+        mid_power, side_power = _mean_power(pcm), _mean_power(side)
+        level = lambda power: round(10*math.log10(power), 1) if power > 0 else -200.0
+        mid_db, side_db = level(mid_power), level(side_power)
+        inverted = side_db >= PHASE_MIN_SIDE_DBFS and side_db-mid_db >= PHASE_FLIP_MARGIN_DB
+        if inverted:
+            side.replace(pcm)
+        return {'channel_mix': 'side' if inverted else 'mid', 'mid_dbfs': mid_db, 'side_dbfs': side_db}
+    finally:
+        side.unlink(missing_ok=True)
+
+
 def record_decode_errors(chunk, counts):
     text = chunk.lower()
     for code, needles in ERROR_PATTERNS.items():

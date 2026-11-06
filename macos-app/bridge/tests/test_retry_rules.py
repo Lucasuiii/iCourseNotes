@@ -87,6 +87,17 @@ class RetryRuleTests(unittest.TestCase):
         other = self.lecture('15', texts=['讲课内容'])
         self.assertEqual(self.resume([t, other]), [['--resume', '--retry-failed']])
 
+    def test_scan_lets_failed_lectures_be_selected_again(self):
+        scan = self.root/'work/local-latest-new-2026-11-06-010101'; scan.mkdir()
+        rows = [{'course_id': '1', 'sub_id': sid, 'course_title': '课程', 'date': '2026-11-04'} for sid in ('21', '22', '23')]
+        self.b.write_json(scan/'inventory.json', {'status': 'complete', 'unrecognized_available': rows})
+        self.lecture('21', texts=[''])                        # failed: may restart
+        self.lecture('22', texts=['讲课'], status='paused')    # paused: must resume instead
+        ready = {r['sub_id']: r for r in self.b.summarize_inventory(scan)['ready']}
+        self.assertEqual((ready['21']['selectable'], ready['21']['local_restart'], ready['21']['local_existing']), (True, True, False))
+        self.assertEqual((ready['22']['selectable'], ready['22']['local_existing']), (False, True))
+        self.assertEqual((ready['23']['selectable'], ready['23']['local_restart']), (True, False))
+
 
 if __name__ == '__main__':
     unittest.main()

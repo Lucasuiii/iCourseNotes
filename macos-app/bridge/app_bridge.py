@@ -314,7 +314,10 @@ def summarize_inventory(control):
     ready = []
     for r in inv.get('unrecognized_available', []):
         existing = [x for x in local_controls(r['course_id'], r['sub_id']) if x['status'] not in ('unknown',)]
-        ready.append(lecture(r, selectable=not existing and not started, local_existing=bool(existing)))
+        # Failed runs may be redone with current code (cmd_start retires them); others must be resumed.
+        blocking = [x for x in existing if x['status'] not in ('failed', 'superseded')]
+        ready.append(lecture(r, selectable=not blocking and not started, local_existing=bool(blocking),
+                             local_restart=any(x['status'] == 'failed' for x in existing) and not blocking))
     deferred = [lecture(r, resource_error=safe_code(r.get('resource_error'))) for r in inv.get('deferred_unavailable', [])]
     courses = []
     for c in inv.get('courses', []):

@@ -31,6 +31,8 @@ struct ReadyRow: View {
                     Text("\(weekday(lecture.date)) \(sessionLabel(lecture.title, date: lecture.date))")
                     if lecture.localExisting == true {
                         Text("· 已有本地任务（\(Labels.status(lecture.localControls?.first?.status))），请在进度页续跑").foregroundStyle(.orange)
+                    } else if lecture.localRestart == true {
+                        Text("· 上次本地识别失败，勾选后用当前代码重新识别（旧检查点保留）").foregroundStyle(.orange)
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary)

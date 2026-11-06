@@ -136,6 +136,7 @@ struct InventoryLecture: Decodable, Identifiable, Hashable {
     let title: String?
     let date: String
     let selectable: Bool?
+    let localRestart: Bool?
     let localExisting: Bool?
     let resourceError: String?
     let localControls: [LocalControl]?

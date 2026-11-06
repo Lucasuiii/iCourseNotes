@@ -174,6 +174,8 @@ def lecture_status(item, crypto, queue_entry=None):
                 # Every recognized block is empty: the material gate stops before summary.
                 row['failure_reason'] = ('no_speech_old_downmix' if 'channel_mix' not in
                                          (spec.get('audio_diagnostics') or {}) else 'no_speech')
+            if status.get('superseded_by'):
+                row['superseded_by'] = Path(status['superseded_by']).name
             row.update(stage=safe_code(saved.get('stage')), saved_blocks=len(saved.get('rows', [])),
                        planned_blocks=len(spec.get('plan', {}).get('blocks', [])) or row['planned_blocks'],
                        audio_seconds=number(spec.get('audio_seconds')),
@@ -266,6 +268,27 @@ def cmd_status(args):
 
 
 # ----------------------------------------------------------- scan & start
+
+def empty_recognition(control, cid, sid):
+    """Every saved ASR block of the lecture checkpoint is empty (the material gate stops it)."""
+    lecture, tag = Path(control)/('lecture-'+sid), cid+'-'+sid+'.enc'
+    if not (lecture/tag).is_file():
+        return False
+    try:
+        saved = store(lecture).read(tag)
+    except Exception:
+        return False
+    rows = saved.get('final_rows', saved.get('rows')) or []
+    return bool(rows) and all(not str(r.get('text') or '').strip() for r in rows)
+
+
+def supersede_failed(control, new_control):
+    """A failed lecture restarted with current code: keep every file, only retire its status."""
+    st = read_json(control/'execution-status.json') or {}
+    st.update(status='superseded', previous_status=st.get('status'), superseded_by=str(new_control),
+              superseded_at=time.time(), updated=time.time())
+    write_json(control/'execution-status.json', st)
+
 
 def local_controls(cid, sid):
     rows = []
@@ -426,9 +449,14 @@ def cmd_start(args):
     missing = [x for x in wanted if x not in ready]
     if missing:
         raise Refused('所选课次不在本次可识别列表中')
+    retired = {}
     for sid in wanted:
-        if local_controls(ready[sid]['course_id'], sid):
+        existing = local_controls(ready[sid]['course_id'], sid)
+        # A failed (or already retired) local run may be redone from scratch with the current
+        # code; its checkpoint and audio stay where they are. Anything else must be resumed.
+        if any(row['status'] not in ('failed', 'superseded') for row in existing):
             raise Refused('课次 '+sid+' 已有本地任务，请在识别进度中续跑，避免重复识别')
+        retired[sid] = [Path(row['control']) for row in existing if row['status'] == 'failed']
     source, sha = source_identity()
     if sha != inv['source_sha'] or Path(os.readlink(control/'repo')).resolve() != source:
         raise Refused('扫描后源码已变化，请重新检查新回放')
@@ -460,6 +488,8 @@ def cmd_start(args):
                                                 'mail_calls': 0, 'common_source': str(source), 'prepared_by': 'local-app'})
         files = {n: hashlib.sha256((r/n).read_bytes()).hexdigest() for n in ['app_run_once.py', 'app_publish.py', 'finalize.py', 'read_progress.py']}
         write_json(r/'control-files.json', files)
+        for old in retired.get(sid, []):
+            supersede_failed(old, r)
         row.update(control=str(r), output=str(output)); prepared.append(row)
         (output/'start-report.md').write_text('# 本机识别启动\n\n'+day+'《'+row['course_title']+'》（'+cid+'/'+sid+'）。\n\n由本地应用启动：单 bf16 模型、双块文本解码，保留 AAC/课件 OCR/作业视觉/精选图/摘要与理论审查及一次修订；完成后停在待审核，不自动发布或发邮件。\n')
     write_json(control/'targets.json', prepared)
@@ -529,6 +559,19 @@ def cmd_resume(args):
         raise Refused('队列仍在运行')
     if worker_active():
         raise Refused('已有本地识别进程在运行，不能同时加载第二个模型')
+    if args.retry_failed:
+        _, current = source_identity()
+        for t in read_json(control/'targets.json', []):
+            lecture = Path(t['control'])
+            if (read_json(lecture/'execution-status.json') or {}).get('status') != 'failed':
+                continue
+            if empty_recognition(lecture, t['course_id'], t['sub_id']):
+                # Resuming replays the frozen plan: the same empty blocks hit the same stop.
+                name = (t.get('date') or '')+' '+(t.get('course_title') or t['sub_id'])
+                if (read_json(lecture/'source.json') or {}).get('sha') != current:
+                    raise Refused(name+' 的识别结果全部为空，而续跑只能沿用当初的旧代码，会原样失败。'
+                                  '请点“检查新回放”重新选择这堂课，用当前代码从头识别（旧检查点保留）。')
+                raise Refused(name+' 的录音里没有识别到语音，重试会得到同样结果，已不再重复运行。')
     (control/'app-pause-request.json').unlink(missing_ok=True)
     extra = ['--resume'] + (['--retry-failed'] if args.retry_failed else [])
     pid = launch_queue(control, extra)

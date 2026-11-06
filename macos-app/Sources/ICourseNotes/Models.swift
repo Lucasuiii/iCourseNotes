@@ -66,6 +66,7 @@ struct LectureRun: Decodable, Identifiable, Hashable {
     let checkpointTime: Double?
     let runtimeErrorType: String?
     let failureReason: String?
+    let supersededBy: String?
     let workerAlive: Bool?
     let safeToPause: Bool?
     let performance: PerfPoint?
@@ -78,9 +79,12 @@ struct LectureRun: Decodable, Identifiable, Hashable {
 
     /// Plain-language reason for a stopped lecture, when the backend could classify it.
     var failureExplanation: String? {
+        if status == "superseded" {
+            return "这次失败的识别已由新任务用当前代码重新识别；原检查点和音频保留在原目录。"
+        }
         guard ["failed", "paused"].contains(status) else { return nil }
         switch failureReason {
-        case "no_speech_old_downmix": return "所有识别块都是空的：音频来自旧的单声道混音，可能被反相立体声抵消。点“重试失败课次”会重新获取音频后识别。"
+        case "no_speech_old_downmix": return "所有识别块都是空的：旧版本把双声道混成单声道时，反相录音会互相抵消。续跑只能沿用旧代码，请点“检查新回放”重新选择这堂课，用当前代码从头识别。"
         case "no_speech": return "所有识别块都是空的：录音里没有识别到语音，已停在摘要之前。"
         default: return nil
         }
@@ -304,6 +308,7 @@ enum Labels {
         case "running": return "识别中"
         case "paused": return "已暂停"
         case "failed": return "失败"
+        case "superseded": return "已重新识别"
         case "publication_failed": return "发布失败"
         case "awaiting_content_review", "awaiting_review": return "待审核"
         case "awaiting_publication": return "待发布"

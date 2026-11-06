@@ -31,30 +31,6 @@ def budget(deadline):
     return remaining
 
 
-def stale_silent_downmix(state):
-    """A saved acquisition whose every recognized block is empty and whose audio predates
-    the polarity check: an explicit retry re-acquires instead of replaying the same stop."""
-    spec = state.get('spec')
-    rows = state.get('final_rows', state.get('rows')) or []
-    return bool(spec and rows and all(not str(row.get('text') or '').strip() for row in rows)
-                and 'channel_mix' not in (spec.get('audio_diagnostics') or {}))
-
-
-def supersede_acquisition(store, tag, root, state, audio):
-    """Archive the old checkpoint and audio (never deleted), then restart from acquisition."""
-    n = 1
-    while (root/f'superseded-{n}').exists():
-        n += 1
-    archive = private_dir(root/f'superseded-{n}')
-    if audio.exists():
-        audio.replace(archive/'audio.raw')
-    store.save(f'{tag}.superseded-{n}.enc', dict(state))
-    kept = {key: state[key] for key in ('glossary_snapshot', 'ppt_complete', 'access_mode') if key in state}
-    state.clear()
-    state.update(kept, rows=[], review={}, superseded_acquisitions=n)
-    print(f'[Retry] 旧检查点的识别块全部为空，且音频来自修复前的单声道混音；已归档到 superseded-{n}，重新获取音频后识别。', flush=True)
-
-
 def choose_access_mode(requested):
     """Use a credential-free campus probe; never fall back after login starts."""
     if requested in ('direct','webvpn'):return requested
@@ -198,7 +174,7 @@ def candidate_files(store, target):
     return path, fresh
 
 
-def process(store, manifest, target, deadline, *, allow_active_actions=False, retry_failed=False):
+def process(store, manifest, target, deadline, *, allow_active_actions=False):
     from src.api.auth_recovery import initial_authenticated_session, fresh_media_session
     from src.api.icourse import ICourseClient
     from src.ai.course_glossary import course_terms
@@ -221,9 +197,6 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False, re
     def stage(value):
         state['stage'] = value; save()
     audio = root/'audio.raw'
-    if retry_failed and stale_silent_downmix(state):
-        supersede_acquisition(store, tag, root, state, audio)
-        save()
     reporter = Reporter()
     scheduler = Scheduler(reporter)
     scheduler.audio_downloader.audio_mode = manifest['audio_acquisition']

@@ -10,8 +10,6 @@ from pathlib import Path
 import numpy as np
 
 from src.runtime.audio_preparation import downmix_outputs, resolve_channel_phase, side_path
-from scripts.local_history.runtime import stale_silent_downmix, supersede_acquisition
-from scripts.local_history.storage import Store
 
 RATE = 16000
 
@@ -79,43 +77,6 @@ class StereoPhaseTests(unittest.TestCase):
                          ['-af', 'x', '-ac', '1', '-ar', '16000', '-f', 'f32le', 'a.raw'])
         self.assertEqual(downmix_outputs('a.raw'), ['-ac', '1', '-ar', '16000', '-f', 'f32le', 'a.raw'])
         self.assertEqual(resolve_channel_phase(self.dir/'missing.raw'), {'channel_mix': 'mono_downmix'})
-
-
-class StaleCheckpointRetryTests(unittest.TestCase):
-    def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
-
-    def tearDown(self):
-        shutil.rmtree(self.dir, ignore_errors=True)
-
-    def state(self, text='', **diagnostics):
-        return {'spec': {'plan': {'blocks': [1, 2]}, 'audio_diagnostics': diagnostics},
-                'rows': [{'chunk_id': 0, 'text': text}, {'chunk_id': 1, 'text': ' '}],
-                'final_rows': [{'chunk_id': 0, 'text': text}, {'chunk_id': 1, 'text': ''}],
-                'review': {'attempts': []}, 'glossary_snapshot': {'terms': ['秩']}, 'ppt_complete': True,
-                'access_mode': 'direct', 'stage': 'summary', 'last_error_type': 'RuntimeError'}
-
-    def test_only_empty_pre_fix_acquisitions_are_redone(self):
-        self.assertTrue(stale_silent_downmix(self.state()))
-        self.assertFalse(stale_silent_downmix(self.state(text='讲课内容')))
-        self.assertFalse(stale_silent_downmix(self.state(channel_mix='mid')))
-        self.assertFalse(stale_silent_downmix({'rows': [], 'review': {}}))
-
-    def test_supersede_archives_audio_and_checkpoint_then_restarts(self):
-        store = Store(self.dir/'run', 'k'*40)
-        root = self.dir/'run'/'1-2'; root.mkdir(parents=True)
-        audio = root/'audio.raw'; audio.write_bytes(b'old-audio')
-        state = self.state()
-        supersede_acquisition(store, '1-2', root, state, audio)
-        self.assertFalse(audio.exists())
-        self.assertEqual((root/'superseded-1'/'audio.raw').read_bytes(), b'old-audio')
-        self.assertEqual(store.read('1-2.superseded-1.enc')['stage'], 'summary')
-        self.assertEqual(state, {'glossary_snapshot': {'terms': ['秩']}, 'ppt_complete': True,
-                                 'access_mode': 'direct', 'rows': [], 'review': {},
-                                 'superseded_acquisitions': 1})
-        audio.write_bytes(b'second')
-        supersede_acquisition(store, '1-2', root, self.state(), audio)
-        self.assertTrue((root/'superseded-2'/'audio.raw').exists())
 
 
 if __name__ == '__main__':

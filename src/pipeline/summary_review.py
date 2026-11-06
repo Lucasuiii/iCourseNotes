@@ -247,6 +247,13 @@ def validate_revision(value, source):
     return summary
 
 
+# A correction applies listed findings to the reviewed text; it needs no extended reasoning.
+# With thinking enabled a revision once spent the whole 65536-token budget reasoning and
+# returned no text, so the call runs without thinking and with an explicit output cap
+# (about three times the longest current summary).
+REVISION_MAX_TOKENS = 32000
+
+
 def revise(db, summarizer, course, sub, title, material, *, state=None):
     """A known review finding authorizes one correction, never another review."""
     state = state or read_state(db, sub)
@@ -286,7 +293,7 @@ def revise(db, summarizer, course, sub, title, material, *, state=None):
             model=model, messages=[{'role': 'system', 'content': REVISION_PROMPT},
                                    {'role': 'user', 'content': content}],
             response_format={'type': 'json_object'}, temperature=0.1, timeout=600,
-            extra_body={'thinking': {'type': 'enabled'}}, reasoning_effort='high')
+            max_tokens=REVISION_MAX_TOKENS, extra_body={'thinking': {'type': 'disabled'}})
         choice = response.choices[0] if response.choices else None
         revision['response_finish_reason'] = getattr(choice, 'finish_reason', 'no_choices')
         revision['response_content'] = getattr(getattr(choice, 'message', None), 'content', None)

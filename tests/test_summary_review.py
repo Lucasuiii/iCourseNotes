@@ -247,7 +247,14 @@ class SummaryReviewTests(unittest.TestCase):
         payload = json.loads(call.call_args.kwargs['messages'][1]['content'])
         self.assertEqual(payload['summary'], self.text)
         self.assertEqual(payload['issues'][0]['reason'], '补集方向写反')
-        self.assertNotIn('max_tokens', call.call_args.kwargs)
+        # The correction runs without thinking and with an explicit output cap; the review keeps
+        # extended thinking without a cap (see the theory review test).
+        self.assertEqual(call.call_args.kwargs['max_tokens'], audit.REVISION_MAX_TOKENS)
+        self.assertEqual(call.call_args.kwargs['extra_body'], {'thinking': {'type': 'disabled'}})
+        self.assertNotIn('reasoning_effort', call.call_args.kwargs)
+        review = call.call_args_list[0].kwargs
+        self.assertNotIn('max_tokens', review)
+        self.assertEqual(review['extra_body'], {'thinking': {'type': 'enabled'}})
         self.assertIn('未进行第二次自审', audit.report(state))
         # Resume starts from the same original draft and figure-selection input.
         resumed = self.run_review()

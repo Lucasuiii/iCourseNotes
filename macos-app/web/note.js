@@ -35,6 +35,17 @@
       '<div class="note-meta">' + meta.map(function (m) { return '<span>' + m + '</span>'; }).join('') + '</div></header>';
   }
 
+  /* A bold run that opens a block and ends with a colon is a lead-in label, not a key term. */
+  function markLeadIns(root) {
+    root.querySelectorAll('p > strong:first-child, li > strong:first-child').forEach(function (s) {
+      var before = s.previousSibling;
+      if (before && before.nodeType === 3 && before.textContent.trim()) return;
+      var after = s.nextSibling, text = s.textContent.trim();
+      var colon = /[：:]$/.test(text) || (after && after.nodeType === 3 && /^\s*[：:]/.test(after.textContent));
+      if (colon && text.length <= 14) s.classList.add('lead');
+    });
+  }
+
   /* Wrap "课程事项提醒" and "尚需确认的内容" sections (h3 + following siblings) in callouts. */
   function callouts(root) {
     Array.from(root.querySelectorAll(':scope > h3')).forEach(function (h) {
@@ -127,6 +138,7 @@
     content.innerHTML = header() + '<div class="prose" id="prose">' + body + '</div>' + appendix;
     var prose = document.getElementById('prose');
     callouts(prose);
+    markLeadIns(prose);
     content.hidden = false; empty.hidden = true;
     window.ICS.render.activateKaTeX(prose);
     buildToc(prose);

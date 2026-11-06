@@ -10,6 +10,7 @@
   --accent: #b5532a;
   --accent-soft: rgba(181, 83, 42, .08);
   --select: rgba(196, 98, 45, .22);
+  --mark: rgba(240, 178, 62, .38);
   --callout: #fdf4e3;
   --callout-edge: #e0a23b;
   --pending: #eef1f5;
@@ -29,6 +30,7 @@
     --accent: #e8935f;
     --accent-soft: rgba(232, 147, 95, .10);
     --select: rgba(232, 147, 95, .32);
+    --mark: rgba(214, 158, 60, .30);
     --callout: #2c2619;
     --callout-edge: #c98d2e;
     --pending: #22252a;
@@ -89,6 +91,13 @@ html.native-selection .katex *::selection { background: transparent; }
 .prose li { margin: .35em 0; }
 .prose li::marker { color: var(--faint); }
 .prose strong { font-weight: 650; color: var(--text); }
+/* Key terms and conclusions: a highlighter stroke over the lower part of the text. */
+.prose strong:not(.lead) { padding: 0 .12em; margin: 0 .02em; border-radius: .2em;
+  background: linear-gradient(to bottom, transparent 52%, var(--mark) 52%, var(--mark) 92%, transparent 92%);
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+/* A bold lead-in such as “补充说明：” is a label, not a key term. */
+.prose strong.lead { color: var(--accent); font-weight: 600; }
+.prose h2 strong, .prose h3 strong, .prose h4 strong, .callout > h3 strong { background: none; padding: 0; }
 .prose em { font-style: normal; color: var(--muted); }
 .prose blockquote { margin: 1.4em 0; padding: .2em 1.2em; border-left: 2px solid var(--accent); color: var(--muted); }
 .prose code { font: .86em/1.5 "SF Mono", Menlo, monospace; background: var(--card); padding: .12em .38em; border-radius: 5px; }
@@ -170,7 +179,7 @@ details.fold > summary .count { margin-left: auto; font-weight: 400; color: var(
 
 /* PDF export: always light paper, no screen chrome */
 html.print { --bg: #ffffff; --text: #222; --muted: #555; --faint: #888; --rule: rgba(0,0,0,.12); --card: #f5f3ee;
-  --accent: #a04820; --callout: #fbf3e2; --callout-edge: #d99a30; --pending: #f0f2f5; --pending-edge: #8a97ab; --shadow: none; color-scheme: light; }
+  --accent: #a04820; --mark: rgba(240, 178, 62, .38); --callout: #fbf3e2; --callout-edge: #d99a30; --pending: #f0f2f5; --pending-edge: #8a97ab; --shadow: none; color-scheme: light; }
 html.print body { font-size: 15.5px; line-height: 1.85; }
 html.print #page { max-width: none; padding: 0; }
 html.print #toc, html.print #toc-toggle, html.print #progress { display: none !important; }

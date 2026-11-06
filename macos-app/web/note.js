@@ -185,6 +185,55 @@
     });
   }).observe(document.body, { childList: true });
 
+  /* Copy formulas as their LaTeX source instead of KaTeX's duplicated MathML/HTML glyphs. */
+  function texOf(el) {
+    var a = el.querySelector('annotation[encoding="application/x-tex"]');
+    return a ? a.textContent.trim() : el.textContent;
+  }
+  var selectedMath = [];
+  var customHighlight = !!(window.CSS && CSS.highlights && window.Highlight);
+  if (!customHighlight) document.documentElement.classList.add('native-selection');
+  function markSelectedMath() {
+    var sel = getSelection(), range = sel.rangeCount && !sel.isCollapsed ? sel.getRangeAt(0) : null;
+    var next = range && range.intersectsNode(content)
+      ? Array.from(content.querySelectorAll('.katex')).filter(function (k) { return range.intersectsNode(k); }) : [];
+    selectedMath.forEach(function (k) { if (next.indexOf(k) < 0) k.classList.remove('selected'); });
+    next.forEach(function (k) { k.classList.add('selected'); });
+    selectedMath = next;
+    if (customHighlight) {
+      if (range) CSS.highlights.set('reader-selection', new Highlight(range.cloneRange()));
+      else CSS.highlights.delete('reader-selection');
+    }
+  }
+  // selectionchange is not always sent when a click collapses the selection; resync after input too.
+  document.addEventListener('selectionchange', markSelectedMath);
+  ['mouseup', 'keyup'].forEach(function (t) { addEventListener(t, function () { setTimeout(markSelectedMath, 0); }); });
+  document.addEventListener('copy', function (e) {
+    var sel = getSelection();
+    if (!sel.rangeCount || sel.isCollapsed || !content.contains(sel.anchorNode)) return;
+    var range = sel.getRangeAt(0).cloneRange();
+    // A selection that starts or ends inside a formula takes the whole formula.
+    var edge = function (node) { var el = node.nodeType === 1 ? node : node.parentElement; return el && (el.closest('.katex-display') || el.closest('.katex')); };
+    var a = edge(range.startContainer), b = edge(range.endContainer);
+    if (a) range.setStartBefore(a);
+    if (b) range.setEndAfter(b);
+    var box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:-99999px;top:0;width:700px;white-space:normal';
+    box.appendChild(range.cloneContents());
+    box.querySelectorAll('.katex.selected').forEach(function (k) { k.classList.remove('selected'); });
+    if (!box.querySelector('.katex')) return;  // plain text: let WebKit copy as usual
+    box.querySelectorAll('.katex-display').forEach(function (d) {
+      var p = document.createElement('p'); p.textContent = '$$' + texOf(d) + '$$'; d.replaceWith(p);
+    });
+    box.querySelectorAll('.katex').forEach(function (k) { k.replaceWith('$' + texOf(k) + '$'); });
+    box.querySelectorAll('.summary-figure-button, button, .asr-time').forEach(function (n) { n.remove(); });
+    document.body.appendChild(box);
+    var text = box.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    document.body.removeChild(box);
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+  });
+
   window.ICSApp = {
     load: function (payload, options) { note = payload; opts = options || {}; draw(); },
     /* Page cut offsets (CSS px from the top of the document) for slices of at most `pageHeight`,

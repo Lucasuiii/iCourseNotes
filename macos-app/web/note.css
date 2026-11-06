@@ -9,6 +9,7 @@
   --card: #f3efe5;
   --accent: #b5532a;
   --accent-soft: rgba(181, 83, 42, .08);
+  --select: rgba(196, 98, 45, .22);
   --callout: #fdf4e3;
   --callout-edge: #e0a23b;
   --pending: #eef1f5;
@@ -27,6 +28,7 @@
     --card: #26241f;
     --accent: #e8935f;
     --accent-soft: rgba(232, 147, 95, .10);
+    --select: rgba(232, 147, 95, .32);
     --callout: #2c2619;
     --callout-edge: #c98d2e;
     --pending: #22252a;
@@ -38,7 +40,24 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); overflow-anchor: none; }
 body { font: calc(17.5px * var(--scale))/1.95 var(--sans); letter-spacing: .012em; -webkit-font-smoothing: antialiased; }
-::selection { background: var(--accent-soft); }
+/* WebKit fills the gaps between selected blocks up to the window edge, so the native highlight is
+   kept invisible and note.js paints the selected text with a CSS custom highlight instead. */
+::selection { background: rgba(0, 0, 0, .004); }
+::highlight(reader-selection) { background-color: var(--select); }
+.katex *::highlight(reader-selection) { background-color: transparent; }
+html.native-selection ::selection { background: var(--select); }
+html.native-selection .katex *::selection { background: transparent; }
+/* Reading chrome stays out of text selection; the article text, formulas and transcripts remain selectable. */
+#toc, #toc-toggle, #progress, .note-meta, .callout > h3::before, .summary-figure-button, details.fold > summary,
+.asr-time, .empty, .modal-hint, .modal-caption { -webkit-user-select: none; user-select: none; }
+.summary-classroom-figure { -webkit-user-drag: none; }
+.katex-display { -webkit-user-select: text; }
+/* KaTeX glyph boxes overlap; paint one clean highlight per selected formula instead. */
+.katex.selected { background: var(--select); border-radius: 3px; box-shadow: 0 0 0 2px var(--select); }
+/* A display formula is highlighted as wide as the formula, not the whole line. */
+.katex-display { text-align: center; }
+.katex-display > .katex { display: inline-block; text-align: initial; }
+.katex-display > .katex.selected { box-shadow: 0 0 0 4px var(--select); }
 
 #progress { position: fixed; top: 0; left: 0; height: 2px; width: 0; background: var(--accent); z-index: 5; transition: width .1s linear; }
 #page { max-width: calc(700px * var(--scale)); margin: 0 auto; padding: 56px 32px 120px; }

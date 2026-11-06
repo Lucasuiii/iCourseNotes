@@ -221,6 +221,12 @@ def preparation_failure_audit(runtime, specification, files, error, *, saved=Fal
         elif isinstance(value, bool): audit[name] = value
     transport = safe_transport_diagnostics(diagnostics.get('source_transport'))
     if transport: audit['source_transport'] = transport
+    import math
+    phase = specification.get('channel_phase') or {}
+    if phase.get('channel_mix') in ('mid', 'side', 'mono_downmix'):
+        audit['channel_mix'] = phase['channel_mix']
+        for name in ('mid_dbfs', 'side_dbfs'):
+            if isinstance(phase.get(name), (int, float)) and math.isfinite(phase[name]): audit[name] = phase[name]
     counts = diagnostics.get('decode_error_counts')
     if type(counts) is dict:
         audit['decode_error_counts'] = {code:count for code, count in counts.items()
@@ -346,6 +352,9 @@ def prepare(runtime):
             client._media_max_total_fresh_sessions = 8
             scheduler = Scheduler(reporter)
             scheduler.audio_downloader.allow_fresh_session_escalation = True
+            # Also decode the (L-R)/2 side signal; it replaces the mid downmix only
+            # for polarity-inverted stereo, where (L+R)/2 cancels the lecture.
+            scheduler.audio_downloader.write_side_channel = True
             specification['prepare_phase'] = 'ppt'
             ppt = PPTPipeline(db, scheduler, reporter).submit(client, course, sub_id, defer_ocr=True)
             from src.runtime import config
@@ -391,6 +400,13 @@ def prepare(runtime):
                 specification['prepare_phase'] = 'vad'
                 began_vad = time.monotonic()
                 windows = runtime.prepare_audio_stream(transcriber, handle, specification)
+                # The stream returns only after the decoder exited, so both outputs are complete.
+                from src.runtime.audio_preparation import resolve_channel_phase
+                phase = resolve_channel_phase(handle.path)
+                specification['channel_phase'] = phase
+                if phase.get('channel_mix') == 'side':
+                    # The streamed VAD saw the cancelled downmix: segment the recovered audio again.
+                    windows = runtime.prepare_audio_stream(transcriber, handle, specification)
                 specification.setdefault('prepare_timings', {})['audio_and_vad_seconds'] = time.monotonic()-began_vad
                 duration = transcriber.last_audio_duration
                 media = transcriber.last_media_duration
@@ -398,6 +414,7 @@ def prepare(runtime):
                     vad_windows=transcriber.last_vad_windows, full_chunks=[{'start':a,'end':b} for a,b in windows])
                 specification['prepare_phase'] = 'audio_validation'
                 runtime.retain_prepared_audio(handle, specification, files)
+                specification['audio_diagnostics'].update(phase)
                 if abs(specification['audio_seconds']-duration) > 1/16000:
                     raise ValueError('VAD input differs from retained PCM samples')
                 runtime.validate_prepared_audio(specification)

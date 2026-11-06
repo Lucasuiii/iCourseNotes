@@ -22,6 +22,7 @@ fi
 BREW="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
 for tool in ffmpeg; do command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 2; }; done
 [ -x "$NODE_DIR/node" ] || { echo "missing: node (install it or use nvm)" >&2; exit 2; }
+[ -e node_modules ] || { echo "missing: node_modules (run: npm ci)" >&2; exit 2; }
 
 HOME_DIR="$(mktemp -d)"; trap 'rm -rf "$HOME_DIR"' EXIT
 echo "python: $PY"; echo "node:   $NODE_DIR/node"

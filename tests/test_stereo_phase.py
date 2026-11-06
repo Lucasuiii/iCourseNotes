@@ -1,6 +1,9 @@
 """Polarity-inverted stereo must not cancel the lecture in the mono downmix (real FFmpeg)."""
 import json
 import math
+import os
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 import shutil
 import subprocess
 import tempfile
@@ -77,6 +80,56 @@ class StereoPhaseTests(unittest.TestCase):
                          ['-af', 'x', '-ac', '1', '-ar', '16000', '-f', 'f32le', 'a.raw'])
         self.assertEqual(downmix_outputs('a.raw'), ['-ac', '1', '-ar', '16000', '-f', 'f32le', 'a.raw'])
         self.assertEqual(resolve_channel_phase(self.dir/'missing.raw'), {'channel_mix': 'mono_downmix'})
+
+
+class CloudPrepareTests(unittest.TestCase):
+    """The production prepare stage keeps the streamed VAD unless the recording is polarity-inverted."""
+
+    def prepare(self, side_samples):
+        from scripts import production_qwen as pipeline
+        from test_qwen_production_pipeline import database
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+                'RUNNER_TEMP': tmp, 'GITHUB_RUN_ID': '99', 'COURSE_SLOT': '0', 'DB_ENCRYPTION_KEY': 'k'*32,
+                'QWEN_PRODUCTION_TASK': 'true', 'AUTO_COURSE_TERMS': 'false', 'PUBLISH_RESULTS': 'false',
+                'SHARD_MODE': 'shared', 'GITHUB_ACTIONS': 'false', 'POOL_ARTIFACTS': 'false'}):
+            root = pipeline.root(); db = database(root/'fixture.db')
+            speech = speech_like(4)
+            raw = root/'source.raw'; (speech*1e-3).astype('<f4').tofile(raw)  # cancelled downmix
+            if side_samples is not None:
+                side_samples.astype('<f4').tofile(side_path(raw))
+            process = MagicMock(); process.poll.return_value = 0; process.returncode = 0
+            handle = SimpleNamespace(path=str(raw), process=process, timeline_preserved=True,
+                                     stderr_chunks=[b'Duration: 00:00:04.00'])
+            scheduler = MagicMock(); scheduler.audio_downloader.get.return_value = handle
+            transcriber = MagicMock(); transcriber.prepare_pcm_stream.return_value = [(0, 4)]
+            transcriber.last_audio_duration = 4; transcriber.last_media_duration = 4
+            transcriber.last_vad_windows = [(0, 4)]; transcriber.last_prepare_stats = {'stream_eof': True}
+            with patch.object(pipeline, 'artifact', return_value=False), \
+                 patch.object(pipeline, 'task_files', return_value=(db, '10', '近代史', {'sub_id': '1', 'date': '2026-11-04'})), \
+                 patch.object(pipeline, 'recover_preparation', return_value=None), \
+                 patch.dict('sys.modules', {'main': SimpleNamespace(login_with_retry=lambda: None),
+                     'src.pipeline.ppt_pipeline': SimpleNamespace(PPTPipeline=MagicMock()),
+                     'src.api.icourse': SimpleNamespace(ICourseClient=MagicMock())}), \
+                 patch('src.runtime.scheduler.Scheduler', return_value=scheduler), \
+                 patch('src.ai.qwen_transcriber.QwenTranscriber', return_value=transcriber), \
+                 patch('scripts.shared_asr_worker.initialize'), patch.object(pipeline, 'write_outputs'):
+                pipeline.prepare()
+            spec = json.loads(pipeline.decode(root/'out'/'prepared.enc', 'prepared')['specification.json'])
+            return spec, transcriber, scheduler, level(raw), Path(side_path(raw)).exists()
+
+    def test_inverted_recording_switches_to_side_and_segments_again(self):
+        spec, transcriber, scheduler, final_level, side_left = self.prepare(speech_like(4)*0.5)
+        self.assertIs(scheduler.audio_downloader.write_side_channel, True)
+        self.assertEqual(spec['audio_diagnostics']['channel_mix'], 'side')
+        self.assertEqual(transcriber.prepare_pcm_stream.call_count, 2)
+        self.assertGreater(final_level, -30); self.assertFalse(side_left)
+        self.assertEqual(spec['mode'], 'sharded')
+
+    def test_normal_recording_keeps_the_streamed_segmentation(self):
+        spec, transcriber, _, final_level, _ = self.prepare(None)
+        self.assertEqual(spec['audio_diagnostics']['channel_mix'], 'mono_downmix')
+        self.assertEqual(transcriber.prepare_pcm_stream.call_count, 1)
+        self.assertLess(final_level, -50)
 
 
 if __name__ == '__main__':

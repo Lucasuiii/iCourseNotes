@@ -15,7 +15,8 @@ class SummarizerPromptTests(unittest.TestCase):
         self.assertIn("补充说明", prompt)
         self.assertIn("原始材料此处不清晰", prompt)
         self.assertIn("Markdown", prompt)
-        self.assertIn("使用 `**...**` 克制地标记", prompt)
+        self.assertIn("使用 `**...**` 适量标记", prompt)
+        self.assertIn("同一术语只在首次出现时标记", prompt)
         self.assertIn("不加粗整句或整段", prompt)
 
     def test_custom_prompt_file_is_loaded(self):

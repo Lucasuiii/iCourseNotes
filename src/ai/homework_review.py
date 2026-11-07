@@ -5,6 +5,22 @@ import re
 MAX_FOCUS = 4
 CUES = re.compile(r'作业|习题|课后题|课后练习|布置|提交|截止|交到|交上来|homework', re.I)
 PAGE_CUES = re.compile(r'[一二三四五六七八九十百零〇两\d]{1,8}\s*页')
+NUMERAL = r'[一二三四五六七八九十百零〇两\d]'
+# End-of-class assignments are often read out as bare problem numbers, e.g.
+# "一、三、四，第二道题我做完了，然后六、八、九、十，第十一题就做一，全做".
+PROBLEM_CUES = re.compile(rf'第\s*{NUMERAL}{{1,4}}\s*(?:道|个)?\s*(?:小)?题')
+PROBLEM_TASK = re.compile(r'做|回去|课后|完成|练习|交')
+LATE_SECONDS = 900
+
+
+def _late_problem_cues(text, matches):
+    """Problem numbers plus a task verb near the end are a capture cue, never proof."""
+    found = []
+    for problem in PROBLEM_CUES.finditer(text):
+        nearby = text[max(0, problem.start()-40):problem.end()+40]
+        if PROBLEM_TASK.search(nearby) and not any(abs(problem.start()-old.start()) < 65 for old in matches):
+            found.append(problem)
+    return found
 
 
 def assignment_candidates(chunks):
@@ -14,15 +30,17 @@ def assignment_candidates(chunks):
     for index, chunk in enumerate(chunks):
         text = str(chunk.get('text') or '')
         matches = list(CUES.finditer(text))
-        # Late announcements may say only "复习一下，开始做做题，一百三十页".
-        # This is a capture cue, never proof that the visible tasks were assigned.
-        if chunk.get('end', 0) >= lecture_end-600:
+        late = chunk.get('end', 0) >= lecture_end-LATE_SECONDS
+        if late:
+            # Late announcements may say only "复习一下，开始做做题，一百三十页".
+            # This is a capture cue, never proof that the visible tasks were assigned.
             for page in PAGE_CUES.finditer(text):
                 nearby = text[max(0, page.start()-80):page.end()+50]
                 if re.search(r'复习|回去|课后|开始做|做做题|完成|练习', nearby):
                     if not any(abs(page.start()-old.start()) < 65 for old in matches):
                         matches.append(page)
-        matches.sort(key=lambda match: match.start())
+            matches += _late_problem_cues(text, matches)
+            matches.sort(key=lambda match: match.start())
         # Nearby cues describe the same announcement, not separate cloud calls.
         last = -100
         for match in matches:
@@ -30,10 +48,16 @@ def assignment_candidates(chunks):
                 continue
             last = match.start()
             a, b = max(0, match.start()-20), min(len(text), match.end()+55)
+            if late and PROBLEM_CUES.fullmatch(match.group()):
+                a, b = max(0, match.start()-60), min(len(text), match.end()+90)  # whole number list
             quote = text[a:b]
-            candidates.append({'id': index, 'quote': quote, 'reason': '作业或课务关键词，核对具体要求',
-                               'cue': match.group(), 'block_start': chunk['start'], 'block_end': chunk['end'],
-                               'alignable': len(quote) >= 8 and text.count(quote) == 1})
+            candidate = {'id': index, 'quote': quote, 'reason': '作业或课务关键词，核对具体要求',
+                         'cue': match.group(), 'block_start': chunk['start'], 'block_end': chunk['end'],
+                         'alignable': len(quote) >= 8 and text.count(quote) == 1}
+            if a < 30 and index and chunks[index-1].get('text'):
+                # An announcement split across blocks: keep the previous block's ending as context only.
+                candidate['lead_in'] = str(chunks[index-1]['text'])[-60:]
+            candidates.append(candidate)
     return candidates
 
 

@@ -37,6 +37,26 @@ class AssignmentEvidenceTests(unittest.TestCase):
                 {'start':5950,'end':6070,'text':'翻到130页看这个定义。'}]
         self.assertEqual(assignment_candidates(chunks),[])
 
+    def test_late_problem_numbers_without_homework_keyword_are_captured_with_lead_in(self):
+        chunks = [{'start': 0, 'end': 120, 'text': '第二道题目啊我们来证明一下这个分块矩阵的秩。'},
+                  {'start': 6147, 'end': 6267, 'text': '好，最后我们到这里。啊，两两下，应该是两四六点左右，然后第四个一。'},
+                  {'start': 6265, 'end': 6303, 'text': '一、三、四啊，因为第二道题我做完了，所以然后六。八、九、十，'
+                                                       '然后第十一题的比较难，十一题就做一，全做。'},
+                  {'start': 6583, 'end': 6603, 'text': '嗯。'}]
+        found = assignment_candidates(chunks)
+        self.assertEqual([c['id'] for c in found], [2])
+        self.assertIn('一、三、四', found[0]['quote']); self.assertIn('十一题就做一', found[0]['quote'])
+        self.assertIn(found[0]['quote'], chunks[2]['text']); self.assertTrue(found[0]['alignable'])
+        self.assertIn('两四六', found[0]['lead_in'])
+        self.assertEqual(prioritize_candidates(found + assignment_candidates(
+            [{'start': 0, 'end': 9, 'text': '你们做作业再写，助教问记号。'}]))[0]['id'], 2)
+
+    def test_problem_number_without_task_or_before_the_end_is_not_assignment(self):
+        chunks = [{'start': 0, 'end': 120, 'text': '下面做第三题，这是一个例题。'},
+                  {'start': 5000, 'end': 5100, 'text': '第三题的结论我们刚才看过了。'},
+                  {'start': 6400, 'end': 6500, 'text': '第三题的结论我们刚才看过了。'}]
+        self.assertEqual(assignment_candidates(chunks), [])
+
     def test_fresh_theory_mode_keeps_images_without_alignment_or_speech_review(self):
         state = {}; saved = []; image_reader = MagicMock(return_value={'status': 'unavailable', 'frames': []})
         with patch('src.ai.qwen_quality.review_quality') as select, \

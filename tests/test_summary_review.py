@@ -40,6 +40,33 @@ class SummaryReviewTests(unittest.TestCase):
         text, _, _, state = audit.draft(self.db, '1', '2', self.material, self.generate)
         return audit.review(self.db, self.summarizer, '1', '2', '概率论', self.material, text, state=state)
 
+    def test_model_json_keeps_latex_backslashes_and_real_escapes(self):
+        # The 38404/747277 review reply: \( is not a JSON escape and failed strict parsing.
+        raw = ('{"verdict":"needs_revision","issues":[{"quote":"q","reason":"可得 \\(A^k=A\\) 对 \\(k\\\\ge1\\) 成立",'
+               '"suggestion":"\\frac{a}{b}、\\theta、\\neq、\\times、\\nabla 保持原样；换行\\n第二行；引号\\"；\\u4e2d"}]}')
+        with self.assertRaises(ValueError):
+            json.loads(raw)
+        issue = audit.loads_model_json(raw)['issues'][0]
+        self.assertEqual(issue['reason'], '可得 \\(A^k=A\\) 对 \\(k\\ge1\\) 成立')
+        self.assertEqual(issue['suggestion'],
+                         '\\frac{a}{b}、\\theta、\\neq、\\times、\\nabla 保持原样；换行\n第二行；引号"；中')
+        self.assertEqual(audit.loads_model_json('{"a":"x\\\\y"}'), {'a': 'x\\y'})
+
+    def test_review_reply_with_latex_parentheses_is_accepted(self):
+        quote = self.text
+        self.response('{"verdict":"needs_revision","issues":[{"quote":"%s","reason":"应为 \\(A^c\\)",'
+                      '"suggestion":"改为 \\(A\\) 的补集"}]}' % quote)
+        state = self.run_review()
+        self.assertEqual(state['status'], 'needs_revision')
+        self.assertEqual(state['result']['issues'][0]['reason'], '应为 \\(A^c\\)')
+
+    def test_corrections_accepted_by_strict_json_still_validate(self):
+        source = '旧文'
+        content = json.dumps({'summary': '新文\tx'})  # strictly parsed: a real tab character
+        self.assertIn('新文\tx', audit._stored_revision(content, source))
+        latex = '{"summary":"新文 \\\\frac"}'
+        self.assertEqual(audit._stored_revision(latex, source)[0], '新文 \\frac')
+
     def test_reported_math_error_keeps_draft_and_blocks_completed_result(self):
         finding = {'category': 'math', 'severity': 'error', 'quote': self.text,
                    'reason': '示性函数小于1对应补集，集合写反。', 'evidence_quote': self.material,

@@ -61,6 +61,39 @@ def digest(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
+# Inside JSON strings, review/revision models write LaTeX such as \( \frac \theta \neq.
+# Strict JSON rejects \( and silently turns \f \t \n \b \r before a letter into control
+# characters, corrupting formulas. A backslash is a JSON escape only for \" \\ \/ \uXXXX
+# or \b \f \n \r \t not followed by a letter; any other backslash is read literally.
+_JSON_ESCAPE = re.compile(r'\\(?:["\\/]|u[0-9a-fA-F]{4}|[bfnrt](?![A-Za-z]))')
+
+
+def loads_model_json(text):
+    if not isinstance(text, str):
+        raise ValueError('Model response is not text')
+    out, i = [], 0
+    while i < len(text):
+        if text[i] == '\\':
+            match = _JSON_ESCAPE.match(text, i)
+            if match:
+                out.append(match.group()); i = match.end(); continue
+            out.append('\\\\'); i += 1; continue
+        out.append(text[i]); i += 1
+    return json.loads(''.join(out))
+
+
+def _stored_revision(content, source):
+    """Corrections accepted before loads_model_json was used were parsed strictly; both readings
+    of the exact stored response remain valid evidence for the published text."""
+    results = []
+    for parse in (loads_model_json, json.loads):
+        try:
+            results.append(validate_revision(parse(content), source))
+        except (ValueError, TypeError):
+            continue
+    return results
+
+
 def read_state(db, sub):
     raw = db.read_meta(PREFIX + str(sub))
     return json.loads(raw) if isinstance(raw, str) and raw else None
@@ -195,7 +228,7 @@ def review(db, summarizer, course, sub, title, material, summary, *, state=None,
             raise ValueError('Incomplete summary review response')
         # Retain the exact completed response before parsing: schema failures
         # remain inspectable without another billable request.
-        value = json.loads(state['response_content'])
+        value = loads_model_json(state['response_content'])
         result = (validate_theory_result(value) if state.get('review_scope') == 'theory'
                   else validate_result(value, summary, material))
         state.update(result=result, status='passed' if result['verdict'] == 'pass' else 'needs_revision')
@@ -304,7 +337,7 @@ def revise(db, summarizer, course, sub, title, material, *, state=None):
         if revision['response_finish_reason'] != 'stop':
             revision['error_code'] = 'incomplete_response'
             raise ValueError('Incomplete summary revision response')
-        corrected = validate_revision(json.loads(revision['response_content']), source)
+        corrected = validate_revision(loads_model_json(revision['response_content']), source)
         revision.update(status='complete', revised_summary=corrected, revised_summary_sha256=digest(corrected),
                         acceptance='complete_correction_without_second_review', second_review_performed=False)
         state.update(status='revised', reviewed_summary=corrected, summary_sha256=digest(corrected))
@@ -346,7 +379,7 @@ def validate_published(state, course, sub, summary, date):
                 or revision.get('response_finish_reason') != 'stop'
                 or revision.get('acceptance') != 'complete_correction_without_second_review'
                 or revision.get('second_review_performed') is not False
-                or validate_revision(json.loads(revision.get('response_content', 'null')), source) != summary):
+                or summary not in _stored_revision(revision.get('response_content', 'null'), source)):
             raise ValueError('Invalid completed summary correction')
     if state['status'] == 'unavailable':
         if state.get('reason') != 'deepseek_not_configured' or state.get('result'):

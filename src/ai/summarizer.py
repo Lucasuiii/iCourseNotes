@@ -189,7 +189,8 @@ class Summarizer:
                         response_format={'type':'json_object'},timeout=600,**options)
                     if not response.choices or response.choices[0].finish_reason!='stop':
                         raise ValueError('Incomplete structured summary')
-                    data=json.loads(response.choices[0].message.content)
+                    from src.pipeline.summary_review import loads_model_json
+                    data=loads_model_json(response.choices[0].message.content)
                     summary=data.get('summary')
                     if not isinstance(summary,str) or not summary.strip():
                         raise ValueError('Empty structured summary')

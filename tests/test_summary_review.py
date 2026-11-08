@@ -52,6 +52,21 @@ class SummaryReviewTests(unittest.TestCase):
                          '\\frac{a}{b}、\\theta、\\neq、\\times、\\nabla 保持原样；换行\n第二行；引号"；中')
         self.assertEqual(audit.loads_model_json('{"a":"x\\\\y"}'), {'a': 'x\\y'})
 
+    def test_newline_before_a_letter_is_a_line_break_not_latex(self):
+        # 40329/701366 correction: a JSON-aware reply ("\\qquad") whose display math starts
+        # "$$\nf(x)" was read as the literal "\nf" and 38 formulas failed to render.
+        raw = ('{"summary":"写成\\n\\n$$\\nf(x)=(2\\\\pi)^{-1}\\ne^{-x}.\\n$$\\n\\n$$\\nE X=\\\\mu,'
+               '\\\\qquad \\\\operatorname{Var}(X)=\\\\sigma^2.\\n$$"}')
+        summary = audit.loads_model_json(raw)['summary']
+        self.assertEqual(summary, '写成\n\n$$\nf(x)=(2\\pi)^{-1}\ne^{-x}.\n$$\n\n$$\nE X=\\mu,'
+                                  '\\qquad \\operatorname{Var}(X)=\\sigma^2.\n$$')
+        self.assertNotIn('\\nf', summary); self.assertNotIn('\\nE', summary)
+        # A reply that never escapes backslashes keeps short commands such as \ne and \nu.
+        self.assertEqual(audit.loads_model_json('{"a":"$x\\ne y$, $\\nu$, $a\\to b$"}'),
+                         {'a': '$x\\ne y$, $\\nu$, $a\\to b$'})
+        # The reading stored with 9836e18 still verifies an accepted correction.
+        self.assertEqual(audit._legacy_loads_model_json(raw)['summary'].count('\\nf'), 1)
+
     def test_review_reply_with_latex_parentheses_is_accepted(self):
         quote = self.text
         self.response('{"verdict":"needs_revision","issues":[{"quote":"%s","reason":"应为 \\(A^c\\)",'

@@ -82,6 +82,19 @@ class AutomaticGlossaryTests(unittest.TestCase):
             self.assertEqual(store.terms(),[])
             db.conn.close()
 
+    def test_summary_reply_with_unescaped_latex_keeps_formulas(self):
+        # Strict JSON turned "\frac" into a form feed and "\theta" into a tab.
+        raw = '{"summary":"### 正态\\n\\n$$\\nf(x)=\\frac{1}{\\sqrt{2\\pi}}e^{-x^2/2},\\ \\theta\\in\\Theta$$","keywords":[]}'
+        client=MagicMock()
+        client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason='stop',message=SimpleNamespace(content=raw))])
+        model=Summarizer.__new__(Summarizer)
+        model.system_prompt='仅输出笔记'; model.providers=[{'name':'deepseek','models':['test']}]
+        model._clients={'deepseek':client}
+        with patch('src.ai.summarizer.enrich_summary',side_effect=lambda s,**kw:s):
+            summary,_,_=model.summarize_with_keywords('课程','材料',{'ppt':[]},[])
+        self.assertEqual(summary, '### 正态\n\n$$\nf(x)=\\frac{1}{\\sqrt{2\\pi}}e^{-x^2/2},\\ \\theta\\in\\Theta$$')
+
     def test_summary_and_keywords_one_request(self):
         client=MagicMock()
         client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(

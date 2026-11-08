@@ -70,12 +70,56 @@ def digest(text):
 # Strict JSON rejects \( and silently turns \f \t \n \b \r before a letter into control
 # characters, corrupting formulas. A backslash is a JSON escape only for \" \\ \/ \uXXXX
 # or \b \f \n \r \t not followed by a letter; any other backslash is read literally.
-_JSON_ESCAPE = re.compile(r'\\(?:["\\/]|u[0-9a-fA-F]{4}|[bfnrt](?![A-Za-z]))')
+_JSON_ESCAPE = re.compile(r'\\(?:["\\/]|u[0-9a-fA-F]{4}|[bfnrt](?![A-Za-z]))')  # legacy reading
+_ESCAPE = re.compile(r'\\(?:["\\/]|u[0-9a-fA-F]{4}|([bfnrt])([A-Za-z]*))')
+# LaTeX commands that begin with a JSON escape letter. Anything else after \b \f \n \r \t
+# (e.g. "\nf(x)", "\nE X" after a display-math line break) is a real JSON escape.
+_LATEX_BFNRT = frozenset("""
+bar beta begin big Big bigg Bigg bigl bigr Bigl Bigr biggl biggr bigcap bigcup bigoplus bigotimes
+bigvee bigwedge binom bmatrix Bmatrix boldsymbol bot bowtie boxed bullet bf
+frac forall flat frown footnotesize
+nabla natural ne neg negthinspace neq nexists ngeq ngtr ni nleq nless nmid nolimits nonumber not
+notin nparallel nsubseteq nsupseteq nu nwarrow newline
+rangle rbrace rbrack rceil Re rfloor rgroup rho right Rightarrow rightarrow rightharpoonup
+rightleftharpoons rightarrowtail rlap rm rmoustache rparen rVert rvert
+tau tbinom text textbf textit textrm textsf texttt textstyle tfrac therefore theta Theta thinspace
+tilde times tiny to top triangle triangledown triangleleft triangleq triangleright
+""".split())
+# Short commands that read just as naturally as a newline/tab + a word in a reply that
+# escapes its own backslashes ("\ne^{...}" after a line break).
+_AMBIGUOUS = frozenset({'ne', 'ni', 'nu', 'to', 'bf', 'rm', 'Re'})
 
 
 def loads_model_json(text):
+    r"""Parse a model's JSON reply without corrupting unescaped LaTeX.
+
+    Models often forget to escape LaTeX backslashes (\(, \frac, \theta). An invalid
+    escape is kept literally; \b \f \n \r \t followed by letters is kept literally only
+    when it spells a LaTeX command. A reply that escapes backslashes itself (contains
+    \\) is treated as JSON-aware, so short ambiguous commands there are escapes.
+    """
     if not isinstance(text, str):
         raise ValueError('Model response is not text')
+    aware = '\\\\' in text
+    out, i = [], 0
+    while i < len(text):
+        if text[i] == '\\':
+            match = _ESCAPE.match(text, i)
+            if match and match.group(1):
+                word = match.group(1)+match.group(2)
+                latex = bool(match.group(2)) and word in _LATEX_BFNRT and not (aware and word in _AMBIGUOUS)
+                if latex:
+                    out.append('\\\\'+word); i = match.end(); continue
+                out.append('\\'+match.group(1)); i += 2; continue
+            if match:
+                out.append(match.group()); i = match.end(); continue
+            out.append('\\\\'); i += 1; continue
+        out.append(text[i]); i += 1
+    return json.loads(''.join(out))
+
+
+def _legacy_loads_model_json(text):
+    r"""The 9836e18 reading, kept only to verify corrections stored with it."""
     out, i = [], 0
     while i < len(text):
         if text[i] == '\\':
@@ -88,10 +132,10 @@ def loads_model_json(text):
 
 
 def _stored_revision(content, source):
-    """Corrections accepted before loads_model_json was used were parsed strictly; both readings
-    of the exact stored response remain valid evidence for the published text."""
+    """Every reading this code has used for the exact stored response remains valid
+    evidence for text accepted with it (strict, 9836e18 legacy, current)."""
     results = []
-    for parse in (loads_model_json, json.loads):
+    for parse in (loads_model_json, _legacy_loads_model_json, json.loads):
         try:
             results.append(validate_revision(parse(content), source))
         except (ValueError, TypeError):

@@ -18,6 +18,10 @@ class SummarizerPromptTests(unittest.TestCase):
         self.assertIn("使用 `**...**` 适量标记", prompt)
         self.assertIn("同一术语只在首次出现时标记", prompt)
         self.assertIn("不加粗整句或整段", prompt)
+        self.assertIn("按教师实际采用的方法复原", prompt)
+        self.assertIn("不得改用另一种证明", prompt)
+        self.assertIn("材料中未清晰展开", prompt)
+        self.assertIn("是否沿用了课堂的方法", prompt)
 
     def test_custom_prompt_file_is_loaded(self):
         with tempfile.TemporaryDirectory() as tmp:

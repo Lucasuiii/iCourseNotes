@@ -102,7 +102,9 @@ def gather(runtime):
                 homework_vision_image_count=sum(c.get('image_count', 0) for c in review.get('homework', {}).get('vision_calls', [])),
                 missing_intervals=missing_intervals,
                 asr_missing_seconds=coverage['missing_seconds'] if coverage else 0,
-                asr_missing_limit_seconds=SHORT_GAP_LIMIT_SECONDS,
+                asr_missing_limit_seconds=coverage['limit_seconds'] if coverage else SHORT_GAP_LIMIT_SECONDS,
+                asr_gap_policy=coverage['policy'] if coverage else None,
+                asr_gap_blocks=coverage.get('gap_blocks') if coverage else None,
                 asr_integrity_passed=bool(material and (material.get('recognition_coverage') or {}).get('accepted', material.get('complete'))),
                 asr_gap_tolerated=bool(material and not material.get('complete') and (material.get('recognition_coverage') or {}).get('accepted')),
                 asr_complete=bool(material and material.get('complete') and not missing_intervals))

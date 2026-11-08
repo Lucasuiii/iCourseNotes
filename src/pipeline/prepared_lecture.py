@@ -4,7 +4,7 @@ import hashlib
 import math
 from src.pipeline.qwen_plan import validate_plan, validate_result, fingerprint
 from src.ai.qwen_segmentation import deduplicated_chunk_rows
-from src.pipeline.recognition_coverage import recognition_coverage, SHORT_GAP_POLICY
+from src.pipeline.recognition_coverage import recognition_coverage, TOLERANT_POLICIES
 
 
 def assemble_material(plan, results, *, audio_path=None, media_seconds=None, allow_short_missing=False):
@@ -60,8 +60,9 @@ def validate_material(material, course_id, sub_id):
             or not isinstance(material.get('recognition_terms'), list)):
         raise ValueError('Invalid prepared lecture identity or material')
     coverage = material.get('recognition_coverage')
+    stored = coverage.get('policy') if isinstance(coverage, dict) else None
     actual = recognition_coverage(material['full_chunks'],
-        allow_short_missing=bool(coverage and coverage.get('policy') == SHORT_GAP_POLICY))
+        policy=stored if stored in TOLERANT_POLICIES else 'strict')
     if (not actual['accepted'] or material.get('complete') is not actual['complete']
             or (coverage is not None and coverage != actual)):
         raise ValueError('Invalid prepared recognition coverage')

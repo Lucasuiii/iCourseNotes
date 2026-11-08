@@ -77,3 +77,57 @@ class ShortRecognitionGapTests(unittest.TestCase):
         with self.assertRaises(ValueError):validate_audio_duration(100,600)
         plan,results=with_gaps({0:[(10,11)]})
         with self.assertRaisesRegex(ValueError,'audio'):assemble_material(plan,results,media_seconds=1800,allow_short_missing=True)
+
+
+def lecture_rows(gaps_by_block, *, blocks=80, seconds=120.0):
+    """A long lecture: each listed block keeps text around one missing interval."""
+    rows = []
+    for n in range(blocks):
+        start, end = n*seconds, (n+1)*seconds
+        row = dict(chunk_id=n, start=start, end=end, text='课堂内容。', quality_state='recognized')
+        if n in gaps_by_block:
+            a, b = start+gaps_by_block[n][0], start+gaps_by_block[n][1]
+            parts = [p for p in (dict(start=start, end=a, text='前文。'), dict(start=b, end=end, text='后文。'))
+                     if p['end'] > p['start']]
+            row.update(text='\n'.join(p['text'] for p in parts), recognized_segments=parts,
+                       quality_state='missing_audio', missing_intervals=[dict(start=a, end=b, error_code='retry_timeout')])
+        rows.append(row)
+    return rows
+
+
+class LimitedBlockGapTests(unittest.TestCase):
+    def test_few_failed_blocks_in_a_long_lecture_reach_the_summary(self):
+        from src.pipeline.recognition_coverage import LIMITED_GAP_POLICY, missing_recognition_notice
+        # 9/16 shape: start of class, the break and its neighbour, 178 s in a 9600 s lecture.
+        coverage = recognition_coverage(lecture_rows({0: (0, 87.7), 29: (5, 65), 30: (0, 30.3)}), allow_short_missing=True)
+        self.assertTrue(coverage['accepted']); self.assertFalse(coverage['complete'])
+        self.assertEqual((coverage['policy'], coverage['gap_blocks'], coverage['limit_seconds']), (LIMITED_GAP_POLICY, 3, 288.0))
+        self.assertIn('178 秒语音未识别', missing_recognition_notice(coverage))
+
+    def test_more_blocks_or_more_time_still_stop_before_summary(self):
+        for gaps in ({0: (0, 20), 10: (0, 20), 20: (0, 20), 30: (0, 20)},      # four blocks
+                     {0: (0, 120), 1: (0, 120), 2: (0, 60)},                   # 300 s > 3 % of 9600 s
+                     ):
+            with self.subTest(gaps=gaps):
+                self.assertFalse(recognition_coverage(lecture_rows(gaps), allow_short_missing=True)['accepted'])
+        self.assertFalse(recognition_coverage(lecture_rows({0: (0, 20)}))['accepted'])  # strict callers unchanged
+
+    def test_absolute_cap_and_short_rule_still_apply(self):
+        long = lecture_rows({0: (0, 120), 1: (0, 120), 2: (0, 70)}, blocks=200)   # 310 s of 24000 s
+        self.assertFalse(recognition_coverage(long, allow_short_missing=True)['accepted'])
+        many = lecture_rows({0: (0, 3), 10: (0, 3), 20: (0, 3), 30: (0, 3)})       # 12 s in four blocks
+        self.assertTrue(recognition_coverage(many, allow_short_missing=True)['accepted'])
+
+    def test_stored_reports_are_rechecked_under_their_own_policy(self):
+        from src.pipeline.recognition_coverage import validate_coverage_report, SHORT_GAP_POLICY
+        rows = lecture_rows({0: (0, 60), 29: (0, 40)})
+        plan = {'blocks': [dict(chunk_id=r['chunk_id'], start=r['start'], end=r['end']) for r in rows]}
+        current = recognition_coverage(rows, allow_short_missing=True)
+        self.assertEqual(validate_coverage_report(plan, copy.deepcopy(current)), current)
+        old = recognition_coverage(rows, policy=SHORT_GAP_POLICY)
+        self.assertFalse(old['accepted'])
+        with self.assertRaises(ValueError):
+            validate_coverage_report(plan, dict(old, accepted=True))
+        forged = dict(current, gap_blocks=1)
+        with self.assertRaises(ValueError):
+            validate_coverage_report(plan, forged)

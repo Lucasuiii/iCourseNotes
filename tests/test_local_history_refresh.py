@@ -303,6 +303,23 @@ class LocalHistoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'full review pipeline'):
             runtime.candidate_files(self.store,self.targets[0])
 
+    def test_candidate_from_an_older_gap_policy_still_validates(self):
+        # A policy change between recognition and review must not stop finished work.
+        from src.pipeline.recognition_coverage import recognition_coverage, SHORT_GAP_POLICY
+        path = self.candidate(self.targets[0])
+        state = self.store.read('10-1.enc')
+        old = recognition_coverage(state['rows'], policy=SHORT_GAP_POLICY)
+        state['recognition_coverage'] = old; self.store.save('10-1.enc', state)
+        with sqlite3.connect(path) as conn:
+            raw = json.loads(conn.execute('SELECT value FROM meta WHERE key=?', ('qwen_pipeline:1',)).fetchone()[0])
+            raw['recognition_coverage'] = old
+            conn.execute('UPDATE meta SET value=? WHERE key=?', (json.dumps(raw), 'qwen_pipeline:1'))
+        runtime.candidate_files(self.store, self.targets[0])
+        for forged in (dict(old, missing_seconds=1.0), dict(old, policy='unknown_policy')):
+            state['recognition_coverage'] = forged; self.store.save('10-1.enc', state)
+            with self.subTest(forged=forged['policy']), self.assertRaises(ValueError):
+                runtime.candidate_files(self.store, self.targets[0])
+
     def test_theory_scope_is_frozen_and_optional_figure_failure_does_not_block(self):
         self.candidate(self.targets[0])
         self.manifest.update(cloud_review=True, review_scope='theory', review_runtime=None)

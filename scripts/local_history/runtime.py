@@ -130,8 +130,15 @@ def candidate_files(store, target):
                 'chunks': [r for r in rows if r['chunk_id'] in s['chunk_ids']]}
                for s in spec['plan']['shards']]
     material = assemble_material(spec['plan'], results, media_seconds=spec.get('media_seconds'), allow_short_missing=True)
-    if state.get('recognition_coverage') is not None and state['recognition_coverage'] != material['recognition_coverage']:
-        raise ValueError('Candidate recognition coverage changed')
+    stored = state.get('recognition_coverage')
+    if stored is not None:
+        # Recheck under the policy the candidate was produced with; a later
+        # policy change must not invalidate (or silently relabel) finished work.
+        from src.pipeline.recognition_coverage import recognition_coverage
+        actual = recognition_coverage(material['full_chunks'], policy=stored.get('policy'))
+        if stored != actual or not actual['accepted']:
+            raise ValueError('Candidate recognition coverage changed')
+        material['recognition_coverage'] = actual
     if review.get('error_type') or review.get('material', {}).get('uncertain_calls'):
         raise ValueError('Candidate review has an unresolved failure')
     manifest = store.read('manifest.enc')

@@ -18,7 +18,7 @@ def validate_ledger(state):
             or len(set(identities)) != len(identities)
             or any(not 0 < i['seconds'] <= 60
                    or abs(i['seconds']-(i['interval']['end_ms']-i['interval']['start_ms'])/1000) > 1e-6
-                   or i['status'] not in ('reserved', 'complete', 'failed') for i in attempts)
+                   or i['status'] not in ('reserved', 'complete', 'failed', 'no_speech') for i in attempts)
             or abs(state.get('seconds', 0)-seconds) > 1e-6):
         raise ValueError('Invalid whole-lecture cloud quota checkpoint')
     calls = state.get('homework', {}).get('vision_calls', [])

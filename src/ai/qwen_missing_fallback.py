@@ -50,6 +50,10 @@ def _valid_segments(segments, interval):
 def repair_missing(plan, results, audio_path, state, checkpoint, *, api_key):
     """Use <=30s gap clips within the existing 900s/40-call whole-lecture ledger.
 
+    A clip Doubao answers with no utterances is recorded as no_speech: the gap is
+    closed with empty text and spending continues. Transport/service errors still
+    stop all further fallback for the lecture.
+
     Reservation is checkpointed before submission. Failed/unknown submissions
     never refund quota or replay. Successful responses survive gather retries.
     Requests round outwards to milliseconds; logical row boundaries stay exact.
@@ -107,12 +111,18 @@ def repair_missing(plan, results, audio_path, state, checkpoint, *, api_key):
                         try:
                             rescues, used, failed = rescue_intervals_pcm(audio_path, api_key, [interval],
                                 max_seconds=seconds, max_clips=1, hotwords=plan['recognition_terms'])
-                            segments = rescues[0][1] if len(rescues) == 1 and rescues[0][0] == interval else []
-                            valid = not failed and abs(used-seconds) < 1e-6 and _valid_segments(segments, interval)
+                            answered = (not failed and abs(used-seconds) < 1e-6
+                                        and len(rescues) == 1 and rescues[0][0] == interval)
+                            segments = rescues[0][1] if answered else []
+                            valid = answered and _valid_segments(segments, interval)
+                            # A completed request with no utterances is an explicit "no speech" answer
+                            # (breaks, before/after class), not an unavailable service.
+                            silent = answered and segments == []
                         except Exception:
-                            segments, valid = [], False
-                        item.update(status='complete' if valid else 'failed', segments=segments if valid else [])
-                        if not valid:
+                            segments, valid, silent = [], False, False
+                        item.update(status='complete' if valid else 'no_speech' if silent else 'failed',
+                                    segments=segments if valid else [])
+                        if not (valid or silent):
                             state['failed'] = True  # Stop further spending on an unavailable service.
                         checkpoint()
                         print(f'[Doubao fallback] Clip {len(attempts)} {item["status"]}.', flush=True)
@@ -122,6 +132,10 @@ def repair_missing(plan, results, audio_path, state, checkpoint, *, api_key):
                         parts.append({'start': start, 'end': end,
                                       'text': ' '.join(s['text'] for s in item['segments']),
                                       'source': 'doubao_fallback'})
+                    elif item is not None and item['status'] == 'no_speech':
+                        if item.get('segments') != []:
+                            raise ValueError('Invalid cached no-speech response')
+                        parts.append({'start': start, 'end': end, 'text': '', 'source': 'doubao_no_speech'})
                     else:
                         remaining.append(dict(gap, start=start, end=end))
                     start = end

@@ -89,6 +89,7 @@ def gather(runtime):
                 fallback_completed_clips=sum(a['interval'].get('kind') == 'missing_asr' and a['status'] == 'complete' for a in review.get('attempts', [])),
                 fallback_uncertain_clips=sum(a['interval'].get('kind') == 'missing_asr' and a['status'] == 'reserved' for a in review.get('attempts', [])),
                 fallback_failed_clips=sum(a['interval'].get('kind') == 'missing_asr' and a['status'] == 'failed' for a in review.get('attempts', [])),
+                fallback_no_speech_clips=sum(a['interval'].get('kind') == 'missing_asr' and a['status'] == 'no_speech' for a in review.get('attempts', [])),
                 homework_candidates=len(review.get('homework', {}).get('candidates', [])),
                 homework_deferred=review.get('homework', {}).get('deferred_count', 0),
                 homework_clips=sum(a['interval'].get('kind') == 'homework' for a in review.get('attempts', [])),

@@ -358,7 +358,7 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
             save()
         material['official_support'] = spec['official_support']
         review = state['review']
-        failures = [a for a in review.get('attempts', []) if a['status'] != 'complete']
+        failures = [a for a in review.get('attempts', []) if a['status'] not in ('complete', 'no_speech')]
         retained_missing = (not material['complete'] and material['recognition_coverage']['accepted']
                             and failures and review.get('failed')
                             and all(a['status'] == 'failed' and a['interval'].get('kind') == 'missing_asr'

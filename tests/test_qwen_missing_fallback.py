@@ -88,7 +88,7 @@ class MissingFallbackTests(unittest.TestCase):
     def test_failed_empty_misaligned_or_partial_response_retains_gaps(self):
         plan,results=fixture()
         i={'start_ms':0,'end_ms':4000,'kind':'missing_asr'}
-        bad=[([],4,True), ([(i,[])],4,False), ([(i,[dict(start_ms=0,end_ms=5000,text='bad')])],4,False),
+        bad=[([],4,True), ([(i,[])],0,False), ([(i,[dict(start_ms=0,end_ms=5000,text='bad')])],4,False),
              ([(i,[dict(start_ms=0,end_ms=4000,text='partial')])],0,False),
              ([(dict(i,end_ms=3000),[dict(start_ms=0,end_ms=3000,text='bad')])],4,False)]
         for result in bad:
@@ -99,6 +99,37 @@ class MissingFallbackTests(unittest.TestCase):
             self.assertEqual(call.call_count,1);self.assertFalse(repaired[0]['complete'])
             self.assertEqual(state['attempts'][0]['status'],'failed');self.assertEqual(state['seconds'],4)
             self.assertEqual(repaired[0]['chunks'][0]['text'],'')
+
+    def test_explicit_no_speech_closes_gap_and_keeps_fallback_running(self):
+        # Breaks and after-class audio: Qwen loops, Doubao answers with no utterances.
+        plan,results=fixture(spans=((0,4),(4,8)));state={};calls=[]
+        def cloud(path,key,intervals,**kwargs):
+            interval=intervals[0];calls.append(interval['start_ms'])
+            seconds=(interval['end_ms']-interval['start_ms'])/1000
+            if interval['start_ms']==0:
+                return [(interval,[])],seconds,False
+            return [(interval,[dict(start_ms=interval['start_ms'],end_ms=interval['end_ms'],text='课后讲话')])],seconds,False
+        with patch('src.ai.qwen_missing_fallback.rescue_intervals_pcm',side_effect=cloud):
+            repaired=repair_missing(plan,results,'local.raw',state,lambda:None,api_key='fake')
+        self.assertEqual(calls,[0,4000]);self.assertFalse(state.get('failed'))
+        self.assertEqual([a['status'] for a in state['attempts']],['no_speech','complete'])
+        rows={r['chunk_id']:r for result in repaired for r in result['chunks']}
+        self.assertEqual((rows[0]['text'],rows[0]['missing_intervals'],rows[0]['quality_state']),('',[],'doubao_fallback'))
+        self.assertEqual(rows[0]['recognized_segments'][0]['source'],'doubao_no_speech')
+        self.assertEqual(rows[1]['text'],'课后讲话')
+        for result in repaired: validate_result(plan,result,result['shard_id'],require_complete=True)
+        self.assertTrue(assemble_material(plan,repaired)['complete']);validate_ledger(state)
+        with patch('src.ai.qwen_missing_fallback.rescue_intervals_pcm') as again:
+            self.assertEqual(repair_missing(plan,results,'local.raw',json.loads(json.dumps(state)),lambda:None,api_key='fake'),repaired)
+        again.assert_not_called()
+
+    def test_cached_no_speech_with_text_is_rejected(self):
+        plan,results=fixture();state={}
+        with patch('src.ai.qwen_missing_fallback.rescue_intervals_pcm',side_effect=lambda p,k,i,**kw:([(i[0],[])],4,False)):
+            repair_missing(plan,results,'local.raw',state,lambda:None,api_key='fake')
+        state['attempts'][0]['segments']=[dict(start_ms=0,end_ms=4000,text='伪造')]
+        with self.assertRaises(ValueError):
+            repair_missing(plan,results,'local.raw',state,lambda:None,api_key='fake')
 
     def test_shared_seconds_and_clip_caps_are_never_reset(self):
         plan,results=fixture()

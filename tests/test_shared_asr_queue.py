@@ -52,6 +52,28 @@ class MemoryStore:
 
 
 class SharedQueueTests(unittest.TestCase):
+    def test_lost_swaps_back_off_before_retrying_and_eventually_give_up(self):
+        # 2026-11-08: four Runners exhausted 16 immediate retries and one died with its claim.
+        from src.pipeline import asr_queue
+        plan = plan_for(1)
+        class Contended(MemoryStore):
+            def __init__(self, state, losses):
+                super().__init__(state); self.losses = losses
+            def compare_and_swap(self, previous, state):
+                if self.losses:
+                    self.losses -= 1; return False
+                return super().compare_and_swap(previous, state)
+        pauses = []
+        queue = SharedQueue(plan, Contended(initial_queue(plan), 9), sleep=pauses.append, jitter=lambda a, b: b)
+        self.assertIsNotNone(queue.claim('one', 1))
+        self.assertEqual(pauses, [1.0, 2.0, 4.0, 8.0, 16.0, 20.0, 20.0, 20.0, 20.0])
+        pauses.clear()
+        queue = SharedQueue(plan, Contended(initial_queue(plan), 10**6), sleep=pauses.append, jitter=lambda a, b: a)
+        with self.assertRaisesRegex(RuntimeError, 'retry budget'):
+            queue.claim('one', 1)
+        self.assertEqual(len(pauses), asr_queue.CONFLICT_ATTEMPTS-1)
+        self.assertLess(sum(pauses), 600)
+
     def test_capacity_depends_on_pending_audio_and_global_reservation(self):
         for minutes, count in [(0, 0), (10, 1), (40, 2), (60, 2), (80, 3), (180, 3)]:
             plan = plan_for(minutes) if minutes else build_audio_plan({
@@ -64,7 +86,8 @@ class SharedQueueTests(unittest.TestCase):
     def test_concurrent_fast_worker_claims_more_blocks_without_duplicates(self):
         plan = plan_for(); store = MemoryStore(initial_queue(plan)); seen = []; lock = threading.Lock()
         def worker(n):
-            queue = SharedQueue(plan, store)
+            # Conflict pauses scaled down so decode time, not backoff, decides who claims more.
+            queue = SharedQueue(plan, store, sleep=lambda s: time.sleep(s/1000))
             while True:
                 claim = queue.claim(f'worker{n}', 1)
                 if claim is None: return

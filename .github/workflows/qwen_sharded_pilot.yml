@@ -116,7 +116,7 @@ jobs:
         python -m pip install requests pycryptodome cryptography
         if [ "$PREPARE_MODE" = private_latest ] && [ "$REUSE_SHARDED_RUN_ID" = '' ]; then
           python -m pip install numpy sherpa-onnx
-          curl -fsSL https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx -o "$RUNNER_TEMP/silero_vad.onnx"
+          curl -fsSL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 --max-time 300 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx -o "$RUNNER_TEMP/silero_vad.onnx"
         fi
         if ! command -v ffmpeg >/dev/null; then
           sudo apt-get update

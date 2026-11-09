@@ -5,6 +5,8 @@ may reclaim old unfinished claims only after the prior attempt has ended.
 """
 import copy
 import math
+import random
+import time
 import uuid
 from src.pipeline.qwen_plan import fingerprint, validate_plan, validate_result, validate_block_row, incomplete_row
 
@@ -56,12 +58,22 @@ def validate_queue(plan, state):
             raise ValueError('Invalid queue status')
 
 
+# Several Runners push one git ref; a lost compare-and-swap is retried after a
+# randomized, growing pause so concurrent writers spread out instead of colliding
+# again immediately (up to about 8 minutes in all before giving up).
+CONFLICT_ATTEMPTS = 40
+CONFLICT_PAUSE_CAP = 20.0
+
+
 class SharedQueue:
-    def __init__(self, plan, store):
+    def __init__(self, plan, store, *, sleep=time.sleep, jitter=random.uniform):
         self.plan, self.store = plan, store
+        self._sleep, self._jitter = sleep, jitter
 
     def change(self, operation):
-        for _ in range(16):
+        for attempt in range(CONFLICT_ATTEMPTS):
+            if attempt:
+                self._sleep(min(CONFLICT_PAUSE_CAP, 0.5*2**min(attempt, 6)) * self._jitter(0.5, 1.0))
             version, state = self.store.read()
             if state is None:
                 raise ValueError('Queue checkpoint missing; cannot reset it in a worker')

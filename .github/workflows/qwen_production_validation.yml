@@ -204,7 +204,7 @@ jobs:
         python -m pip install cryptography pycryptodome numpy soundfile sherpa-onnx
         sudo apt-get update
         sudo apt-get install -y ffmpeg
-        curl --fail --silent --show-error --location -o silero_vad.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+        curl --fail --silent --show-error --location --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 --max-time 300 -o silero_vad.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
     - run: python -m scripts.production_audio_inspection
     - uses: actions/upload-artifact@v4
       with:

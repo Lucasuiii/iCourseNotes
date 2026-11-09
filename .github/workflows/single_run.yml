@@ -55,7 +55,7 @@ jobs:
         key: qwen-asr-1.7b-7278e1e-forced-aligner-c7cbfc20-cpu-v1
     - name: Download ASR models
       if: steps.cache-models.outputs.cache-hit != 'true'
-      run: wget -q https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+      run: wget -q --tries=6 --waitretry=15 --retry-on-http-error=429,500,502,503,504 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
     - name: Cache RapidOCR models
       uses: actions/cache@v4
       with:

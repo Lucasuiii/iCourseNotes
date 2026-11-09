@@ -14,6 +14,7 @@ sherpa-onnx-sense-voice-*/
 sherpa-onnx-fire-red-*/
 sherpa-onnx-zipformer-*/
 silero_vad.onnx
+!assets/models/silero_vad.onnx
 vosk-model-*/
 
 # IDE & misc

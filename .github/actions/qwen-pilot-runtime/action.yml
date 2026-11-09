@@ -22,7 +22,7 @@ runs:
       sudo apt-get update
       sudo apt-get install -y ffmpeg fonts-noto-cjk libpango-1.0-0 libcairo2
       if [ ! -f silero_vad.onnx ]; then
-        curl --fail --silent --show-error --location --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 --max-time 300 -o silero_vad.onnx https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+        scripts/install_vad_model.sh silero_vad.onnx
       fi
   - uses: ./.github/actions/qwen-cpu-model
     if: inputs.inference == 'true'

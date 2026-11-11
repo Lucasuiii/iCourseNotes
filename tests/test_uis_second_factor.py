@@ -14,7 +14,8 @@ from src.api.webvpn import AuthenticationError, totp
 response = fixtures.response
 SEED = base64.b32encode(b'12345678901234567890').decode()  # RFC 6238 SHA-1 test key
 SECOND = {'code': 200, 'message': 'private-ok', 'loginToken': None, 'second': True, 'pageLevelNo': 2,
-          'authChainCode': 'private-second-chain', 'moduleCodes': ['qr', 'userAndMail', 'userAndSms', 'userAndOtp'],
+          'authChainCode': 'private-second-chain', 'requestNumber': 'private-request', 'userName': 'private-user',
+          'moduleCodes': ['qr', 'userAndMail', 'userAndSms', 'userAndOtp'],
           'mobile': 'private-mobile', 'mail': 'private-mail'}
 
 
@@ -49,7 +50,8 @@ class SecondFactorFlowTests(unittest.TestCase):
         self.assertEqual(body['authChainCode'], 'private-second-chain')
         self.assertEqual({k: body[k] for k in ('lck', 'entityId', 'requestType')},
                          {k: first.kwargs['json'][k] for k in ('lck', 'entityId', 'requestType')})
-        self.assertEqual(body['authPara'], {'loginName': 'private-student', 'otpCode': '123456', 'verifyCode': ''})
+        self.assertEqual(body['requestNumber'], 'private-request')
+        self.assertEqual(body['authPara'], {'loginName': 'private-user', 'otpCode': '123456'})
         audit = json.dumps(vpn.auth_diagnostics)
         self.assertNotIn('private', audit); self.assertNotIn('123456', audit)
         self.assertTrue(any(x.get('second_factor') and x.get('otp_offered') for x in vpn.auth_diagnostics))

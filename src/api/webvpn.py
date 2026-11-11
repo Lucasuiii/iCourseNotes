@@ -915,14 +915,17 @@ class WebVPNSession:
                 raise AuthenticationError('second_factor_required')
             self.auth_phase = phase
             print("    Second factor: submitting authenticator code")
+            # Mirrors the IDP second page: requestNumber and userName come from the
+            # previous reply; verifyCode is sent only when a picture code is demanded.
             payload = {
                 "authModuleCode": "userAndOtp",
                 "authChainCode": level.get("authChainCode", ""),
                 "entityId": entity_id,
+                "requestNumber": level.get("requestNumber", ""),
                 "requestType": request_type,
                 "lck": lck,
-                "authPara": {"loginName": student_id,
-                             "otpCode": totp(config.UIS_OTP_SECRET), "verifyCode": ""},
+                "authPara": {"loginName": level.get("userName") or student_id,
+                             "otpCode": totp(config.UIS_OTP_SECRET)},
             }
             resp = self.session.post(url, json=payload, headers=headers, timeout=60)
             level = self._auth_json(resp)

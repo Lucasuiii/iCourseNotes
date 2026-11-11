@@ -305,23 +305,30 @@ class SummaryFiguresTests(unittest.TestCase):
         self.assertIn('画面可见部分', selected[-1]['caption'])
         self.assertIsNot(selected[-1].get('homework_complete'), True)
 
-    def test_homework_frame_filed_under_a_lecture_section_moves_to_the_reminder(self):
+    def test_homework_frame_filed_under_a_lecture_section_is_also_shown_in_the_reminder(self):
         # 38404/747288: the end-of-class board (P58 list plus the last topic) was captioned
         # as lecture content under section 9, so the reminder had no image.
+        import base64, io
+        from PIL import Image
         summary = '### 课程事项提醒\n\n#### 作业与课务\n\n教材第58页第1(2)题。\n\n### 交空间与和空间\n\n正文。\n'
-        frame = self.homework_frame()
         refs = [{'text': '58页', 'page': 58, 'legible': True}, {'text': '第1(2)题', 'page': 58, 'legible': True}]
         candidate = dict(self.image, candidate_id='cue', references=refs)
         rows = figures.sections(summary)
         lecture = next(r['id'] for r in rows if '交空间' in r['title'])
         misplaced = [dict(candidate, section_id=lecture, caption='板书展示交空间与和空间的定义', kind='homework'),
-                     dict(self.image, id='9'*64, section_id=lecture, kind='diagram')]
+                     dict(self.image, id='9'*64, section_id=lecture, kind='diagram', caption='正文示意图')]
         chosen = figures.prefer_homework_selection(misplaced, [candidate], rows, summary)
-        homework = [f for f in chosen if f['id'] == candidate['id']]
-        self.assertEqual(len(homework), 1)
-        self.assertEqual(homework[0]['section_id'], 1)
-        self.assertIn('58页', homework[0]['caption']); self.assertIn('第1(2)题', homework[0]['caption'])
-        self.assertIn('9'*64, [f['id'] for f in chosen])
+        self.assertEqual(chosen[:2], misplaced)
+        copy = chosen[2]
+        self.assertEqual((copy['section_id'], copy['placement_copy_of'], copy['seconds']), (1, candidate['id'], candidate['seconds']))
+        self.assertNotEqual(copy['id'], candidate['id'])
+        self.assertIn('58页', copy['caption']); self.assertIn('第1(2)题', copy['caption'])
+        pixels = lambda f: Image.open(io.BytesIO(base64.b64decode(f['data']))).convert('RGB').tobytes()
+        self.assertEqual(pixels(copy), pixels(candidate))
+        state = {'schema': 1, 'sub_id': '2', 'status': 'complete', 'figures': [chosen[0], copy]}
+        figures.validate_assets(state, '2')
+        text = figures.insert_figures(summary, chosen)
+        self.assertEqual(text.count('#icourse-figure-'), 3)
         placed = [dict(candidate, section_id=1, caption='作业板书', kind='homework')]
         self.assertEqual(figures.prefer_homework_selection(placed, [candidate], rows, summary), placed)
         self.assertIn('作业板书的图放进作业所在章节', figures.PROMPT)

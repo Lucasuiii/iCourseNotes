@@ -309,11 +309,26 @@ def validate_selection(value, candidates, section_rows, rejected=None):
     return accepted
 
 
+def placement_copy(image):
+    """Same decoded pixels under a new id, so one frame can illustrate two sections.
+
+    A JPEG comment segment is inserted after SOI; image data, size and time are unchanged.
+    """
+    data = base64.b64decode(image['data'], validate=True)
+    if not data.startswith(b'\xff\xd8'):
+        raise ValueError('Invalid figure payload')
+    note = b'icourse placement copy: homework'
+    copy = data[:2] + b'\xff\xfe' + (len(note)+2).to_bytes(2, 'big') + note + data[2:]
+    return dict(image, id=hashlib.sha256(copy).hexdigest(), data=base64.b64encode(copy).decode(),
+                placement_copy_of=image['id'])
+
+
 def prefer_homework_selection(figures, candidates, section_rows, summary):
     """Reserve one place in the homework section when clear references were read.
 
-    If the chosen frame was already placed under another section, it moves to the
-    homework section with a caption listing the legible page and problem labels.
+    If the chosen frame was already placed under another section, it stays there and a
+    pixel-identical copy is added to the homework section, captioned with the legible
+    page and problem labels.
 
     This only illustrates visible board text. It does not upgrade evidence,
     infer assignment status, or label the entire list as complete.
@@ -344,8 +359,11 @@ def prefer_homework_selection(figures, candidates, section_rows, summary):
         row = {'image_id': candidate['id'], 'section_id': section, 'caption': caption[:100],
                'visible_evidence': '、'.join(labels)[:300], 'kind': 'homework', 'legible': True}
         selected = validate_selection({'figures': [row]}, candidates, section_rows)[0]
-        remaining = [f for f in figures if f['id'] != selected['id']]
-        return remaining + [selected]
+        if any(f['id'] == selected['id'] for f in figures):
+            # Keep it where the model placed it (it also shows lecture content) and
+            # add a pixel-identical copy to the homework section.
+            selected = placement_copy(selected)
+        return figures + [selected]
     return figures
 
 

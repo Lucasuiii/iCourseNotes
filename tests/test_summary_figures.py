@@ -305,6 +305,27 @@ class SummaryFiguresTests(unittest.TestCase):
         self.assertIn('画面可见部分', selected[-1]['caption'])
         self.assertIsNot(selected[-1].get('homework_complete'), True)
 
+    def test_homework_frame_filed_under_a_lecture_section_moves_to_the_reminder(self):
+        # 38404/747288: the end-of-class board (P58 list plus the last topic) was captioned
+        # as lecture content under section 9, so the reminder had no image.
+        summary = '### 课程事项提醒\n\n#### 作业与课务\n\n教材第58页第1(2)题。\n\n### 交空间与和空间\n\n正文。\n'
+        frame = self.homework_frame()
+        refs = [{'text': '58页', 'page': 58, 'legible': True}, {'text': '第1(2)题', 'page': 58, 'legible': True}]
+        candidate = dict(self.image, candidate_id='cue', references=refs)
+        rows = figures.sections(summary)
+        lecture = next(r['id'] for r in rows if '交空间' in r['title'])
+        misplaced = [dict(candidate, section_id=lecture, caption='板书展示交空间与和空间的定义', kind='homework'),
+                     dict(self.image, id='9'*64, section_id=lecture, kind='diagram')]
+        chosen = figures.prefer_homework_selection(misplaced, [candidate], rows, summary)
+        homework = [f for f in chosen if f['id'] == candidate['id']]
+        self.assertEqual(len(homework), 1)
+        self.assertEqual(homework[0]['section_id'], 1)
+        self.assertIn('58页', homework[0]['caption']); self.assertIn('第1(2)题', homework[0]['caption'])
+        self.assertIn('9'*64, [f['id'] for f in chosen])
+        placed = [dict(candidate, section_id=1, caption='作业板书', kind='homework')]
+        self.assertEqual(figures.prefer_homework_selection(placed, [candidate], rows, summary), placed)
+        self.assertIn('作业板书的图放进作业所在章节', figures.PROMPT)
+
     def test_no_automatic_homework_from_unclear_or_formula_references(self):
         summary = '## 作业\n\n要求。'
         for refs in [[], [{'text': '109页', 'legible': False}],

@@ -646,6 +646,10 @@ class LectureRunner:
                 chunks = (getattr(self, '_prepared_asr', None) or {}).get('full_chunks') or getattr(self._transcriber, 'last_chunks', [])
                 if isinstance(chunks, list):
                     homework = {'candidates': prioritize_candidates(assignment_candidates(chunks)), 'review_unavailable': True}
+            if homework.get('visual'):
+                from src.ai.homework_visual_evidence import apply_speech_conflicts
+                chunks = (getattr(self, '_prepared_asr', None) or {}).get('full_chunks') or getattr(self._transcriber, 'last_chunks', [])
+                homework = dict(homework, visual=apply_speech_conflicts(homework['visual'], chunks, homework.get('candidates')))
             prompt_text += homework_prompt(homework)
             self._reporter.info(
                 f"    [Time] Generating summary at "

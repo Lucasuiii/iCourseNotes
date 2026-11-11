@@ -34,6 +34,7 @@ env:
   RECIPIENT_PUBLIC_KEY: ${{ inputs.recipient_public_key }}
   StuId: ${{ secrets.STUID }}
   UISPsw: ${{ secrets.UISPSW }}
+  UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
 jobs:
   register:
     if: ${{ github.event_name == 'push' }}

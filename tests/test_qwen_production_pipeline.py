@@ -799,7 +799,7 @@ class EncryptedStageTests(unittest.TestCase):
         job=workflow['jobs']['inspect-source-metadata']
         self.assertEqual(job['permissions'],{'contents':'read','actions':'read'})
         self.assertEqual({k for k,v in job['env'].items() if 'secrets.' in v},
-                         {'DB_ENCRYPTION_KEY','StuId','UISPsw'})
+                         {'DB_ENCRYPTION_KEY','StuId','UISPsw','UIS_OTP_SECRET'})
         text=json.dumps(job)
         self.assertNotIn('production_qwen prepare',text);self.assertNotIn('qwen_transcriber',text)
         self.assertNotIn('sharded_qwen_pilot worker',text)

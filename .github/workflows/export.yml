@@ -95,6 +95,7 @@ jobs:
         env:
           STUID: ${{ secrets.STUID }}
           UISPSW: ${{ secrets.UISPSW }}
+          UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
           DB_ENCRYPTION_KEY: ${{ secrets.DB_ENCRYPTION_KEY }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}

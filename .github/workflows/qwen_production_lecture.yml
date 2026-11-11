@@ -21,6 +21,8 @@ name: Qwen Production Lecture
         required: true
       UISPSW:
         required: true
+      UIS_OTP_SECRET:
+        required: false
       COURSE_IDS:
         required: true
       DOUBAO_ASR_API_KEY:
@@ -69,6 +71,7 @@ jobs:
       PUBLISH_RESULTS: ${{ inputs.publish_results }}
       StuId: ${{ secrets.STUID }}
       UISPsw: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
     steps:
@@ -180,6 +183,7 @@ jobs:
       USE_OFFICIAL_TRANSCRIPT: '1'
       StuId: ${{ secrets.STUID }}
       UISPsw: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       DOUBAO_ASR_API_KEY: ${{ secrets.DOUBAO_ASR_API_KEY }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
@@ -243,6 +247,7 @@ jobs:
       PUBLISH_RESULTS: ${{ inputs.publish_results }}
       STUID: ${{ secrets.STUID }}
       UISPSW: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
     steps:

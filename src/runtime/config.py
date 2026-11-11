@@ -9,6 +9,8 @@ from src.runtime.session_rules import (
 
 STUDENT_ID = os.environ.get("StuId", "")
 PASSWORD = os.environ.get("UISPsw", "")
+# Base32 seed of the authenticator (TOTP) bound in UIS; used only when UIS asks for a second factor.
+UIS_OTP_SECRET = os.environ.get("UIS_OTP_SECRET", "").strip()
 
 WEBVPN_BASE = "https://webvpn.fudan.edu.cn"
 IDP_BASE = "https://id.fudan.edu.cn"

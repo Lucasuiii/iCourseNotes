@@ -38,6 +38,7 @@ jobs:
         env:
           STUID: ${{ secrets.STUID }}
           UISPSW: ${{ secrets.UISPSW }}
+          UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
           DB_ENCRYPTION_KEY: ${{ secrets.DB_ENCRYPTION_KEY }}
         run: |
           git fetch --depth=1 origin "+refs/heads/data:refs/remotes/origin/data" \
@@ -98,6 +99,7 @@ jobs:
         env:
           STUID: ${{ secrets.STUID }}
           UISPSW: ${{ secrets.UISPSW }}
+          UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
           DB_ENCRYPTION_KEY: ${{ secrets.DB_ENCRYPTION_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

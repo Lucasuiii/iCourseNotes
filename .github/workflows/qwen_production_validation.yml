@@ -226,6 +226,7 @@ jobs:
       DB_ENCRYPTION_KEY: ${{ secrets.DB_ENCRYPTION_KEY }}
       StuId: ${{ secrets.STUID }}
       UISPsw: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       QWEN_PRODUCTION_TASK: 'true'
       SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       SOURCE_SLOT: ${{ inputs.source_slot }}
@@ -260,6 +261,7 @@ jobs:
     env:
       StuId: ${{ secrets.STUID }}
       UISPsw: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       SOURCE_SLOT: ${{ inputs.source_slot }}
       RECIPIENT_PUBLIC_KEY: ${{ inputs.recipient_public_key }}

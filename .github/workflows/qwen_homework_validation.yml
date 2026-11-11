@@ -44,6 +44,7 @@ jobs:
       AUTO_COURSE_TERMS: 'false'
       StuId: ${{ secrets.STUID }}
       UISPsw: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       DOUBAO_ASR_API_KEY: ${{ secrets.DOUBAO_ASR_API_KEY }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

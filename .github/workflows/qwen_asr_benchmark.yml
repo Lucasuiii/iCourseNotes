@@ -91,6 +91,7 @@ jobs:
       env:
         StuId: ${{ secrets.STUID }}
         UISPsw: ${{ secrets.UISPSW }}
+        UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
         QWEN_ASR_TEST_REQUEST: ${{ secrets.QWEN_ASR_TEST_REQUEST }}
         QWEN_ASR_TEST_REQUESTS: ${{ secrets.QWEN_ASR_TEST_REQUESTS }}
         QWEN_ASR_TEST_KEY: ${{ secrets.QWEN_ASR_TEST_KEY }}

@@ -130,7 +130,7 @@ class AuthDiagnosticTests(unittest.TestCase):
         workflow=yaml.safe_load((Path(__file__).resolve().parents[1]/'.github/workflows/qwen_production_validation.yml').read_text())
         job=workflow['jobs']['inspect-authentication']
         self.assertEqual(job['permissions'],{'contents':'read'})
-        self.assertEqual({k for k,v in job['env'].items() if 'secrets.' in v},{'StuId','UISPsw'})
+        self.assertEqual({k for k,v in job['env'].items() if 'secrets.' in v},{'StuId','UISPsw','UIS_OTP_SECRET'})
         for name in ('export','inspect-audio','inspect-source-metadata'):
             self.assertIn('!inputs.inspect_authentication',workflow['jobs'][name]['if'])
 

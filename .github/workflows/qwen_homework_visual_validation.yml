@@ -35,6 +35,7 @@ jobs:
       AUTO_COURSE_TERMS: 'false'
       StuId: ${{ secrets.STUID }}
       UISPsw: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       OMP_NUM_THREADS: '4'
     steps:
     - uses: actions/checkout@v4

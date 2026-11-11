@@ -104,6 +104,8 @@ name: iCourse Parallel Pilot
         required: true
       UISPSW:
         required: true
+      UIS_OTP_SECRET:
+        required: false
       COURSE_IDS:
         required: true
       DOUBAO_ASR_API_KEY:
@@ -170,6 +172,7 @@ jobs:
       MKL_NUM_THREADS: '4'
       StuId: ${{ secrets.STUID }}
       UISPsw: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       COURSE_IDS: ${{ secrets.COURSE_IDS }}
       COURSE_SESSION_RULES: ${{ secrets.COURSE_SESSION_RULES }}
       COURSE_SESSION_EXCLUSIONS: ${{ secrets.COURSE_SESSION_EXCLUSIONS }}
@@ -256,6 +259,7 @@ jobs:
       DB_ENCRYPTION_KEY: ${{ secrets.DB_ENCRYPTION_KEY }}
       STUID: ${{ secrets.STUID }}
       UISPSW: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       COURSE_IDS: ${{ secrets.COURSE_IDS }}
       DOUBAO_ASR_API_KEY: ${{ secrets.DOUBAO_ASR_API_KEY }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
@@ -285,6 +289,7 @@ jobs:
       MKL_NUM_THREADS: '4'
       StuId: ${{ secrets.STUID }}
       UISPsw: ${{ secrets.UISPSW }}
+      UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
       COURSE_IDS: ${{ secrets.COURSE_IDS }}
       COURSE_SESSION_RULES: ${{ secrets.COURSE_SESSION_RULES }}
       COURSE_SESSION_EXCLUSIONS: ${{ secrets.COURSE_SESSION_EXCLUSIONS }}

@@ -76,6 +76,7 @@ jobs:
         GEMINI_BASE_URL: ${{ steps.authorize.outputs.stage != 'asr' && secrets.GEMINI_BASE_URL || '' }}
         StuId: ${{ steps.authorize.outputs.stage != 'asr' && secrets.STUID || '' }}
         UISPsw: ${{ steps.authorize.outputs.stage != 'asr' && secrets.UISPSW || '' }}
+        UIS_OTP_SECRET: ${{ steps.authorize.outputs.stage != 'asr' && secrets.UIS_OTP_SECRET || '' }}
     - uses: actions/upload-artifact@v4
       if: ${{ always() && steps.authorize.outputs.stage == 'prepare' }}
       with:

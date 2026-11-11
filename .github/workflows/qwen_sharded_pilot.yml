@@ -126,6 +126,7 @@ jobs:
       env:
         StuId: ${{ secrets.STUID }}
         UISPsw: ${{ secrets.UISPSW }}
+        UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
         QWEN_ASR_TEST_REQUESTS: ${{ secrets.QWEN_ASR_TEST_REQUESTS }}
         SILERO_VAD_PATH: ${{ runner.temp }}/silero_vad.onnx
       run: python -m scripts.sharded_qwen_pilot prepare

@@ -41,7 +41,7 @@ class SummaryReviewTests(unittest.TestCase):
         return audit.review(self.db, self.summarizer, '1', '2', '概率论', self.material, text, state=state)
 
     def test_model_json_keeps_latex_backslashes_and_real_escapes(self):
-        # The 38404/747277 review reply: \( is not a JSON escape and failed strict parsing.
+        # The 10001/20002 review reply: \( is not a JSON escape and failed strict parsing.
         raw = ('{"verdict":"needs_revision","issues":[{"quote":"q","reason":"可得 \\(A^k=A\\) 对 \\(k\\\\ge1\\) 成立",'
                '"suggestion":"\\frac{a}{b}、\\theta、\\neq、\\times、\\nabla 保持原样；换行\\n第二行；引号\\"；\\u4e2d"}]}')
         with self.assertRaises(ValueError):
@@ -53,7 +53,7 @@ class SummaryReviewTests(unittest.TestCase):
         self.assertEqual(audit.loads_model_json('{"a":"x\\\\y"}'), {'a': 'x\\y'})
 
     def test_newline_before_a_letter_is_a_line_break_not_latex(self):
-        # 40329/701366 correction: a JSON-aware reply ("\\qquad") whose display math starts
+        # 10003/20003 correction: a JSON-aware reply ("\\qquad") whose display math starts
         # "$$\nf(x)" was read as the literal "\nf" and 38 formulas failed to render.
         raw = ('{"summary":"写成\\n\\n$$\\nf(x)=(2\\\\pi)^{-1}\\ne^{-x}.\\n$$\\n\\n$$\\nE X=\\\\mu,'
                '\\\\qquad \\\\operatorname{Var}(X)=\\\\sigma^2.\\n$$"}')

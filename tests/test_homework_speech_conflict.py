@@ -1,4 +1,4 @@
-"""Board readings that disagree with the lecture transcript are not corroborated (38404/747288)."""
+"""Board readings that disagree with the lecture transcript are not corroborated (10001/20001)."""
 import unittest
 from src.ai.homework_visual_evidence import (apply_speech_conflicts, candidate_key, spoken_numbers,
                                              spoken_subitems)

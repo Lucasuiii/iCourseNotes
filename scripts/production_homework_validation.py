@@ -17,9 +17,26 @@ from scripts.production_result_export import encrypt, identity
 from src.ai.qwen_review_ledger import review_prepared, validate_ledger
 from src.pipeline.prepared_lecture import assemble_material
 
-SOURCE_RUN = '37261567408'
-COURSE = '38404'
 SECONDS = 600
+
+
+def validation_config():
+    """Load the exact historical validation scope from private configuration."""
+    from pathlib import Path
+    raw = os.environ.get('HOMEWORK_VALIDATION_CONFIG')
+    if raw is None:
+        path = Path(__file__).resolve().parents[1]/'.local-history-refresh/homework_validation.json'
+        if path.is_file():
+            raw = path.read_text()
+    try:
+        value = json.loads(raw or '')
+        required = ('source_run_id', 'prior_run_id', 'course_id', 'date', 'audio_hash',
+                    'plan_hash', 'quote_hash', 'interval', 'prior_clips', 'prior_seconds')
+        if not isinstance(value, dict) or any(key not in value for key in required):
+            raise ValueError('Invalid validation scope')
+        return value
+    except (ValueError, TypeError):
+        raise ValueError('Private historical validation scope unavailable') from None
 
 
 def scoped_material(original):
@@ -68,7 +85,8 @@ def acceptance(state, scope, baseline_count, summary, raw_saved):
 
 
 def run():
-    if (os.environ.get('SOURCE_RUN_ID') != SOURCE_RUN or os.environ.get('SOURCE_SLOT') != '0'
+    profile = validation_config()
+    if (os.environ.get('SOURCE_RUN_ID') != profile['source_run_id'] or os.environ.get('SOURCE_SLOT') != '0'
             or os.environ.get('GITHUB_RUN_ATTEMPT', '1') != '1'):
         raise ValueError('Only the authorized classroom and first attempt are allowed')
     run = os.environ['SOURCE_RUN_ID']; slot = 0
@@ -87,7 +105,7 @@ def run():
         prepared = pipeline.decode(target/'prepare'/'prepared.enc', 'prepared')
         source = pipeline.decode(target/'state'/'state.enc', 'state')
     spec = json.loads(prepared['specification.json'])
-    if (spec['course_id'] != COURSE or spec['lecture'].get('date') != '2026-09-29'
+    if (spec['course_id'] != profile['course_id'] or spec['lecture'].get('date') != profile['date']
             or spec != json.loads(source['specification.json'])):
         raise ValueError('Prepared classroom identity changed')
     results = []
@@ -128,12 +146,12 @@ def run():
     from src.data.database import Database
     db = Database(str(pipeline.root()/'isolated-homework.db'))
     lecture = spec['lecture']; sub_id = str(lecture['sub_id'])
-    db.upsert_course(COURSE, spec['course_title'], '')
-    db.insert_lecture(sub_id, COURSE, lecture.get('sub_title', ''), lecture['date'])
+    db.upsert_course(profile['course_id'], spec['course_title'], '')
+    db.insert_lecture(sub_id, profile['course_id'], lecture.get('sub_title', ''), lecture['date'])
     db.update_transcript(sub_id, data['transcript'])
     runner = LectureRunner(None, db, SimpleNamespace(),
                            SimpleNamespace(last_chunks=data['full_chunks']), Summarizer(), Reporter())
-    runner._homework_course_id = COURSE; runner._homework_sub_id = sub_id
+    runner._homework_course_id = profile['course_id']; runner._homework_sub_id = sub_id
     runner._prepared_asr = data
     runner._historical_terms = data['recognition_terms']
     try:

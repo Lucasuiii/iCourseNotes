@@ -105,8 +105,9 @@ class AutomaticGlossaryTests(unittest.TestCase):
         db=MagicMock()
         db.get_lecture.return_value={'date':'2026-11-12'}
         glossary=AutomaticGlossary(db,'10')
-        for title in ('概率论','数据结构（H）'):
-            with self.subTest(title=title), patch.object(glossary,'terms',return_value=['课程确认新术语']):
+        for title in ('示例课程甲','示例课程乙'):
+            with self.subTest(title=title), patch.object(glossary,'terms',return_value=['课程确认新术语']), \
+                 patch('src.ai.course_glossary.course_terms',return_value=[f'基础术语{i}' for i in range(30)]):
                 frozen=glossary.freeze(title,'2')
                 self.assertEqual(len(frozen['base_terms']),30)
                 self.assertIn('课程确认新术语',frozen['terms'])

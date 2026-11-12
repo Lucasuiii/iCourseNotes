@@ -8,7 +8,7 @@ name: Qwen Homework Tail Validation
       source_run_id:
         description: Authorized completed high algebra classroom
         type: string
-        default: '37261567408'
+        default: ''
       source_slot:
         type: string
         default: '0'
@@ -39,6 +39,7 @@ jobs:
       SOURCE_SLOT: ${{ inputs.source_slot }}
       RECIPIENT_PUBLIC_KEY: ${{ inputs.recipient_public_key }}
       DB_ENCRYPTION_KEY: ${{ secrets.DB_ENCRYPTION_KEY }}
+      HOMEWORK_VALIDATION_CONFIG: ${{ secrets.HOMEWORK_VALIDATION_CONFIG }}
       GH_TOKEN: ${{ github.token }}
       QWEN_PRODUCTION_TASK: 'true'
       AUTO_COURSE_TERMS: 'false'

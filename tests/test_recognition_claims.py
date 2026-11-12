@@ -19,8 +19,8 @@ def task(course, sub):
 
 class ClaimTests(unittest.TestCase):
     def test_claim_expires(self):
-        key, value = local_claims.make('40392', '695697', now=NOW)
-        self.assertEqual(key, 'local_claim:40392:695697')
+        key, value = local_claims.make('10004', '20005', now=NOW)
+        self.assertEqual(key, 'local_claim:10004:20005')
         self.assertTrue(local_claims.is_active(value, now=NOW + timedelta(hours=47)))
         self.assertFalse(local_claims.is_active(value, now=NOW + timedelta(hours=49)))
 

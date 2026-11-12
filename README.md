@@ -2,7 +2,7 @@
 
 将复旦大学 iCourse 录播、课件和板书整理成中文课程笔记，支持 Apple Silicon 本机识别、GitHub Actions CPU 识别、课堂配图、理论审核、加密同步和邮件。
 
-> 本项目基于 LeafCreeper/Fudan_iCourse_Subscriber 独立维护，原作者已许可保留显著来源链接后迁移。请遵守其传播限制，避免在树洞、班级群、大群或社交媒体等渠道发布或推广。项目用于本人有权访问的课程和个人学习。[原项目](https://github.com/LeafCreeper/Fudan_iCourse_Subscriber) · [上游许可说明](docs/upstream-permission.md)
+> 本项目基于 LeafCreeper/Fudan_iCourse_Subscriber 独立维护。请遵守传播说明，避免在树洞、班级群、大群或社交媒体等渠道发布或推广。项目用于本人有权访问的课程和个人学习。[上游仓库](https://github.com/LeafCreeper/Fudan_iCourse_Subscriber) · [来源与传播说明](docs/upstream-permission.md)
 
 [下载 macOS 应用](https://github.com/Lucasuiii/iCourseNotes/releases/latest) · [打开笔记网页](https://lucasuiii.github.io/iCourseNotes/) · [Mac 安装与运行](docs/local-history-refresh.md) · [个人部署](PERSONAL_DEPLOYMENT.md) · [共用流程维护](docs/recognition-pipeline.md)
 
@@ -42,6 +42,8 @@ flowchart TD
 | 图像 | 课件 OCR、作业附近多帧读取、精选课堂原图；平台图与作业图随检查点恢复 |
 | 审核 | 检查概念、公式、条件和推导；发现明确问题后修订一次，保留原问题与响应 |
 | 数据 | 加密分片存于 `data`，按课次合并，记录处理状态、删除标记和邮件回执 |
+
+具体课程名称与基础术语映射保存在 `prompts/course_glossary.enc`，云端使用 Secrets 中的 `DB_ENCRYPTION_KEY` 解密。本地优先读取 `.local-history-refresh/course_glossary.json` 明文私密文件，也可用 `COURSE_GLOSSARY_PATH` 指定路径。
 
 同堂课使用冻结的输入和词表。官方字幕作为低可信辅助材料。新任务默认启用自动术语，显式关闭选项仍可使用。ASR 普通解码和补救的输出预算均为每推理片段2048 token。[识别流程维护](docs/recognition-pipeline.md) · [AAC 获取](docs/aac-production-integration.md) · [术语证据规则](docs/automatic-course-glossary.md)
 
@@ -86,7 +88,7 @@ macOS 应用源码和构建脚本位于 `macos-app/`，安装包见 Releases。[
 | `UISPSW` | UIS 密码 |
 | `UIS_OTP_SECRET` | 账号已绑定且登录要求动态口令时使用的 TOTP 种子 |
 | `COURSE_IDS` | 课程 ID，英文逗号分隔 |
-| `DB_ENCRYPTION_KEY` | 独立随机数据库密钥 |
+| `DB_ENCRYPTION_KEY` | 数据库及仓库加密课程配置使用的随机密钥 |
 
 课程 ID 可从 iCourse 课程网址取得。
 
@@ -195,3 +197,7 @@ Mac 已有共享环境时可运行 `scripts/ci_local.sh`。测试需要 Python�
 | [媒体签名与范围续传](docs/signed-media-transport.md) | 完整音频获取和源标识验证 |
 | [隔离分片对照](docs/qwen-sharded-pilot.md) | 实验入口与验证方式 |
 | [早期设计记录](docs/legacy-design.md) | 历史调度与识别方案 |
+
+## 许可证
+
+项目代码采用 MIT 许可证。随附的第三方组件沿用各自许可证和版权声明。[MIT LICENSE](LICENSE)

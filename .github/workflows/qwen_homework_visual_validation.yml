@@ -30,6 +30,7 @@ jobs:
     env:
       RECIPIENT_PUBLIC_KEY: ${{ inputs.recipient_public_key }}
       DB_ENCRYPTION_KEY: ${{ secrets.DB_ENCRYPTION_KEY }}
+      HOMEWORK_VALIDATION_CONFIG: ${{ secrets.HOMEWORK_VALIDATION_CONFIG }}
       GH_TOKEN: ${{ github.token }}
       QWEN_PRODUCTION_TASK: 'true'
       AUTO_COURSE_TERMS: 'false'

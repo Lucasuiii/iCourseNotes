@@ -601,11 +601,13 @@ class BoardEvidenceTests(unittest.TestCase):
 class TailValidationTests(unittest.TestCase):
     def test_visual_replay_reuses_pinned_quote_and_original_alignment(self):
         import hashlib
-        from scripts.production_homework_visual_validation import replay_selection, AUDIO_HASH, PLAN_HASH
+        from scripts.production_homework_visual_validation import replay_selection
         quote = '今天布置作业，请完成具体题目，题号再看一下。'
-        original = {'audio_seconds': 6532.096, 'audio_sha256': AUDIO_HASH, 'plan_hash': PLAN_HASH,
+        original = {'audio_seconds': 6532.096, 'audio_sha256': 'a'*64, 'plan_hash': 'b'*64,
                     'full_chunks': [dict(start=5985+i*120, end=6105+i*120, text=quote if i == 3 else '') for i in range(4)]}
-        with patch('scripts.production_homework_visual_validation.QUOTE_HASH', hashlib.sha256(quote.encode()).hexdigest()):
+        profile={'audio_hash':'a'*64,'plan_hash':'b'*64,'quote_hash':hashlib.sha256(quote.encode()).hexdigest(),
+                 'interval':{'chunk_id':3,'kind':'homework','quote_start_ms':6331115,'quote_end_ms':6346475,'start_ms':6316115,'end_ms':6361475}}
+        with patch('scripts.production_homework_visual_validation.validation_config', return_value=profile):
             data, scope, candidates, intervals = replay_selection(original)
             self.assertEqual(intervals[0]['quote_end_ms'], 6346475)
             self.assertEqual(intervals[0]['text'], quote)

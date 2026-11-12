@@ -442,7 +442,7 @@ class HistoricalEntryTests(unittest.TestCase):
         from contextlib import redirect_stdout
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp);event=path/'event.json';env=path/'env'
-            raw='{\n"course_id":"38404",\n"lecture_ids":"101,102"\n}'
+            raw='{\n"course_id":"10001",\n"lecture_ids":"101,102"\n}'
             event.write_bytes(policy.encoded({'inputs':{'targets':raw}}));output=io.StringIO()
             with patch.dict(os.environ,{'GITHUB_EVENT_PATH':str(event),'GITHUB_ENV':str(env)}),redirect_stdout(output):
                 entry.mask_selection()

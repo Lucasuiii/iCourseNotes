@@ -2,7 +2,7 @@
 
 当前独立仓库：[Lucasuiii/iCourseNotes](https://github.com/Lucasuiii/iCourseNotes)。
 
-代码来自 [Lucasuiii/Fudan_iCourse_Subscriber](https://github.com/Lucasuiii/Fudan_iCourse_Subscriber) 已合并的 `main` 提交 `47475900dffcdae54112971e72230105d5a3195d`，包括 PR #32 的结构重构与 PR #33 的历史预览/确认覆盖。原作者来源和传播条件见[许可说明](upstream-permission.md)。完整 main 与 data 分支历史保留，不重写作者或旧提交。
+代码来自 [Lucasuiii/Fudan_iCourse_Subscriber](https://github.com/Lucasuiii/Fudan_iCourse_Subscriber) 已合并的 `main` 提交 `47475900dffcdae54112971e72230105d5a3195d`，包括 PR #32 的结构重构与 PR #33 的历史预览/确认覆盖。上游来源和传播说明见[来源说明](upstream-permission.md)。完整 main 与 data 分支历史保留，不重写作者或旧提交。
 
 ## 当前状态
 

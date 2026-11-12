@@ -111,5 +111,5 @@ SMTP 不提供恰好一次保证：若服务器已接收、客户端尚未来得
 已完成一堂约 109 分钟录播的真实隔离验证：Linux Runner 上的准备、PPT、共享 ASR（62 块）、
 复核、非空摘要、LectureRunner 保存及隔离发布连通。实际正式发布、SMTP 发信及真实故障恢复
 未在这次课堂验证中执行，不能把流程完成当作识别准确率听审通过。摘要后续调整另有回归测试与 CI。
-运行记录见 [整课隔离验证](https://github.com/Lucasuiii/Fudan_iCourse_Subscriber/actions/runs/37410686897)。
+运行记录见 对应的私密验证记录。
 旧两路课堂对照仍见 `qwen-two-runner-comparison.md` 本地报告；输入限制和准确率证据边界不变。

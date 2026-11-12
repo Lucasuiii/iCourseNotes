@@ -22,6 +22,8 @@ cp "$BIN" "$APP/Contents/MacOS/ICourseNotes"
 # Drop debug symbols: they record the builder's source paths (including the user name).
 strip -S -x "$APP/Contents/MacOS/ICourseNotes"
 cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE"
+cp "$ROOT/docs/upstream-permission.md" "$APP/Contents/Resources/UPSTREAM.md"
 cp -R "$HERE/web" "$APP/Contents/Resources/web"
 mkdir -p "$APP/Contents/Resources/bridge"
 cp "$HERE/bridge/app_bridge.py" "$APP/Contents/Resources/bridge/"

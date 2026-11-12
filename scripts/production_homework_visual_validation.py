@@ -10,30 +10,24 @@ import sys
 
 from scripts import production_qwen as pipeline
 from scripts import sharded_qwen_pilot as shards
-from scripts.production_homework_validation import scoped_material
+from scripts.production_homework_validation import scoped_material, validation_config
 from scripts.production_result_export import encrypt
 from src.ai.homework_review import assignment_candidates, prioritize_candidates
 from src.pipeline.prepared_lecture import assemble_material
 
-SOURCE = '37261567408'
-PRIOR = '37277615736'
-AUDIO_HASH = '1f94837abcc3cc15ae612604b82145676ba70623be08c80256c0749e18273a15'
-PLAN_HASH = '0064782d6ad195dceb776fbe6d7051e1c8428f4f4af0d5a4d3c731df8e8f30f1'
-QUOTE_HASH = '1480ecefa8f4241194df9af775e043a0eaf68d87e76e209af71bcd5b1659a5b3'
 
 
-def replay_selection(original):
-    if original['audio_sha256'] != AUDIO_HASH or original['plan_hash'] != PLAN_HASH:
+def replay_selection(original, profile=None):
+    profile = validation_config() if profile is None else profile
+    if original['audio_sha256'] != profile['audio_hash'] or original['plan_hash'] != profile['plan_hash']:
         raise ValueError('Authorized source identity changed')
     data, scope = scoped_material(original)
     candidates = prioritize_candidates(assignment_candidates(data['full_chunks']))
-    if (len(candidates) != 1 or candidates[0]['id'] != 3 or
-            hashlib.sha256(candidates[0]['quote'].encode()).hexdigest() != QUOTE_HASH):
+    if (len(candidates) != 1 or candidates[0]['id'] != profile['interval']['chunk_id'] or
+            hashlib.sha256(candidates[0]['quote'].encode()).hexdigest() != profile['quote_hash']):
         raise ValueError('Recorded alignment no longer matches the original quote')
     # Exact original forced alignment from the successful first tail run.
-    interval = {'chunk_id': 3, 'text': candidates[0]['quote'], 'kind': 'homework',
-                'quote_start_ms': 6331115, 'quote_end_ms': 6346475,
-                'start_ms': 6316115, 'end_ms': 6361475}
+    interval = dict(profile['interval'], text=candidates[0]['quote'])
     return data, scope, candidates, [interval]
 
 
@@ -46,41 +40,42 @@ def require_source(run, workflow):
 
 
 def run():
+    profile = validation_config()
     if os.environ.get('GITHUB_RUN_ATTEMPT', '1') != '1':
         raise ValueError('Only one authorized replay attempt is allowed')
     recipient = base64.b64decode(os.environ['RECIPIENT_PUBLIC_KEY'], validate=True)
     if len(recipient) != 32: raise ValueError('Invalid recipient')
-    require_source(SOURCE, '.github/workflows/parallel_pilot.yml')
-    require_source(PRIOR, '.github/workflows/qwen_homework_validation.yml')
+    require_source(profile['source_run_id'], '.github/workflows/parallel_pilot.yml')
+    require_source(profile['prior_run_id'], '.github/workflows/qwen_homework_validation.yml')
     target = pipeline.root()/'visual-source'
-    pipeline.artifact('qwen-homework-tail-audit', target/'prior-audit', run=PRIOR, required=True)
+    pipeline.artifact('qwen-homework-tail-audit', target/'prior-audit', run=profile['prior_run_id'], required=True)
     prior = json.loads((target/'prior-audit'/'homework-audit.json').read_text())
-    if (prior.get('passed') is not True or prior['total_review_clips'] != 12
-            or abs(prior['total_review_seconds']-261.782) > 1e-6
+    if (prior.get('passed') is not True or prior['total_review_clips'] != profile['prior_clips']
+            or abs(prior['total_review_seconds']-profile['prior_seconds']) > 1e-6
             or prior.get('publish_results') or prior.get('send_email')):
         raise ValueError('Prior completed review usage is unavailable')
-    pipeline.artifact('qwen-production-state-0', target/'state', run=SOURCE, required=True)
-    with shards.environment({'GITHUB_RUN_ID': SOURCE, 'COURSE_SLOT': '0'}):
+    pipeline.artifact('qwen-production-state-0', target/'state', run=profile['source_run_id'], required=True)
+    with shards.environment({'GITHUB_RUN_ID': profile['source_run_id'], 'COURSE_SLOT': '0'}):
         source = pipeline.decode(target/'state'/'state.enc', 'state')
     spec = json.loads(source['specification.json'])
-    if spec['course_id'] != '38404' or spec['lecture']['date'] != '2026-09-29':
+    if spec['course_id'] != profile['course_id'] or spec['lecture']['date'] != profile['date']:
         raise ValueError('Wrong classroom')
     results = []
     for shard in spec['plan']['shards']:
         n = shard['shard_id']; path = target/f'asr-{n}'
-        pipeline.artifact(f'qwen-production-asr-0-{n}', path, run=SOURCE, required=True)
-        with shards.environment({'GITHUB_RUN_ID': SOURCE, 'COURSE_SLOT': '0'}):
+        pipeline.artifact(f'qwen-production-asr-0-{n}', path, run=profile['source_run_id'], required=True)
+        with shards.environment({'GITHUB_RUN_ID': profile['source_run_id'], 'COURSE_SLOT': '0'}):
             results.append(json.loads(pipeline.decode(path/'worker-result.enc', f'result-{n}')['result.json']))
     original = assemble_material(spec['plan'], results, media_seconds=spec['media_seconds'])
-    data, scope, candidates, intervals = replay_selection(original)
-    payload = {'source_run_id': SOURCE, 'previous_tail_run_id': PRIOR, 'scope': scope,
-               'audio_sha256': AUDIO_HASH, 'plan_hash': PLAN_HASH,
+    data, scope, candidates, intervals = replay_selection(original, profile)
+    payload = {'source_run_id': profile['source_run_id'], 'previous_tail_run_id': profile['prior_run_id'], 'scope': scope,
+               'audio_sha256': profile['audio_hash'], 'plan_hash': profile['plan_hash'],
                'previous_review_seconds': prior['total_review_seconds'], 'previous_review_clips': prior['total_review_clips'],
                'asr_decoded_blocks': 0, 'new_cloud_seconds': 0, 'new_cloud_clips': 0,
                'publish_results': False, 'send_email': False, 'previews': []}
     def checkpoint():
         pipeline.out('homework-visual-result.enc').write_bytes(encrypt(
-            json.dumps(payload, ensure_ascii=False, allow_nan=False).encode(), recipient, SOURCE, 0))
+            json.dumps(payload, ensure_ascii=False, allow_nan=False).encode(), recipient, profile['source_run_id'], 0))
     checkpoint()
     def observe(image, row):
         if image and row['source'] == 'video_frame':
@@ -90,13 +85,13 @@ def run():
     from main import login_with_retry
     from src.api.icourse import ICourseClient
     from src.pipeline.homework_visual import collect_visual_evidence
-    visual = collect_visual_evidence(ICourseClient(login_with_retry()), '38404', str(spec['lecture']['sub_id']),
+    visual = collect_visual_evidence(ICourseClient(login_with_retry()), profile['course_id'], str(spec['lecture']['sub_id']),
         candidates, intervals, audio_seconds=data['audio_seconds'], frame_observer=observe)
     payload.update(candidates=candidates, intervals=intervals, visual=visual)
     checkpoint()
     audit = {k: payload[k] for k in ['scope', 'asr_decoded_blocks', 'new_cloud_seconds', 'new_cloud_clips',
              'publish_results', 'send_email', 'previous_review_seconds', 'previous_review_clips']}
-    audit.update(mode='visual_only_replay', date='2026-09-29', capture_status=visual['capture_status'],
+    audit.update(mode='visual_only_replay', date=profile['date'], capture_status=visual['capture_status'],
                  reference_status=visual['reference_status'], frames=len(visual['frames']),
                  frame_status_counts={s: sum(f['status'] == s for f in visual['frames'])
                                       for s in sorted({f['status'] for f in visual['frames']})},

@@ -35,15 +35,15 @@ class QwenBenchmarkTests(unittest.TestCase):
             {'date': '2026-10-06', 'sub_id': '3', 'sub_title': '第1-2节', 'has_playback': True}]}
         client.get_video_url.side_effect = [None, 'private playback']
         with patch('scripts.benchmark_qwen_asr.save_encrypted'):
-            request, url = resolve_latest_playback(client, {'course_id': '38404'}, '2026-10-04')
+            request, url = resolve_latest_playback(client, {'course_id': '10001'}, '2026-10-04')
         self.assertEqual(request['sub_id'], '1')
         self.assertEqual(url, 'private playback')
         self.assertEqual(request['selection']['skipped_unavailable'][0]['sub_id'], '2')
         self.assertEqual(client.get_video_url.call_args_list, [
-            unittest.mock.call('38404', '2'), unittest.mock.call('38404', '1')])
+            unittest.mock.call('10001', '2'), unittest.mock.call('10001', '1')])
         client.get_video_url.side_effect = [None, None]
         with patch('scripts.benchmark_qwen_asr.save_encrypted'), self.assertRaises(RuntimeError):
-            resolve_latest_playback(client, {'course_id': '38404'}, '2026-10-04')
+            resolve_latest_playback(client, {'course_id': '10001'}, '2026-10-04')
 
     def test_final_failure_is_encrypted_and_preserves_prior_checkpoint(self):
         import base64
@@ -166,7 +166,7 @@ class QwenBenchmarkTests(unittest.TestCase):
             {'date':'2026-09-22','sub_id':'1','sub_title':'2026-09-22第1-2节','has_playback':True},
             {'date':'2026-09-29','sub_id':'2','sub_title':'2026-09-29第1-2节','has_playback':False},
             {'date':'2026-10-06','sub_id':'3','sub_title':'2026-10-06第1-2节'}]}
-        result=latest_request(detail,{'course_id':'38146'},today='2026-10-04')
+        result=latest_request(detail,{'course_id':'10002'},today='2026-10-04')
         self.assertEqual(result['sub_id'],'2')
         self.assertEqual(result['offset'],0)
         with self.assertRaises(ValueError):

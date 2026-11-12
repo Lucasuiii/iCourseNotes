@@ -5,7 +5,7 @@ import unittest
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import numpy as np
 from scripts.local_history.backends import MLXBatchTranscriber, MLXTranscriber
 from scripts.local_history import runtime
@@ -26,6 +26,37 @@ class BatchBackendTests(unittest.TestCase):
         blocks=self.plan['blocks']
         load=lambda b:np.zeros(b['samples'],dtype='float32')
         return obj,blocks,load
+
+    def test_serial_retries_repeated_or_embedded_context_without_hint(self):
+        obj=MLXTranscriber('/unused'); obj._model=object()
+        obj.set_terms(['矩阵','行列式','线性方程组','线性相关','线性无关'])
+        context='术语：矩阵、行列式、线性方程组、线性相关、线性无关'
+        samples=np.arange(160,dtype='float32')
+        for text in (context*2, '这里是课堂讲解。'*20+context+'接着继续讲解。'*20):
+            with self.subTest(text=text):
+                transcribe=MagicMock(side_effect=[SimpleNamespace(text=text,truncated=False),
+                                                  SimpleNamespace(text='补救后的完整课堂讲解',truncated=False)])
+                with patch.dict('sys.modules',{'mlx_qwen3_asr':SimpleNamespace(transcribe=transcribe)}):
+                    row=obj._recognize(samples,deadline=time.monotonic()+60)
+                self.assertEqual(transcribe.call_count,2)
+                self.assertIs(transcribe.call_args_list[0].args[0],samples)
+                self.assertIs(transcribe.call_args_list[1].args[0],samples)
+                self.assertEqual(transcribe.call_args_list[0].kwargs['context'],context)
+                self.assertEqual(transcribe.call_args_list[1].kwargs['context'],'')
+                self.assertEqual(row['text'],'补救后的完整课堂讲解')
+                self.assertEqual(row['quality_state'],'recognized')
+
+    def test_serial_unhinted_echo_stays_unresolved(self):
+        obj=MLXTranscriber('/unused'); obj._model=object()
+        obj.set_terms(['矩阵','行列式','线性方程组','线性相关','线性无关'])
+        context='术语：矩阵、行列式、线性方程组、线性相关、线性无关'
+        transcribe=MagicMock(return_value=SimpleNamespace(text=context,truncated=False))
+        with patch.dict('sys.modules',{'mlx_qwen3_asr':SimpleNamespace(transcribe=transcribe)}):
+            row=obj._recognize(np.zeros(160,dtype='float32'),deadline=time.monotonic()+60)
+        self.assertEqual(transcribe.call_count,2)
+        self.assertEqual(transcribe.call_args_list[1].kwargs['context'],'')
+        self.assertEqual(row['quality_state'],'unresolved_context_echo')
+        self.assertEqual(row['text'],'')
 
     def test_one_bad_lane_rescues_without_redecoding_the_good_lane(self):
         obj,blocks,load=self.backend([{'text':'bad','truncated':True},{'text':'正确的行列式说明','truncated':False}])

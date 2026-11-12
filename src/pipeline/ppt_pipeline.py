@@ -354,6 +354,8 @@ class PPTPipeline:
                 pass
         if retained:
             self._figure_cache[sub_id] = retained
+            from src.pipeline.summary_figures import cache_figure_frames
+            cache_figure_frames(self._db, course_id, sub_id, retained)
         for pn in dropped_pages:
             self._db.update_ppt_page(sub_id, pn, None, "dedup_dropped")
             images.pop(pn, None)

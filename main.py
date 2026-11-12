@@ -407,7 +407,9 @@ def run():
     ) else None
 
     vpn = login_with_retry()
-    client = ICourseClient(vpn)
+    from src.api.media_client import create_media_client
+    from src.runtime.audio_preparation import configure_audio_downloader
+    client = create_media_client(vpn)
     email_items: list = []
 
     # Discover new semesters every run; only fetch catalogs not yet stored.
@@ -421,6 +423,7 @@ def run():
         return
 
     scheduler = Scheduler(reporter=reporter)
+    configure_audio_downloader(scheduler.audio_downloader)
 
     try:
         enumeration = _enumerate_lectures(client, db, reporter)

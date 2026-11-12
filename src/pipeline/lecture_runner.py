@@ -605,16 +605,21 @@ class LectureRunner:
             ledger = state.setdefault('homework', {}).setdefault('vision_calls', [])
             reader = self._summarizer.homework_image_reader(ledger, checkpoint)
         client = self._client
+        scoped = None
         if client is None:
-            # The gather runner normally needs no login. Create a scoped
-            # read-only session only when assignment evidence was detected.
             from main import login_with_retry
-            from src.api.icourse import ICourseClient
-            client = ICourseClient(login_with_retry())
-        return collect_visual_evidence(client, self._homework_course_id, self._homework_sub_id,
-                                       candidates, intervals,
-                                       vision_reader=reader, frame_observer=self._retain_figure_frame,
-                                       audio_seconds=(getattr(self, '_prepared_asr', None) or {}).get('audio_seconds'))
+            from src.api.media_client import create_media_client
+            scoped = login_with_retry()
+            client = create_media_client(scoped)
+        try:
+            return collect_visual_evidence(client, self._homework_course_id, self._homework_sub_id,
+                                           candidates, intervals,
+                                           vision_reader=reader, frame_observer=self._retain_figure_frame,
+                                           audio_seconds=(getattr(self, '_prepared_asr', None) or {}).get('audio_seconds'))
+        finally:
+            if scoped is not None:
+                client.close_media_session()
+                scoped.session.close()
 
     def _retain_figure_frame(self, image, row):
         from src.pipeline.summary_figures import retain_homework_frame, cache_homework_frames

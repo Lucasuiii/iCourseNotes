@@ -182,14 +182,15 @@ def candidate_files(store, target):
 
 
 def process(store, manifest, target, deadline, *, allow_active_actions=False):
-    from src.api.auth_recovery import initial_authenticated_session, fresh_media_session
-    from src.api.icourse import ICourseClient
+    from functools import partial
+    from src.api.auth_recovery import initial_authenticated_session
+    from src.api.media_client import create_media_client
     from src.ai.course_glossary import course_terms
     from src.ai.summarizer import Summarizer
     from src.data.database import Database
     from src.pipeline.ppt_pipeline import PPTPipeline
     from src.pipeline.lecture_runner import LectureRunner
-    from src.pipeline.prepared_lecture import assemble_material
+    from src.pipeline.prepared_lecture import finalization_material
     from src.runtime.audio_preparation import (collect_decode_diagnostics, resolve_channel_phase,
         validate_prepared_audio)
     from src.runtime.reporter import Reporter
@@ -206,9 +207,8 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
     audio = root/'audio.raw'
     reporter = Reporter()
     scheduler = Scheduler(reporter)
-    scheduler.audio_downloader.audio_mode = manifest['audio_acquisition']
-    scheduler.audio_downloader.allow_fresh_session_escalation = True
-    scheduler.audio_downloader.write_side_channel = True
+    from src.runtime.audio_preparation import configure_audio_downloader
+    configure_audio_downloader(scheduler.audio_downloader, audio_mode=manifest['audio_acquisition'])
     size=manifest.get('mlx_batch_size',1)
     if size not in (1,2): raise ValueError('Unsupported frozen batch size')
     transcriber = (MLXBatchTranscriber if size==2 else MLXTranscriber)(manifest['model_path'])
@@ -227,10 +227,8 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
         mode=state.get('access_mode') or choose_access_mode(manifest.get('campus_access','auto'))
         state['access_mode']=mode;save()
         from src.api.webvpn import WebVPNSession
-        from functools import partial
         vpn = initial_authenticated_session(factory=partial(WebVPNSession,access_mode=mode))
-        client = ICourseClient(vpn, media_reauth_factory=partial(fresh_media_session, read_timeout=60,access_mode=mode))
-        client._media_reauth_timeout = 120
+        client = create_media_client(vpn, access_mode=mode)
         stage('source_selection')
         detail = client.get_course_detail(course)
         matches = [r for r in detail['lectures'] if str(r['sub_id']) == sub]
@@ -350,12 +348,8 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
                                      api_key=config.DOUBAO_ASR_API_KEY)
         state['final_rows'] = sorted([row for result in results for row in result['chunks']],
                                      key=lambda row:row['chunk_id']);save()
-        material = assemble_material(plan, results, audio_path=str(audio), media_seconds=spec.get('media_seconds'),
-                                     allow_short_missing=True)
-        material['review_scope'] = spec['review_scope']
+        material = finalization_material(spec, results, audio_path=str(audio))
         state['recognition_coverage'] = material['recognition_coverage'];save()
-        if manifest.get('review_runtime'):
-            material['alignment_model_path'] = manifest['review_runtime']['alignment_model_path']
         if 'official_support' not in spec:
             try:
                 support = (client.get_transcript_segments(sub) or []) if config.USE_OFFICIAL_TRANSCRIPT else []

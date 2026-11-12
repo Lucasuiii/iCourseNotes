@@ -114,7 +114,7 @@ def gather(runtime):
         checkpoint()
         if spec['mode'] == 'failed': raise ValueError('Preparation failed')
         if spec['mode'] == 'sharded':
-            from src.pipeline.prepared_lecture import assemble_material, validate_audio_duration
+            from src.pipeline.prepared_lecture import finalization_material, validate_audio_duration
             plan = spec['plan']
             if plan.get('execution') == 'shared_queue':
                 results = runtime.shared_results(plan, require_complete=False)
@@ -154,8 +154,7 @@ def gather(runtime):
                 if not coverage['accepted']:
                     from src.ai.qwen_transcriber import IncompleteQwenRecognitionError
                     raise IncompleteQwenRecognitionError(missing_intervals)
-            material = assemble_material(plan, results, audio_path=str(raw), media_seconds=spec['media_seconds'], allow_short_missing=True)
-            material['official_support'] = spec.get('official_support', [])
+            material = finalization_material(spec, results, audio_path=str(raw))
         row = db.get_lecture(sub_id)
         if spec['mode'] != 'finished' or (row.get('summary') and not row.get('deleted_at')):
             from src.pipeline.lecture_runner import LectureRunner

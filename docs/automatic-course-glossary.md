@@ -41,4 +41,3 @@
 python -m scripts.encrypt_course_glossary .local-history-refresh/course_glossary.json
 ```
 
-历史作业验证脚本的固定课次与回放指纹通过 `HOMEWORK_VALIDATION_CONFIG` Secret 配置，本地可保存在 `.local-history-refresh/homework_validation.json`。这些实验入口继续核对原来的精确范围。

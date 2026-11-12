@@ -587,81 +587,9 @@ class BoardEvidenceTests(unittest.TestCase):
         self.assertTrue(all(0 <= call.args[1] < 410 for call in frame.call_args_list))
         self.assertEqual(result['capture_status'], 'unavailable')
 
-    def test_old_success_marker_does_not_satisfy_visual_acceptance(self):
-        from scripts.production_homework_validation import acceptance
-        state = {'material': {'homework': {'visual': {'status': 'ok', 'frames': [{'text': 'A=I'}]}}}}
-        self.assertFalse(acceptance(state, {'start': 0, 'end': 10}, 0, '作业与课务提醒', True)['visual_completed'])
+    def test_uncertain_visual_result_keeps_notice(self):
         summary = ensure_homework_notice('## 作业与课务提醒\n矩阵作业待核实。',
                                         {'candidates': [{}], 'visual': {'status': 'ok'}})
         self.assertIn('待核实', summary)
         self.assertNotIn('视觉核对未完成', summary)
         self.assertEqual(ensure_homework_notice(summary, {'candidates': [{}]}), summary)
-
-
-class TailValidationTests(unittest.TestCase):
-    def test_visual_replay_reuses_pinned_quote_and_original_alignment(self):
-        import hashlib
-        from scripts.production_homework_visual_validation import replay_selection
-        quote = '今天布置作业，请完成具体题目，题号再看一下。'
-        original = {'audio_seconds': 6532.096, 'audio_sha256': 'a'*64, 'plan_hash': 'b'*64,
-                    'full_chunks': [dict(start=5985+i*120, end=6105+i*120, text=quote if i == 3 else '') for i in range(4)]}
-        profile={'audio_hash':'a'*64,'plan_hash':'b'*64,'quote_hash':hashlib.sha256(quote.encode()).hexdigest(),
-                 'interval':{'chunk_id':3,'kind':'homework','quote_start_ms':6331115,'quote_end_ms':6346475,'start_ms':6316115,'end_ms':6361475}}
-        with patch('scripts.production_homework_visual_validation.validation_config', return_value=profile):
-            data, scope, candidates, intervals = replay_selection(original)
-            self.assertEqual(intervals[0]['quote_end_ms'], 6346475)
-            self.assertEqual(intervals[0]['text'], quote)
-            with self.assertRaises(ValueError): replay_selection(dict(original, audio_sha256='changed'))
-            original['full_chunks'][3]['text'] += '改变'
-            with self.assertRaises(ValueError): replay_selection(original)
-
-    def test_visual_replay_credentials_cannot_call_cloud_or_send_email(self):
-        import yaml
-        from pathlib import Path
-        root = Path(__file__).resolve().parents[1]
-        flow = yaml.safe_load((root/'.github/workflows/qwen_homework_visual_validation.yml').read_text())
-        self.assertEqual(flow['permissions'], {'contents': 'read', 'actions': 'read'})
-        env = flow['jobs']['replay']['env']
-        for name in ['SMTP_PASSWORD', 'DOUBAO_ASR_API_KEY', 'DASHSCOPE_API_KEY', 'DEEPSEEK_API_KEY', 'GEMINI_API_KEY']:
-            self.assertNotIn(name, env)
-        self.assertEqual(flow['jobs']['replay']['if'], "github.event_name == 'workflow_dispatch'")
-        self.assertFalse(any(step.get('with', {}).get('inference') == 'true' for step in flow['jobs']['replay']['steps']))
-
-    def test_tail_preserves_original_clock_and_excludes_partial_boundary_block(self):
-        from scripts.production_homework_validation import scoped_material
-        original = {'audio_seconds': 1000, 'full_chunks': [
-            {'chunk_id': 0, 'start': 350, 'end': 472, 'text': '边界前内容'},
-            {'chunk_id': 1, 'start': 470, 'end': 592, 'text': '具体作业要求'}]}
-        data, scope = scoped_material(original)
-        self.assertEqual(scope['start'], 400)
-        self.assertEqual(data['full_chunks'][0]['chunk_id'], 1)
-        self.assertEqual(data['segments'][0]['start_ms'], 470000)
-        self.assertEqual(data['transcript'], '具体作业要求')
-        self.assertEqual(data['weak_windows'], [])
-        self.assertEqual(len(original['full_chunks']), 2)
-
-    def test_tail_review_keeps_every_original_quota_reservation(self):
-        from scripts.production_homework_validation import isolated_ledger
-        original = {'complete': True, 'seconds': 30, 'attempts': [
-            {'interval': {'start_ms': 0, 'end_ms': 30000, 'kind': 'weak'},
-             'seconds': 30, 'status': 'complete', 'segments': []}], 'intervals': [{'old': True}]}
-        state = isolated_ledger(original)
-        self.assertEqual(state['attempts'], original['attempts'])
-        self.assertEqual(state['seconds'], 30)
-        self.assertNotIn('complete', state)
-        self.assertEqual(state['intervals'], [])
-        self.assertTrue(original['complete']); validate_ledger(state)
-        for unsafe in [dict(original, complete=False), dict(original, failed=True)]:
-            with self.assertRaises(ValueError): isolated_ledger(unsafe)
-
-    def test_tail_entry_is_read_only_and_cannot_run_on_push(self):
-        import yaml
-        from pathlib import Path
-        root = Path(__file__).resolve().parents[1]
-        flow = yaml.safe_load((root/'.github/workflows/qwen_homework_validation.yml').read_text())
-        self.assertEqual(flow['permissions'], {'contents': 'read', 'actions': 'read'})
-        self.assertIn("github.event_name == 'workflow_dispatch'", flow['jobs']['review']['if'])
-        env = flow['jobs']['review']['env']
-        self.assertNotIn('SMTP_PASSWORD', env)
-        self.assertEqual(env['AUTO_COURSE_TERMS'], 'false')
-        self.assertEqual(flow['jobs']['register']['permissions'], {})

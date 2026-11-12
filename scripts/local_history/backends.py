@@ -1,5 +1,6 @@
 """MLX Apple GPU adapter; immutable weights recorded independently of CPU revision."""
 import gc
+import hashlib
 import time
 from pathlib import Path
 from src.ai.qwen_transcriber import QwenTranscriber, QwenTokenBudgetError, NORMAL_TOKENS
@@ -22,7 +23,8 @@ class MLXTranscriber(QwenTranscriber):
             return {'text': '', 'quality_state': 'retry_timeout'}
         import mlx.core as mx
         from mlx_qwen3_asr import transcribe
-        context = '术语：'+'、'.join(self._terms) if self._terms and not unhinted else ''
+        reference = '术语：'+'、'.join(self._terms) if self._terms else ''
+        context = '' if unhinted else reference
         def progress(*args, **kwargs):
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError('MLX generation deadline')
@@ -37,11 +39,12 @@ class MLXTranscriber(QwenTranscriber):
         if result.truncated:
             raise QwenTokenBudgetError('mlx', NORMAL_TOKENS, NORMAL_TOKENS)
         text = result.text.strip()
-        if context and context_echo(text, context):
+        if reference and context_echo(text, reference):
             if not unhinted:
                 row = self._recognize(samples, unhinted=True, deadline=deadline)
-                if context_echo(row['text'], context):
+                if context_echo(row['text'], reference):
                     row.update(text='', quality_state='unresolved_context_echo')
+                row['context_echo_recovery'] = {'detected': True, 'unhinted': True}
                 return row
             return {'text': '', 'quality_state': 'unresolved_context_echo'}
         return {'text': '' if low_information(text) else text,
@@ -80,11 +83,12 @@ class MLXBatchTranscriber(MLXTranscriber):
             raise QwenTokenBudgetError('mlx-batch2', NORMAL_TOKENS, NORMAL_TOKENS)
         context = '术语：'+'、'.join(self._terms) if self._terms else ''
         text = prefetched['text'].strip()
-        if context and context_echo(text, context):
+        if prefetched.get('context_echo') or (context and context_echo(text, context)):
             # Identical full-block, unhinted bounded retry to the serial adapter.
             row = super()._recognize(samples, unhinted=True, deadline=deadline)
             if context_echo(row['text'], context):
                 row.update(text='',quality_state='unresolved_context_echo')
+            row['context_echo_recovery'] = {'detected': True, 'unhinted': True}
             return row
         return {'text':'' if low_information(text) else text,
                 'quality_state':'low_information' if low_information(text) else 'recognized'}
@@ -116,10 +120,17 @@ class MLXBatchTranscriber(MLXTranscriber):
                 outputs = [{'text':value.text,'truncated':value.truncated}]
             if len(outputs)!=len(owners):
                 raise RuntimeError('MLX pair returned inconsistent lane identities')
-            for owner,row in zip(owners,outputs):
-                parts[owner].append(row)
+            for owner, row, clip in zip(owners, outputs, clips):
+                start = round(chunks[owner][index][1] * 16000)
+                child = {'start_sample': start, 'end_sample': start + len(clip),
+                         'sample_sha256': hashlib.sha256(clip.tobytes()).hexdigest(),
+                         'context_echo': bool(context and context_echo(row['text'], context)),
+                         'truncated': bool(row['truncated'])}
+                parts[owner].append(dict(row, child=child))
         return [{'text':join_text_parts([r['text'] for r in rows],'Chinese'),
-                 'truncated':any(r['truncated'] for r in rows)} for rows in parts]
+                 'truncated':any(r['truncated'] for r in rows),
+                 'context_echo':any(r['child']['context_echo'] for r in rows),
+                 'child_chunks':[r['child'] for r in rows]} for rows in parts]
 
     def recognize_blocks(self, blocks, load_samples, *, checkpoint=None, timeout=18000, keep_model=False):
         if len(blocks)>2 or not blocks:
@@ -158,8 +169,10 @@ class MLXBatchTranscriber(MLXTranscriber):
                                       'initial_budget_seconds':initial_deadline-initial_started,
                                       'timeout':bool(output.get('timed_out')),
                                       'truncated':bool(output.get('truncated')),
-                                      'context_echo':bool(output.get('text') and self._terms and
-                                          context_echo(output['text'],'术语：'+'、'.join(self._terms)))})
+                                      'child_chunks':output.get('child_chunks',[]),
+                                      'context_echo':bool(output.get('context_echo') or
+                                          (output.get('text') and self._terms and
+                                           context_echo(output['text'],'术语：'+'、'.join(self._terms))))})
                 self.last_chunks.append(row)
                 for a,b in self.last_vad_windows:
                     a,b=max(a,row['start']),min(b,row['end'])

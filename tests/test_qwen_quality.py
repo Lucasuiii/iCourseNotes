@@ -43,6 +43,19 @@ class QualityTests(unittest.TestCase):
         self.assertFalse(context_echo('希尔伯特矩阵是病态矩阵。',context))
         self.assertFalse(context_echo('',context))
 
+    def test_echo_inside_long_or_repeated_output(self):
+        context='术语：良态问题、病态问题、扰动、Hilbert矩阵、逆矩阵、条件数、范数'
+        for repetitions in (2, 3):
+            with self.subTest(repetitions=repetitions):
+                self.assertTrue(context_echo(context * repetitions, context))
+        body='我们先讨论这个例子的推导过程，然后再看误差如何传播。' * 8
+        self.assertTrue(context_echo(body + context + body, context))
+        self.assertTrue(context_echo('良态问题、病态问题、扰动、Hilbert矩阵、逆矩阵、条件数、范数', context))
+        self.assertTrue(context_echo(body + '病态问题、扰动、Hilbert矩阵、逆矩阵、条件数' + body, context))
+        self.assertFalse(context_echo('良态问题和病态问题的区别是，扰动很小时，逆矩阵和条件数可以帮助我们理解误差。', context))
+        self.assertFalse(context_echo(context, ''))
+        self.assertFalse(context_echo('这个矩阵是可逆矩阵。', '矩阵'))
+
     def test_cloud_budget_and_actual_windows(self):
         chunks=[{'start':0,'end':122},{'start':120,'end':242},{'start':240,'end':360}]
         windows=[(i,i+20) for i in range(0,360,25)]

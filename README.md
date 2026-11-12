@@ -1,218 +1,195 @@
 # iCourseNotes
 
-> **项目来源与作者许可**：本项目基于 [LeafCreeper/Fudan_iCourse_Subscriber](https://github.com/LeafCreeper/Fudan_iCourse_Subscriber) 独立维护。原作者已许可保留显著来源链接后迁移；请遵守其传播限制，不在树洞、班级群、大群或社交媒体等可能引起校方注意的渠道发布或推广。详情见[上游许可说明](docs/upstream-permission.md)。
+将复旦大学 iCourse 录播、课件和板书整理成中文课程笔记，支持 Apple Silicon 本机识别、GitHub Actions CPU 识别、课堂配图、理论审核、加密同步和邮件。
 
-自动检查复旦大学 iCourse 的课程更新，将录播语音、课件和板书整理成中文课程笔记，按课程发送邮件，并提供加密数据查看器。
+> 本项目基于 LeafCreeper/Fudan_iCourse_Subscriber 独立维护，原作者已许可保留显著来源链接后迁移。请遵守其传播限制，避免在树洞、班级群、大群或社交媒体等渠道发布或推广。项目用于本人有权访问的课程和个人学习。[原项目](https://github.com/LeafCreeper/Fudan_iCourse_Subscriber) · [上游许可说明](docs/upstream-permission.md)
 
-当前 `main` 已包含 Qwen 本地识别、共享识别队列、作业多帧读图和课程术语库，并保留本地执行及 GitHub Actions 工作流配置。**每日任务已恢复为每天 18:00（台北时间，UTC+8）运行一次，沿用现有订阅、正式发布及邮件设置。** 代码迁移不会解除平台对运行用途的限制；运行位置、凭据与恢复边界见[独立仓库迁移说明](docs/standalone-migration.md)。
+[打开笔记网页](https://lucasuiii.github.io/iCourseNotes/) · [Mac 安装与运行](docs/local-history-refresh.md) · [个人部署](PERSONAL_DEPLOYMENT.md) · [共用流程维护](docs/recognition-pipeline.md)
 
-个人加密数据查看器：[打开 iCourseNotes](https://lucasuiii.github.io/iCourseNotes/)。页面会识别当前仓库，查看公开仓库的加密笔记只需数据库密钥，也可选择本机密钥文件；密钥仅在浏览器中用于解密。管理操作另行填写仅授权本仓库的个人访问令牌。
+## 选择使用方式
 
-Safari 自动填充：解锁表单的“密码条目名称”默认是 `iCourseNotes`，仅用于密码管理器识别，不是注册账户。可在 Apple“密码”中保存本页面网址、用户名 `iCourseNotes` 和现有数据库密钥，之后使用 Safari/Touch ID 填充。页面提供标准自动填充标记，保存提示及 Touch ID 由系统控制；网站无法主动读取钥匙串。管理令牌与解锁表单分开，本机密钥文件入口仍可使用。
+| 方式 | 识别与调度 | 阅读和交付 |
+| --- | --- | --- |
+| Mac 本机 | Qwen3-ASR-1.7B / MLX，单模型串行或双块文本解码 | 本地预览和审核，按入口操作发布 |
+| GitHub Actions | Qwen3-ASR-1.7B / PyTorch CPU，共享 Runner 队列 | 预览模式或正式发布，邮件由开关控制 |
+| GitHub Pages | 浏览器解密 `data` 分支中的笔记 | 课程阅读、公式与配图、导出、订阅和删除 |
 
-首页每门课程右侧的“删除”用于删除整门课：确认课程名称后，先保存取消该课的订阅，再提交清除全部课次笔记、转录、PPT 和相关审核记录的任务。需要 GitHub 管理授权；Actions 完成后刷新首页即可移除课程，其他课程与已发邮件保留。进入课程后的“删除”仍用于删除并永久忽略选定课次。删除请求结果未确认时，先检查 Actions，页面不会自动重复提交。
+本地与云端共用回显检测、补救规则、术语策略、材料组装、摘要、作业读图、配图和理论审核。硬件适配器分别负责模型执行，调度和存储由运行环境管理。Windows CUDA 本地后端仍待实现。
 
-仅用于本人有权访问的课程和个人学习。账号、模型密钥、邮箱信息及数据库密钥通过 Actions Secrets 配置；不要公开传播录播、转录或课程笔记。部署前请阅读 [个人部署说明](PERSONAL_DEPLOYMENT.md)。
+音频获取、VAD 和 ASR 在选定的 Mac 或 Runner 上执行。摘要、作业视觉理解和理论审核使用配置的模型服务，相关步骤会发送课堂文字及所需图片。图片理解使用独立的 DeepSeek 路由，文字生成按配置的服务商顺序调用。[运行配置](src/runtime/config.py)
 
-## 功能与默认行为
-
-| 功能 | 当前行为 |
-| --- | --- |
-| 课程订阅 | 按课程 ID 扫描；支持课次白名单、固定课时排除和调课日期例外 |
-| 本地识别 | **Qwen3-ASR-1.7B**；Silero VAD 跳过长时间无讲话区间，再切成约两分钟的块 |
-| 单堂课并行 | 默认共享队列，按预计识别耗时分配；单堂最多 6 台、5 个活跃课次、含调度器合计 15 台 |
-| 笔记复核 | 检查理论、公式与推导；发现明确问题后由 DeepSeek 修订一次；识别缺口仍有有界补救 |
-| 课件与作业 | PPT OCR；作业提示附近多帧直接读图，失败时回退本地 OCR |
-| 课程笔记 | 按讲授脉络组织分级标题、正文和公式；保留可靠的作业要求、题号及页码 |
-| 术语提示 | 基础词表结合有证据的历史确认术语；本地与云端新任务默认启用，同堂冻结词表 |
-| 保存与恢复 | 加密数据库、音频哈希和检查点；正式处理链重试复用成功块及复核额度 |
-| 历史课程更新 | [先隔离预览，再单独确认覆盖](docs/historical-refresh.md)；加密备份、旧结果校验与邮件回执保留 |
-| 邮件 | 每门课程分别发送；HTML 正文及 PDF 附件保留课堂配图，PDF 失败时回退 Markdown；有配图时附带含 JPEG 的 ZIP 包 |
-
-本地与云端的共用识别规则、资源恢复和入口约定见[识别流程维护说明](docs/recognition-pipeline.md)。
-
-官方字幕仅作辅助，不替代 Qwen 转录。SenseVoice、FireRed 和 Zipformer 已不作为本地识别后端。
-
-## 处理流程
+## 共用处理流程
 
 ```mermaid
-flowchart LR
-    A[扫描与筛选课次] --> B[获取音频并校验完整性]
-    B --> C[VAD 与原始分块]
-    C --> D[多个 Runner 识别]
-    D --> E[本堂全部块完成]
-    E --> F[作业读图]
-    F --> G[生成笔记并保存]
-    G --> H[按开关发布与发信]
+flowchart TD
+    A[扫描并筛选课次] --> B[获取音频、课件并校验完整性]
+    B --> C[VAD 与约两分钟检查点块]
+    C --> D[内部至多30秒子块识别]
+    D --> E[回显检查与有界补救]
+    E --> F[排序、去重与覆盖核验]
+    F --> G[作业证据与课堂图片]
+    G --> H[生成摘要、理论审核与必要的一次修订]
+    H --> I[保存结果]
+    I --> J[按入口配置预览、发布和发信]
 ```
 
-每堂课完成后独立汇总，无需等待其他课程识别结束；邮件在本批课次处理结束后按课程发送。各块保留源时间戳，汇总统一排序和边界去重。正式音频获取会更新媒体签名、校验字节范围和源标识；存在读取错误或显著时长缺口时停止，避免把截断录播作为完整课堂发布。
+| 环节 | 当前行为 |
+| --- | --- |
+| 音频获取 | 默认 `aac_auto`，按 MP4 范围定位 AAC，验证来源、packet 覆盖和原时间轴，输出 16 kHz 单声道；支持反相声道检测 |
+| 分块与识别 | VAD 跳过长无语音间隔，约两分钟块保留检查点，内部按低能量位置切成至多30秒片段 |
+| 回显补救 | 拼接前检查提示词回显，异常时用完整原块无提示重识别，继续受时限、调用次数和缺口规则约束 |
+| 术语 | 历史确认术语优先，基础词表补充，合计最多30项；排除当前、未来及已删除课次的历史证据 |
+| 图像 | 课件 OCR、作业附近多帧读取、精选课堂原图；平台图与作业图随检查点恢复 |
+| 审核 | 检查概念、公式、条件和推导；发现明确问题后修订一次，保留原问题与响应 |
+| 数据 | 加密分片存于 `data`，按课次合并，记录处理状态、删除标记和邮件回执 |
 
-正式音频准备默认优先从 MP4 按范围获取内嵌 AAC，逐批验证后流式解码，保留原时间轴；明确不支持的格式在输出前回退到现有 MP4 路径。可设置 `AUDIO_ACQUISITION=mp4` 显式选回旧路径。黑板识别仍按语音线索访问原视频取帧。实现、预算及当前实测边界见 [AAC 正式接入说明](docs/aac-production-integration.md)。
+同堂课使用冻结的输入和词表。官方字幕作为低可信辅助材料。新任务默认启用自动术语，显式关闭选项仍可使用。ASR 普通解码和补救的输出预算均为每推理片段2048 token。[识别流程维护](docs/recognition-pipeline.md) · [AAC 获取](docs/aac-production-integration.md) · [术语证据规则](docs/automatic-course-glossary.md)
 
-## 快速开始
+## Mac 本机开始
 
-### Mac 本机识别
+需要 Apple Silicon Mac、Python、Git、GitHub CLI、FFmpeg，以及 MLX bf16 权重和 Silero VAD 文件。已验证的双块运行库为 `mlx-qwen3-asr==0.4.4`。完整安装、模型路径和私密配置见本机说明。[Mac 安装与运行](docs/local-history-refresh.md)
 
-main 已包含 [`local-history.command`](local-history.command) 和[安装／运行说明](docs/local-history-refresh.md)。可在 Apple Silicon Mac 上获取 AAC 音频、使用 Qwen3-ASR / MLX 识别并断点续跑；加 `--mlx-batch-size 2` 使用单模型双块解码，随后沿原流程读课件、配图、生成摘要和检查理论错误。默认仅本地预览，明确审核及 `apply` 后才覆盖 `data`；不发邮件。Windows CUDA 本地后端尚未实现。
+```bash
+git clone https://github.com/Lucasuiii/iCourseNotes.git
+cd iCourseNotes
+python3 -m venv .venv-local
+.venv-local/bin/python -m pip install -r requirements-local-mlx.txt
+cp .env.example .env.local
+chmod 600 .env.local
+```
 
-### 1. 获取代码并确认运行方式
+在 `.env.local` 配置校园账号、订阅课程、已有数据库密钥和模型服务。使用已有 `data` 时填写其对应密钥。先检查环境，再选择和处理一堂课。
 
-本仓库是独立维护版本，可克隆用于本地开发。以下配置说明介绍保留的 Actions 接口，**不表示本仓库已启用运行**；先阅读[迁移说明](docs/standalone-migration.md)，确定运行位置和平台允许的用途，再配置凭据。首次处理可能包括所有符合筛选条件且尚未处理的历史录播，建议先只订阅一门课程。
+```bash
+./local-history.command --env-file .env.local --automatic-terms --mlx-batch-size 2 doctor
+./local-history.command --env-file .env.local --automatic-terms --mlx-batch-size 2 plan --limit 1
+./local-history.command --env-file .env.local --automatic-terms --mlx-batch-size 2 run --hours 2
+./local-history.command --env-file .env.local --automatic-terms --mlx-batch-size 2 status
+./local-history.command --env-file .env.local --automatic-terms --mlx-batch-size 2 review
+```
 
-### 2. 配置凭据和课程
+这里的 `plan --limit 1` 选择已发布的历史课次生成对照稿。新课使用 `plan --new-lecture <课次ID> --course-id <课程ID> --date YYYY-MM-DD`，生成本地预览。历史稿核对后可用 `apply --approval <覆盖指纹>` 发布。恢复时沿用同一运行目录和参数。[本地预览、恢复及发布](docs/local-history-refresh.md)
 
-进入 **Settings → Secrets and variables → Actions**，添加 Repository secrets。
+本机应用通过本地识别入口调用运行环境。更换源码版本时使用独立目录，已启动的冻结任务沿原版本恢复。完整转录、整理转录、精选图与审核记录应随课程结果保存。
+
+## GitHub Actions 开始
+
+先配置个人部署与运行权限，再在 **Settings → Secrets and variables → Actions** 填写 Repository secrets。首次使用建议选择一门课完成预览。[个人部署说明](PERSONAL_DEPLOYMENT.md) · [迁移与运行边界](docs/standalone-migration.md)
+
+### 账号与课程
 
 | Secret | 用途 |
 | --- | --- |
 | `STUID` | 复旦学号 |
-| `UISPSW` | UIS 统一身份认证密码 |
-| `COURSE_IDS` | 订阅课程 ID，使用英文逗号分隔，如 `12345,23456` |
-| `DB_ENCRYPTION_KEY` | 独立随机数据库密钥，用于保存与查看加密数据 |
+| `UISPSW` | UIS 密码 |
+| `UIS_OTP_SECRET` | 账号已绑定且登录要求动态口令时使用的 TOTP 种子 |
+| `COURSE_IDS` | 课程 ID，英文逗号分隔 |
+| `DB_ENCRYPTION_KEY` | 独立随机数据库密钥 |
 
-数据库密钥可在本地终端生成：
+课程 ID 可从 iCourse 课程网址取得。
+
+![课程 ID 在课程页面 URL 中的位置](docs/courseid.png)
+
+新部署可在本机生成数据库密钥，妥善备份后填入 Secret。已有数据须使用对应密钥，更换密钥需要迁移数据。
 
 ```bash
 openssl rand -hex 32
 ```
 
-将输出保存到 Secret，并自行妥善备份。不要提交到仓库，也不要用 UIS 密码代替；丢失密钥后无法读取已有数据库，更换前需要迁移数据。
+### 模型服务
 
-登录 [iCourse](https://icourse.fudan.edu.cn)，进入课程页面，从页面 URL 获取课程 ID。
+至少配置一种文字模型服务。配图和理论审核使用配置的 DeepSeek 路由。
 
-![课程 ID 在课程页面 URL 中的位置](docs/courseid.png)
+| Secret | 服务 |
+| --- | --- |
+| `DASHSCOPE_API_KEY` | ModelScope 文字模型，变量名称保留历史兼容 |
+| `DEEPSEEK_API_KEY` | DeepSeek 文字、作业图片理解、选图及理论审核 |
+| `GEMINI_API_KEY` | Gemini 文字模型 |
+| `DOUBAO_ASR_API_KEY` | 可选，识别缺口补救 |
+| `TAVILY_API_KEY` | 可选，公共知识疑点检索 |
 
-### 3. 配置摘要模型
+服务地址可通过 `DASHSCOPE_BASE_URL`、`DEEPSEEK_BASE_URL`、`GEMINI_BASE_URL` 配置。模型名称、顺序和兼容要求以运行配置为准，费用和额度以服务商为准。[运行配置](src/runtime/config.py)
 
-至少配置以下一个 Secret。文字模型按 [运行配置](src/runtime/config.py) 中的顺序尝试已配置的服务商。
-
-| Secret | 对应服务 | 获取入口 |
-| --- | --- | --- |
-| `DASHSCOPE_API_KEY` | 此项目中用于 ModelScope 文字模型，名称为历史兼容项 | [ModelScope](https://modelscope.cn/my/myaccesstoken) |
-| `DEEPSEEK_API_KEY` | DeepSeek 文字模型及可选作业图片理解 | [DeepSeek Platform](https://platform.deepseek.com/) |
-| `GEMINI_API_KEY` | Gemini 文字模型 | [Google AI Studio](https://aistudio.google.com/) |
-
-Qwen ASR 在 Runner 本地执行，不需要语音 API Key。模型可用性、调用额度和费用以对应服务商为准，仓库不承诺免费额度。
-
-作业图片理解使用独立的 DeepSeek 图像路径，不把图片发送到文字模型回退链；未配置或调用失败时使用本地 OCR。自定义 `DASHSCOPE_BASE_URL`、`DEEPSEEK_BASE_URL`、`GEMINI_BASE_URL` 时须确认接口兼容；增加服务商还需同步可复用工作流的密钥声明。
-
-### 4. 配置邮件
-
-日常订阅发信需要以下 Secrets；仅做隔离验证时不会调用 SMTP。
+### 邮件
 
 | Secret | 用途 |
 | --- | --- |
 | `SMTP_EMAIL` | QQ 发件邮箱 |
-| `SMTP_PASSWORD` | QQ 邮箱 SMTP 授权码，**不是邮箱登录密码** |
-| `RECEIVER_EMAILS` | 收件邮箱；支持逗号、分号或换行分隔 |
-| `RECEIVER_EMAIL` | 兼容旧部署的单一收件邮箱；未设置 `RECEIVER_EMAILS` 时使用 |
+| `SMTP_PASSWORD` | QQ 邮箱 SMTP 授权码 |
+| `RECEIVER_EMAILS` | 收件地址，支持逗号、分号或换行分隔 |
+| `RECEIVER_EMAIL` | 兼容旧部署的单个收件地址 |
 
-在 [QQ 邮箱](https://mail.qq.com) 的账户设置中启用 SMTP 并获取授权码。邮件按课程拆分，公式在本地渲染，不通过外部公式图片服务发送笔记内容。
+邮件按课程发送，包含 HTML 正文及 PDF。PDF 生成失败时回退 Markdown，有配图时附带 JPEG ZIP。公式在运行环境渲染。SMTP 回执表示服务器接受邮件，客户端遇到未知投递结果时仍需核对。
 
-### 5. 先做隔离验证，再启用日常订阅
+### 先预览，再运行订阅
 
-在 **Actions → iCourse Parallel Pilot → Run workflow** 中选择 `main`。名称保留了 Pilot，但它也是当前日常订阅调用的正式处理入口。
+1. 打开 **Actions → iCourse Parallel Pilot → Run workflow**，选择 `main`。
+2. 填写 `validation_course_id`，保留 `validation_lecture_rank=1`，选择最新实际可播放录播。
+3. 保持 `publish_results=false`、`send_email=false`，运行后核对课程日期、块数、转录、摘要、作业和配图。
+4. 确认配置后运行 **iCourse Check**，或等待日常任务。
 
-首次验证可填写已订阅课程的 `validation_course_id`，保持 `validation_lecture_rank=1`，选择最新实际可播放录播。该模式跳过未来课次、无录播的假期／调休记录和排除时段，使用独立空课堂数据库执行识别。课程 ID 是可见的工作流输入；账号和密钥仍只填 Secrets。
+`iCourse Check` 每天 **18:00（台北时间，UTC+8）**运行，配置为正式发布并发邮件。GitHub 定时任务可能延迟。未填写单课验证参数的 Parallel Pilot 会按订阅范围规划课次。已完成摘要在再次扫描时复用。[正式处理链](docs/parallel-course-pilot.md)
 
-保持 `publish_results=false`、`send_email=false`，运行后核对选定日期、计划块完成数、转录／摘要状态和复核额度。隔离模式会调用配置的识别与摘要服务、保存加密产物并验证数据库合并，但不写正式 `data` 分支、不发邮件。**未填写单课验证参数时，仍会按订阅范围规划课次**，不要将其误认为只处理最新一堂。
+## 日常使用
 
-确认配置后，可手动运行 **iCourse Check**，或等待日常定时任务：
+### 阅读和导出
 
-- **每天 18:00（台北时间，UTC+8）**：每日主任务，不再安排晚间补跑。
-- 如需额外运行，可在 Actions 中手动启动 **iCourse Check**。
+笔记网页读取 `data` 分支，在浏览器内使用数据库密钥解密。可输入密钥或选择本机密钥文件。GitHub 管理操作另填仅授权本仓库的 PAT，密钥与 PAT 按当前页面实现保存在标签页会话中。
 
-`iCourse Check` 开启正式发布和邮件。GitHub 定时任务可能延迟；已完成摘要不会因再次扫描或识别后端更新而自动重算。
+在课程列表或笔记详情点击“导出”，可下载 Markdown，含图时导出带 `figures/` 的 ZIP。PDF 通过页内预览与浏览器打印保存，保留公式和课堂原图。
 
-## 可选配置
-
-### 课次筛选
-
-| Secret | 示例 | 行为 |
-| --- | --- | --- |
-| `COURSE_SESSION_RULES` | `12345=周一第1-2节\|周三第6-8节` | 课次白名单；未列出的课程不受白名单限制 |
-| `COURSE_SESSION_EXCLUSIONS` | `12345=周一第6-10节` | 固定排除时段，与课次有重叠即排除 |
-| `COURSE_SESSION_OVERRIDE_DATES` | `2026-09-20,2026-10-01` | 指定日期绕过白名单，适用于调课；不绕过排除规则 |
-
-白名单和排除规则均支持每行一门课程。排除规则优先于日期例外和定向重跑；配置格式错误会停止任务，不公开打印规则内容。
-
-### 识别与复核
-
-新任务默认采用理论检查：保留完整转录、课件OCR、作业截图和精选配图，摘要生成后检查概念、公式、条件及证明方向。无需逐句时间定位、逐字引用证据或六类检查报告。发现明确理论错误时，把原稿、问题清单和原材料交给 DeepSeek 修订一次；完整修订稿按流程接受，状态为 `revised`，不再自审一轮，也不伪装成新审查 `passed`。原稿、原问题、修订响应与最终正文哈希均保留；图片、图注和识别缺口提示不能在改稿时丢失。
-
-摘要、自审和修订请求不指定输出token上限，使用服务默认额度；服务仍可能截断。审核或修订超时、返回不完整、无法解析、没有改动或丢失图片/缺口提示时停止，保存现场，不自动重放。作业截图失败保留未核实说明，不单独阻断理论摘要。此次源码修改不会自动运行旧课次或改写已发布结果；旧六类审核仍保留，理论审核的已知问题可在明确续跑时进入一次修订。
-
-下表列出工作流默认值和密钥配置方式，不表示当前仓库的实际配置状态。API 密钥应添加到 **Settings → Secrets and variables → Actions → Repository secrets**；已配置时无需重复添加。
-
-| 选项 | 默认值／配置方式 | 说明 |
-| --- | --- | --- |
-| `shard_mode` | `shared` | 全局调度共享 Worker；准备、识别、汇总和发布共用 Runner 额度 |
-| `shard_mode=2` | 可选 | 保留原固定两路流程；块数不足时减少 Runner |
-| `shard_mode=auto` | 可选 | 待识别音频超过 60 分钟时用三路，否则两路 |
-| `shard_mode=shared` | 默认 | 根据原块时长及历史／本堂推理速度估算工作量，目标约 75 分钟 ASR，单堂最多 6 台 |
-| `automatic_terms` | `false` | 启用自动术语候选和确认库；仅确认词可供更晚日期的课堂使用 |
-| `DOUBAO_ASR_API_KEY` | 可选 Secret | 用于识别缺口补识别；兼容full模式时也可复核局部语音；共享每课 900 秒／40 段 |
-| `TAVILY_API_KEY` | 可选 Secret | 配置后按需检索公共知识疑点，每课最多两次，不上传完整课堂材料；未配置也能完成识别与摘要 |
-
-这里的音频量是 **VAD 后原始块的累计时长，包含块间重叠**，不是录播总长度。块队列仍按单堂课隔离；空出的 Runner 名额可以分给其他课次。全局同时最多 1 台调度器和 14 个准备／识别／汇总／发布任务，最多 5 个活跃课次。75 分钟是调度目标，不是完成时限；15 台预算不包含无关 CI 作业。完整规则见 [共享队列](docs/shared-asr-queue.md) 和 [作业复核](docs/homework-review.md)。
-
-人工基础词表位于 [course_glossary.json](prompts/course_glossary.json)。同堂 Qwen、豆包和疑难筛选使用冻结词表，不在识别后用新候选重跑同堂音频。词表是上下文提示，不是全局替换规则，也不证明课堂实际讲过该词。自动词库的证据门槛见 [课程术语库](docs/automatic-course-glossary.md)。
-
-## 保存、恢复与历史数据
-
-正式数据库以加密分片保存于独立 `data` 分支。发布按单堂课范围合并，保留历史摘要、处理状态、删除标记和邮件回执；发生竞争时重新读取远端并普通快进推送，不强制覆盖。
-
-正式分片链的准备音频、输入哈希、识别结果和复核检查点通过加密 Actions artifacts 保留 **7 天**。失败恢复先复用成功块，只补未完成部分；摘要失败不会重跑已完成 ASR，云端调用的预留额度不会因重试重置。检查点缺失、过期、输入不符或额度未知时明确停止，避免默认为一节新课。
-
-共享模式另建 `codex/asr-queue-<run_id>-<task_slot>` 保存加密块队列；`codex/runner-pool-<run_id>` 保存加密派发记录，`codex/runner-pool-owner` 防止旧子任务未结束就开启新批次。`codex/runner-source-<run_id>` 冻结执行代码。这些分支不是正式数据库，当前不会自动清理；清理前须确认任务结束、恢复窗口及所需产物已保留。不要根据“分支不是 main”就直接删除活动队列。
-
-连续失败的课次不会因失败次数而被自动排除；失败三次后，按邮件配置发送一次去重提醒，后续正常任务仍会检查这些未完成课次。**Single Run** 保留定向重跑、导出、删除及失败记录重置等入口，采用单 Runner 流程，不能当作正式分片链的块级恢复入口。删除课次会清除摘要、转录和 PPT OCR，并保留永久忽略标记；不会在下一次扫描中自动重新识别。
-
-SMTP 不提供恰好一次投递保证；若服务端已收信但客户端未能保存回执，仍可能重复投递。保存与恢复细节见 [正式处理链](docs/parallel-course-pilot.md) 和 [全局 Runner 调度](docs/global-runner-pool.md)。
-
-## 前端查看器
+Safari 可在 Apple“密码”中保存网页网址、用户名 `iCourseNotes` 和数据库密钥，之后由系统提供自动填充。GitHub Pages 配置完成后，手动运行 **Deploy Frontend** 部署。[网页入口](https://lucasuiii.github.io/iCourseNotes/) · [部署工作流](.github/workflows/deploy-frontend.yml)
 
 ![课程与笔记查看器](docs/frontend.png)
 
-前端是静态页面，读取 `data` 分支的加密数据库，使用用户输入的 `DB_ENCRYPTION_KEY` 在浏览器内解密，不需要 UIS 凭证。PAT 和数据库密钥只保存在当前标签页的 `sessionStorage`；关闭标签页后失效。支持课程订阅编辑、课次查看、导出与删除。
+### 订阅、筛选和删除
 
-GitHub Pages 部署是可选且**仅手动触发**：配置 Pages 后运行 **Deploy Frontend**。处理课程和接收邮件不依赖 Pages。仓库公开不等于课堂内容可公开；API Key、明文数据库和课程文件不能提交到仓库。
+| Secret | 示例 | 行为 |
+| --- | --- | --- |
+| `COURSE_SESSION_RULES` | `12345=周一第1-2节\|周三第6-8节` | 课次白名单 |
+| `COURSE_SESSION_EXCLUSIONS` | `12345=周一第6-10节` | 固定排除，与课次重叠即排除 |
+| `COURSE_SESSION_OVERRIDE_DATES` | `2026-09-20,2026-10-01` | 调课日期绕过白名单，排除规则继续生效 |
 
-## 验证范围与限制
+白名单和排除支持每行一门课程。格式错误时任务停止并报告安全错误类型。
 
-当前正式链已完成一堂约 109 分钟录播的隔离验证：三个共享 Worker 完成全部 62 块，复核、非空转录和摘要、`LectureRunner` 保存及隔离发布均通过。后续摘要表达、提醒去重和子题号保留有回归测试与 CI 覆盖。[整课运行记录](https://github.com/Lucasuiii/Fudan_iCourse_Subscriber/actions/runs/37410686897)与 [PR #23](https://github.com/Lucasuiii/Fudan_iCourse_Subscriber/pull/23)保留验证证据。
+网页首页课程的“删除”先取消订阅，再提交清理该课程数据的任务。课程内的“删除并永久忽略”清除选定课次内容，并保存忽略标记供后续扫描使用。操作完成后刷新读取最新数据，结果未知时先检查对应 Actions。已经启动的冻结任务需要单独查看状态。
 
-这些结果证明流程连通，不能当作识别准确率听审或严格同输入性能对照。作业截图中的可靠单项会保留到最终摘要，但画面有题号不等于已经布置整份作业，清单完整性和模糊数字仍需核对。课末通知的跨块重点复核、跨课术语升确认和队列自动清理仍有改进空间；本次课堂验证没有执行正式发信或故障注入。
+### 故障与恢复
 
-## 文档导航
+成功识别块、音频指纹和复核记录随检查点保存。摘要阶段失败时可复用已完成 ASR，未知结果的模型调用保留其预留记录。缺失、过期或输入不一致的检查点会报告具体错误。
 
-开发者可先阅读[处理链代码结构](docs/pipeline-architecture.md)，了解核心模块、运行入口与检查点边界。
+云端正式流程的加密 Actions artifacts 保留7天，共享队列和派发分支记录任务状态。清理协调分支前确认任务结束、恢复窗口和所需结果。连续失败课次后续仍会扫描，失败提醒按邮件配置去重。[共享队列](docs/shared-asr-queue.md) · [资源恢复](docs/signed-media-transport.md)
 
-| 文档 | 内容 |
-| --- | --- |
-| [个人部署说明](PERSONAL_DEPLOYMENT.md) | Secrets、权限、私密筛选、数据操作和停用 |
-| [正式处理链](docs/parallel-course-pilot.md) | 规划、独立汇总、数据库保存、恢复和发布 |
-| [Qwen 运行说明](docs/qwen-only-runtime.md) | 本地识别后端、依赖、VAD 与推理边界 |
-| [共享 ASR 队列](docs/shared-asr-queue.md) | 动态领块、协调分支、故障恢复 |
-| [作业与课务复核](docs/homework-review.md) | 重点音频、多帧读图、题号佐证和摘要保留 |
-| [课程术语库](docs/automatic-course-glossary.md) | 基础库、候选库、确认库及同堂冻结 |
-| [媒体签名与范围续传](docs/signed-media-transport.md) | 获取完整音频、源标识与读取故障 |
-| [隔离分片对照](docs/qwen-sharded-pilot.md) | 保留的实验入口，与正式订阅流程分开 |
-| [早期 V2 设计记录](docs/legacy-design.md) | 历史调度与识别方案，不代表当前实现 |
+### 历史覆盖与交付
 
-## 开发
+历史课程先生成原稿与新稿对照，核对后凭覆盖指纹应用。发布按单堂课范围合并，验证基线、备份、加密往返及远端状态。普通快进推送发生竞争时重新读取远端。[历史更新](docs/historical-refresh.md)
 
-Python 依赖在 [requirements.txt](requirements.txt)，本地公式渲染依赖在 [package.json](package.json)。ASR 所需的 CPU 版 PyTorch 和 `qwen-asr` 由 [Actions 运行环境](.github/actions/qwen-pilot-runtime/action.yml) 单独安装；仅执行 `pip install -r requirements.txt` 不构成完整识别环境。
+摘要理论审核发现明确问题后，DeepSeek 根据原稿、问题和材料修订一次。`revised` 表示完成该次修订，最终内容仍可人工审阅。审核范围、原稿、响应和正文指纹保留用于追查。普通摘要和理论审核采用服务输出额度，修订当前显式设置32,000 token上限并关闭思考。截断、超时或无效回复会保留失败现场。[审核实现](src/pipeline/summary_review.py)
 
-配置测试所需依赖后，可运行隔离测试：
+## 开发与维护
+
+核心规则集中在 `src/`，本地 CLI 和 Actions 阶段调用共用实现。后端分别负责 CPU、MLX 和双路模型执行。维护时同时测试本地与云端正常入口、旧检查点和数据完整性。
 
 ```bash
 python -m unittest discover -s tests
 ```
 
-PDF／邮件渲染测试还需要系统字体、Pango 和 Cairo；环境配置参考 Actions。测试使用临时数据库、合成输入及模拟服务，不等于实际课程调用。修改正式处理逻辑后应区分隔离测试、完整课堂验证和真实发布验证，并保留旧输入与检查点。
+Mac 已有共享环境时可运行 `scripts/ci_local.sh`。测试需要 Python、Node 依赖，PDF 测试还需要字体、Pango 和 Cairo。CPU 识别模型环境由专用 Actions 配置安装，本地 MLX 依赖见 `requirements-local-mlx.txt`。[Python 依赖](requirements.txt) · [前端依赖](package.json) · [CPU 运行环境](.github/actions/qwen-pilot-runtime/action.yml)
 
-### 网页直接导出
+自动化测试覆盖模拟模型、临时 HTTP 服务、SQLite、加密与 Git 恢复。完整课堂的准确性、题号和图文对应还需实际课程验证。MLX bf16 与 CPU float32 的数值路径和执行调度可能产生具体转录差异。
 
-课程列表或笔记详情页点击“导出”，可选择课次后下载Markdown或保存PDF。无图时下载`.md`，有图时下载包含`figures/`的ZIP；解压后可在Markdown编辑器中查看。PDF使用页内排版预览，点击“保存为PDF”后在浏览器打印窗口选择PDF保存，包含公式与课堂原图。两项均只在浏览器处理，不需要GitHub管理授权、不触发Actions或邮件。原有复制Markdown和后台寄送PDF仍保留。
+## 文档导航
+
+| 文档 | 内容 |
+| --- | --- |
+| [本机安装与运行](docs/local-history-refresh.md) | Mac 环境、权重、入口、预览、续跑和历史发布 |
+| [共用识别流程](docs/recognition-pipeline.md) | 两端调用链、质量规则、资源恢复及兼容约定 |
+| [处理链代码结构](docs/pipeline-architecture.md) | 核心模块与运行入口 |
+| [个人部署](PERSONAL_DEPLOYMENT.md) | Secrets、权限、数据操作与停用 |
+| [正式处理链](docs/parallel-course-pilot.md) | 规划、识别、汇总和发布 |
+| [共享 ASR 队列](docs/shared-asr-queue.md) | 动态领块、协调分支与恢复 |
+| [作业与课务复核](docs/homework-review.md) | 多帧图像、题号依据与摘要保留 |
+| [课程术语库](docs/automatic-course-glossary.md) | 候选、确认、日期隔离与冻结 |
+| [媒体签名与范围续传](docs/signed-media-transport.md) | 完整音频获取和源标识验证 |
+| [隔离分片对照](docs/qwen-sharded-pilot.md) | 实验入口与验证方式 |
+| [早期设计记录](docs/legacy-design.md) | 历史调度与识别方案 |

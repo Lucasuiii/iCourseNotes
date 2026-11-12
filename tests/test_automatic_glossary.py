@@ -101,6 +101,18 @@ class AutomaticGlossaryTests(unittest.TestCase):
             finally:
                 db.conn.close()
 
+    def test_confirmed_terms_survive_a_full_thirty_word_base_glossary(self):
+        db=MagicMock()
+        db.get_lecture.return_value={'date':'2026-11-12'}
+        glossary=AutomaticGlossary(db,'10')
+        for title in ('概率论','数据结构（H）'):
+            with self.subTest(title=title), patch.object(glossary,'terms',return_value=['课程确认新术语']):
+                frozen=glossary.freeze(title,'2')
+                self.assertEqual(len(frozen['base_terms']),30)
+                self.assertIn('课程确认新术语',frozen['terms'])
+                self.assertEqual(len(frozen['terms']),30)
+                self.assertEqual(len(set(frozen['terms'])),30)
+
     def test_summary_reply_with_unescaped_latex_keeps_formulas(self):
         # Strict JSON turned "\frac" into a form feed and "\theta" into a tab.
         raw = '{"summary":"### 正态\\n\\n$$\\nf(x)=\\frac{1}{\\sqrt{2\\pi}}e^{-x^2/2},\\ \\theta\\in\\Theta$$","keywords":[]}'

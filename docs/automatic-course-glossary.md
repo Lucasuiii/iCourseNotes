@@ -40,4 +40,3 @@
 ```bash
 python -m scripts.encrypt_course_glossary .local-history-refresh/course_glossary.json
 ```
-

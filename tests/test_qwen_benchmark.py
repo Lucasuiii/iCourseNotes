@@ -82,7 +82,8 @@ class QwenBenchmarkTests(unittest.TestCase):
                             'QWEN_ASR_TEST_REQUESTS': json.dumps(values)}), self.assertRaises(ValueError):
                 selected_test_request()
 
-    def test_probability_test_does_not_use_numerical_course_hints(self):
+    @patch('src.ai.course_glossary._entries', return_value=[{'courses':['概率论'],'terms':['条件概率']}])
+    def test_probability_test_does_not_use_numerical_course_hints(self, entries):
         terms = course_terms('概率论')
         self.assertIn('条件概率', terms)
         self.assertEqual(recognition_context('概率论'), '术语：' + '、'.join(terms))

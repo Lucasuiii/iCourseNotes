@@ -22,7 +22,7 @@ def baseline(duration=5, rows=None):
     return {'source': 'authorized_full_runtime', 'model': MODEL, 'revision': REVISION,
             'complete': True, 'audio_seconds': duration, 'seconds': 10,
             'recognition_terms': ['矩阵'], 'full_chunks': rows,
-            'selection': {'course_id': '38404', 'sub_id': '123', 'course_title': '高等代数Ⅰ'},
+            'selection': {'course_id': '10001', 'sub_id': '123', 'course_title': '高等代数Ⅰ'},
             'vad_windows': [[0, duration]], 'transcript': '基线',
             'reference_evidence': {'selection': {'course_title': '高等代数Ⅰ'}, 'ppt': []}}
 

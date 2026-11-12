@@ -8,7 +8,7 @@ name: Historical Lecture Refresh
         options: [preview, apply]
         default: preview
       targets:
-        description: 'Preview only: {"course_id":"38404","lecture_ids":"123,456"}, at most five exact existing lecture IDs'
+        description: 'Preview only: {"course_id":"10001","lecture_ids":"123,456"}, at most five exact existing lecture IDs'
         type: string
         default: ''
       recipient_public_key:

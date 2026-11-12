@@ -225,10 +225,10 @@ class ClassroomSelectionTests(unittest.TestCase):
             {'sub_id':'7','date':'2026-09-29'}, {'sub_id':'6','date':'2026-09-28'},
             {'sub_id':'5','date':'2026-09-22'}]}
         client.get_video_url.return_value='private-url'
-        task,_=pipeline.latest_validation_task(client,db,'38404',before_date='2026-09-28')
+        task,_=pipeline.latest_validation_task(client,db,'10001',before_date='2026-09-28')
         self.assertEqual(task[2]['sub_id'],'5')
         self.assertEqual(task[2]['_validation']['before_date'],'2026-09-28')
-        client.get_video_url.assert_called_once_with('38404','5')
+        client.get_video_url.assert_called_once_with('10001','5')
         for cutoff in ('2026-02-30','2026-9-28','bad'):
             with patch.dict(os.environ,{'VALIDATION_BEFORE_DATE':cutoff}):
                 with self.assertRaises(ValueError):pipeline.validation_before_date()
@@ -245,11 +245,11 @@ class ClassroomSelectionTests(unittest.TestCase):
             {'sub_id':'5','date':'2026-09-22','sub_title':'第1-2节'},
             {'sub_id':'4','date':'2026-09-21','sub_title':'第9-10节'}]}
         client.get_video_url.return_value='private-url'
-        with patch('src.runtime.config.COURSE_SESSION_EXCLUSIONS',parse_course_session_exclusions('38404=周一第6-10节')):
-            task,_=pipeline.latest_validation_task(client,db,'38404',today='2026-10-05',rank=2)
+        with patch('src.runtime.config.COURSE_SESSION_EXCLUSIONS',parse_course_session_exclusions('10001=周一第6-10节')):
+            task,_=pipeline.latest_validation_task(client,db,'10001',today='2026-10-05',rank=2)
         self.assertEqual(task[2]['sub_id'],'5')
         self.assertEqual(task[2]['_validation']['skipped_excluded'],2)
-        self.assertEqual([c.args for c in client.get_video_url.call_args_list],[('38404','7'),('38404','5')])
+        self.assertEqual([c.args for c in client.get_video_url.call_args_list],[('10001','7'),('10001','5')])
 
     def test_penultimate_actual_recording_skips_empty_holidays_and_duplicates(self):
         db = MagicMock(); db.get_lecture.return_value = None
@@ -261,11 +261,11 @@ class ClassroomSelectionTests(unittest.TestCase):
             {'sub_id': '6', 'date': '2026-09-27'},
             {'sub_id': '5', 'date': '2026-09-22'}]}
         client.get_video_url.side_effect = [None, 'latest-private-url', None, 'penultimate-private-url']
-        task, _ = pipeline.latest_validation_task(client, db, '38404', today='2026-10-05', rank=2)
+        task, _ = pipeline.latest_validation_task(client, db, '10001', today='2026-10-05', rank=2)
         self.assertEqual(task[2]['sub_id'], '5')
         self.assertEqual(task[2]['_validation'], {'date': '2026-09-22', 'skipped_unavailable': 2, 'playable_rank': 2})
         self.assertEqual([c.args for c in client.get_video_url.call_args_list],
-                         [('38404', '8'), ('38404', '7'), ('38404', '6'), ('38404', '5')])
+                         [('10001', '8'), ('10001', '7'), ('10001', '6'), ('10001', '5')])
 
     def test_rank_does_not_fall_back_to_latest_if_only_one_recording_exists(self):
         db = MagicMock(); db.get_lecture.return_value = None
@@ -273,7 +273,7 @@ class ClassroomSelectionTests(unittest.TestCase):
             'lectures': [{'sub_id': '1', 'date': '2026-09-29'}]}
         client.get_video_url.return_value = 'private-url'
         with self.assertRaises(ValueError):
-            pipeline.latest_validation_task(client, db, '38404', today='2026-10-05', rank=2)
+            pipeline.latest_validation_task(client, db, '10001', today='2026-10-05', rank=2)
 
     def test_rank_requires_isolated_validation_and_bounded_integer(self):
         for raw in ('0', '11', '2.0', '-1', 'oops'):
@@ -352,11 +352,11 @@ class ClassroomSelectionTests(unittest.TestCase):
 
     def test_rerun_cannot_change_the_selected_recording_rank(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
-            'RUNNER_TEMP': tmp, 'VALIDATION_COURSE_ID': '38404', 'VALIDATION_LECTURE_RANK': '2',
-            'PUBLISH_RESULTS': 'false', 'SEND_EMAIL': 'false', 'COURSE_IDS': '38404'}), \
+            'RUNNER_TEMP': tmp, 'VALIDATION_COURSE_ID': '10001', 'VALIDATION_LECTURE_RANK': '2',
+            'PUBLISH_RESULTS': 'false', 'SEND_EMAIL': 'false', 'COURSE_IDS': '10001'}), \
              patch.object(pipeline, 'artifact', return_value=True), \
              patch.object(pipeline, 'decode', return_value={'queue.json': json.dumps([
-                 ['38404', '高代', {'sub_id': '1', '_validation': {'date': '2026-09-29', 'playable_rank': 1}}]
+                 ['10001', '高代', {'sub_id': '1', '_validation': {'date': '2026-09-29', 'playable_rank': 1}}]
              ]).encode()}):
             with self.assertRaises(ValueError): pipeline.plan()
 
@@ -386,17 +386,17 @@ class ClassroomSelectionTests(unittest.TestCase):
         client.get_video_url.return_value = None
         db = MagicMock(); db.get_lecture.return_value = None
         with self.assertRaises(ValueError):
-            pipeline.latest_validation_task(client, db, '38404', today='2026-10-05')
-        client.get_course_detail.assert_called_once_with('38404')
+            pipeline.latest_validation_task(client, db, '10001', today='2026-10-05')
+        client.get_course_detail.assert_called_once_with('10001')
 
     def test_validation_requires_both_side_effect_flags_disabled(self):
         for publish, email in [('true','false'), ('false','true'), ('','false')]:
-            with patch.dict(os.environ, {'VALIDATION_COURSE_ID':'38404','COURSE_IDS':'38404,40329',
+            with patch.dict(os.environ, {'VALIDATION_COURSE_ID':'10001','COURSE_IDS':'10001,10003',
                                          'PUBLISH_RESULTS':publish,'SEND_EMAIL':email}):
                 with self.assertRaises(ValueError): pipeline.validation_course()
-        with patch.dict(os.environ, {'VALIDATION_COURSE_ID':'38404','COURSE_IDS':'38404,40329',
+        with patch.dict(os.environ, {'VALIDATION_COURSE_ID':'10001','COURSE_IDS':'10001,10003',
                                      'PUBLISH_RESULTS':'false','SEND_EMAIL':'false'}):
-            self.assertEqual(pipeline.validation_course(), '38404')
+            self.assertEqual(pipeline.validation_course(), '10001')
 
     def test_validation_course_list_is_bounded_subscribed_and_isolated(self):
         with patch.dict(os.environ, {'COURSE_IDS':'10,20,30,40,50,60',

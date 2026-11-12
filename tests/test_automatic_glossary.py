@@ -101,6 +101,19 @@ class AutomaticGlossaryTests(unittest.TestCase):
             finally:
                 db.conn.close()
 
+    def test_confirmed_terms_survive_a_full_thirty_word_base_glossary(self):
+        db=MagicMock()
+        db.get_lecture.return_value={'date':'2026-11-12'}
+        glossary=AutomaticGlossary(db,'10')
+        for title in ('示例课程甲','示例课程乙'):
+            with self.subTest(title=title), patch.object(glossary,'terms',return_value=['课程确认新术语']), \
+                 patch('src.ai.course_glossary.course_terms',return_value=[f'基础术语{i}' for i in range(30)]):
+                frozen=glossary.freeze(title,'2')
+                self.assertEqual(len(frozen['base_terms']),30)
+                self.assertIn('课程确认新术语',frozen['terms'])
+                self.assertEqual(len(frozen['terms']),30)
+                self.assertEqual(len(set(frozen['terms'])),30)
+
     def test_summary_reply_with_unescaped_latex_keeps_formulas(self):
         # Strict JSON turned "\frac" into a form feed and "\theta" into a tab.
         raw = '{"summary":"### 正态\\n\\n$$\\nf(x)=\\frac{1}{\\sqrt{2\\pi}}e^{-x^2/2},\\ \\theta\\in\\Theta$$","keywords":[]}'
@@ -166,7 +179,7 @@ class AutomaticGlossaryTests(unittest.TestCase):
             store.save('1', [keyword], sources={'ppt': ['Householder变换'], 'cloud': ['使用Householder变换']})
             with patch('src.ai.course_glossary.course_terms', return_value=['基础词']):
                 snapshot = store.freeze('课', '2')
-                self.assertEqual(snapshot['terms'], ['基础词', 'Householder'])
+                self.assertEqual(snapshot['terms'], ['Householder', '基础词'])
                 self.assertEqual(store.freeze('课', '1')['terms'], ['基础词'])
                 db.conn.execute("UPDATE lectures SET date='2026-09-02' WHERE sub_id='1'"); db.conn.commit()
                 self.assertEqual(store.freeze('课', '2')['terms'], ['基础词'])

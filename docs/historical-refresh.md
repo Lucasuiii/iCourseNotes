@@ -19,7 +19,7 @@ python -m scripts.history_review_client keygen
 | 输入 | 内容 |
 | --- | --- |
 | `action` | `preview` |
-| `targets` | 例如 `{"course_id":"38404","lecture_ids":"123,456"}`；示例课次 ID 仅为占位，填写实际 `sub_id` |
+| `targets` | 例如 `{"course_id":"10001","lecture_ids":"123,456"}`；示例课次 ID 仅为占位，填写实际 `sub_id` |
 | `recipient_public_key` | 上一步显示的公钥 |
 | `source_run_id`、`approval_sha256` | 留空 |
 

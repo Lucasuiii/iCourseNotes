@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.ai.summarizer import Summarizer, load_system_prompt
 
@@ -64,7 +64,8 @@ class SummarizerPromptTests(unittest.TestCase):
         )
         summarizer = Summarizer.__new__(Summarizer)
         summarizer.system_prompt = load_system_prompt()
-        summarizer._call_llm(client, "model", "数值算法与案例分析Ⅰ", "劳动举证")
+        with patch("src.ai.course_glossary.course_terms",return_value=["希尔伯特矩阵"]):
+            summarizer._call_llm(client, "model", "示例课程", "劳动举证")
         message = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("<course_material>\n劳动举证\n</course_material>", message)
         self.assertIn("<terminology_reference>", message)

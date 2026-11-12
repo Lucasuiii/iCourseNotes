@@ -157,7 +157,8 @@ class AutomaticGlossary:
         base = course_terms(title)
         # Unknown lecture dates cannot safely choose earlier confirmed records.
         confirmed = self.terms(exclude_sub_id=sub_id, before_date=date) if date else []
-        terms = normalize_terms(base+confirmed)
+        # Evidence-confirmed course terms retain space when the base list is full.
+        terms = normalize_terms(confirmed+base)
         return {'schema': 1, 'course_id': self.course_id, 'sub_id': str(sub_id),
                 'lecture_date': date or '', 'base_terms': base, 'confirmed_terms': confirmed,
                 'terms': terms, 'terms_sha256': fingerprint(terms)}

@@ -306,7 +306,7 @@ class SummaryFiguresTests(unittest.TestCase):
         self.assertIsNot(selected[-1].get('homework_complete'), True)
 
     def test_homework_frame_filed_under_a_lecture_section_is_also_shown_in_the_reminder(self):
-        # 38404/747288: the end-of-class board (P58 list plus the last topic) was captioned
+        # 10001/20001: the end-of-class board (P58 list plus the last topic) was captioned
         # as lecture content under section 9, so the reminder had no image.
         import base64, io
         from PIL import Image

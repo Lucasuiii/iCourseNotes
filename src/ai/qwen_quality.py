@@ -13,12 +13,24 @@ def normalize(text):
 
 
 def context_echo(text, context):
+    """Find copied prompt spans even inside long or repeated speech output.
+
+    An ordered run is stronger evidence than several unrelated terms appearing
+    throughout a mathematical explanation. Never strip a match from the text:
+    the caller must recover the corresponding audio without the prompt.
+    """
     value, reference = normalize(text), normalize(context)
-    terms = [normalize(t) for t in re.split(r"[、,，;；]", context.split("术语：")[-1])]
-    terms = [t for t in terms if len(t) >= 2]
-    return bool(value and (value == reference or
-                (len(terms) >= 5 and sum(t in value for t in terms) >= 5
-                 and len(value) <= len(reference) * 1.5)))
+    if not value or not reference:
+        return False
+    if value == reference:
+        return True
+    terms = [normalize(term) for term in re.split(r"[、,，;；]", context.split("术语：")[-1])]
+    terms = [term for term in terms if term]
+    if len(terms) < 5:
+        return False
+    return reference in value or any(len(span) >= 12 and span in value
+               for span in (''.join(terms[index:index + 5])
+                            for index in range(len(terms) - 4)))
 
 
 def low_information(text):

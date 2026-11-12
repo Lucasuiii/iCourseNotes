@@ -111,8 +111,8 @@ def homework_figure_frames(frames):
     return output
 
 
-def cache_homework_frames(db, course, sub, frames):
-    """Durably retain bounded previews before draft generation can fail.
+def cache_figure_frames(db, course, sub, frames):
+    """Durably retain platform and homework previews across execution stages.
 
     Use the existing course-scoped asset key, replacing previews with selected
     assets later. Never overwrite a reserved/completed selection or its ledger.
@@ -134,9 +134,20 @@ def cache_homework_frames(db, course, sub, frames):
                 {'data': base64.b64encode(data).decode(), 'sha256': hashlib.sha256(data).hexdigest()})
         except Exception:
             continue
+    previous = saved.get('homework_previews', []) if saved else []
+    if saved:
+        restore_homework_frames(saved, course, sub)
+    merged = {(row['sha256'], row.get('candidate_id'), row.get('seconds')): row for row in previous + cached}
+    homework = [row for row in merged.values() if row.get('candidate_id')]
+    ordinary = [row for row in merged.values() if not row.get('candidate_id')]
+    cached = homework[-12:] + spread(ordinary, max(0, 12-len(homework)))
     if cached:
         db.write_meta(key, json.dumps({'schema': 1, 'course_id': str(course), 'sub_id': str(sub),
             'status': 'frames_only', 'figures': [], 'homework_previews': cached}, ensure_ascii=False))
+
+
+# Retain the existing public import for saved-run and app callers.
+cache_homework_frames = cache_figure_frames
 
 
 def restore_homework_frames(state, course, sub):
@@ -414,9 +425,9 @@ def add_figures(db, client, summarizer, course, sub, summary, pages, segments, d
     try:
         if client is None:
             from main import login_with_retry
-            from src.api.icourse import ICourseClient
+            from src.api.media_client import create_media_client
             scoped = login_with_retry()
-            client = ICourseClient(scoped)
+            client = create_media_client(scoped)
         candidates, errors = collect(client, course, sub, pages, segments, duration,
                                      retained=list(restored)+list(retained))
         state.update(image_count=len(candidates), capture_errors=errors[:24])

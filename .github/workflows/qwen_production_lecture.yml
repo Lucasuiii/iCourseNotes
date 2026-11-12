@@ -7,7 +7,7 @@ name: Qwen Production Lecture
         required: true
       automatic_terms:
         type: boolean
-        default: false
+        default: true
       shard_mode:
         type: string
         default: '2'

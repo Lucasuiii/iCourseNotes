@@ -39,13 +39,13 @@ def recognizer():
 
 
 class BlockRecoveryTests(unittest.TestCase):
-    def test_normal_and_echo_retry_report_distinct_caps_and_restore_model(self):
-        for echo,limit in [(False,2048),(True,256)]:
+    def test_normal_and_echo_retry_share_full_output_budget_and_restore_model(self):
+        for echo,limit in [(False,2048),(True,2048)]:
             with self.subTest(echo=echo),patch.dict(sys.modules,MODULES):
                 t=recognizer();t.set_terms(['矩阵','条件数','扰动','范数','逆矩阵'])
                 texts=['术语：矩阵、条件数、扰动、范数、逆矩阵','截断文字'] if echo else ['截断文字']
                 t._model.transcribe.side_effect=[[SimpleNamespace(text=x)] for x in texts]
-                t._model.processor.tokenizer.encode.side_effect=[list(range(5)),list(range(248))] if echo else [list(range(2040))]
+                t._model.processor.tokenizer.encode.side_effect=[list(range(5)),list(range(2040))] if echo else [list(range(2040))]
                 with self.assertRaises(QwenTokenBudgetError) as caught:t._recognize(np.zeros(10))
                 self.assertEqual(caught.exception.diagnostic['token_limit'],limit)
                 self.assertEqual(caught.exception.diagnostic['generation_phase'],'unhinted_echo_retry' if echo else 'normal')
@@ -68,15 +68,15 @@ class BlockRecoveryTests(unittest.TestCase):
         with patch.dict(sys.modules,MODULES):
             t=recognizer();t.set_terms(['矩阵','条件数','扰动','范数','逆矩阵'])
             native=t._model.model.generate
-            native.side_effect=lambda **kw:SimpleNamespace(sequences=np.zeros((1,kw['max_new_tokens']+3 if kw['max_new_tokens']==256 else 13)))
+            native.side_effect=lambda **kw:SimpleNamespace(sequences=np.zeros((1,kw['max_new_tokens']+3 if native.call_count==2 else 13)))
             texts=iter(['术语：矩阵、条件数、扰动、范数、逆矩阵','短文字'])
             def transcribe(**kw):
                 t._model.model.generate(input_ids=np.zeros((1,3)),max_new_tokens=t._model.max_new_tokens)
                 return [SimpleNamespace(text=next(texts))]
             t._model.transcribe.side_effect=transcribe;t._model.processor.tokenizer.encode.return_value=[1,2]
             with self.assertRaises(QwenTokenBudgetError) as caught:t._recognize(np.zeros(10))
-            self.assertEqual(caught.exception.diagnostic['token_limit'],256)
-            self.assertEqual(caught.exception.diagnostic['generated_tokens'],256)
+            self.assertEqual(caught.exception.diagnostic['token_limit'],2048)
+            self.assertEqual(caught.exception.diagnostic['generated_tokens'],2048)
             self.assertIs(t._model.model.generate,native);self.assertEqual(t._model.max_new_tokens,2048)
             self.assertIn('stopping_criteria',native.call_args.kwargs)
 
@@ -100,7 +100,8 @@ class BlockRecoveryTests(unittest.TestCase):
         with patch.dict(sys.modules,MODULES):
             rows=t.recognize_blocks([{'chunk_id':3,'start':0,'end':1}],lambda b:np.zeros(RATE))
         self.assertEqual(rows[0]['text'],'完整内容');self.assertEqual(rows[0]['quality_state'],'bounded_retry')
-        self.assertEqual(t._recognize.call_args.kwargs,{'unhinted':True})
+        self.assertTrue(t._recognize.call_args.kwargs['unhinted'])
+        self.assertIsInstance(t._recognize.call_args.kwargs['deadline'],float)
 
     def test_split_preserves_all_samples_and_discards_overlong_outputs(self):
         t=recognizer();calls=[];successful=[]

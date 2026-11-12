@@ -10,11 +10,12 @@ import time
 
 from src.runtime import config
 from src.ai.qwen_segmentation import plan_long_chunks, deduplicated_chunk_rows
-from src.ai.qwen_quality import context_echo, low_information, bounded_retry, generation_audit
+from src.ai.qwen_quality import bounded_retry, generation_audit
+from src.ai.recognition_policy import MAX_NEW_TOKENS, normalize_terms, recognize_with_context, decode_audio_chunks
 
 from src.ai.qwen_model import MODEL, REVISION, RATE
-NORMAL_TOKENS=2048
-UNHINTED_TOKENS=256
+NORMAL_TOKENS=MAX_NEW_TOKENS
+UNHINTED_TOKENS=MAX_NEW_TOKENS
 RESCUE_SECONDS=600
 MAX_BLOCK_ATTEMPTS=32
 
@@ -61,7 +62,7 @@ class QwenTranscriber:
     def last_speech_windows(self): return self._last_speech_windows
 
     def set_terms(self, terms):
-        self._terms=list(dict.fromkeys(t.strip() for t in terms if isinstance(t,str) and t.strip()))[:30]
+        self._terms=normalize_terms(terms)
 
     def reset_lecture_state(self):
         self._last_speech_windows=[];self.last_chunks=[];self.last_vad_windows=[]
@@ -85,63 +86,43 @@ class QwenTranscriber:
         gc.collect()
 
     def _recognize(self, samples, *, unhinted=False, deadline=None):
+        return recognize_with_context(self._decode, samples, self._terms,
+                                      unhinted=unhinted, deadline=deadline)
+
+    def _decode(self, samples, *, context, phase, deadline):
+        return decode_audio_chunks(self._decode_chunk, samples, self._terms,
+                                   context=context, phase=phase, deadline=deadline)
+
+    def _decode_chunk(self, samples, *, context, phase, deadline):
+        """One CPU decode with actual generated-token and deadline auditing."""
         import torch
         from transformers import StoppingCriteriaList
-        context=('术语：'+'、'.join(self._terms)) if self._terms and not unhinted else ''
-        evidence=[]
-        def capture(generations,phase,timed_out):
-            for item in generations:
-                record=dict(item,generation_phase=phase)
-                if timed_out: record['stop_reason']='deadline'
-                evidence.append(record)
-        def check(result, phase, limit, generations):
-            tokens=len(self._model.processor.tokenizer.encode(result.text,add_special_tokens=False))
-            capped=next((g for g in generations if g['generated_tokens']>=g['token_limit']),None)
-            if capped or tokens>=limit-8:
-                error=QwenTokenBudgetError(phase,capped['token_limit'] if capped else limit,tokens,
-                    capped['generated_tokens'] if capped else None)
-                error.diagnostic['generation_diagnostics']=list(evidence)
-                raise error
-        limit = (bounded_retry(self._model,StoppingCriteriaList,
-                    seconds=max(0,deadline-time.monotonic()),tokens=NORMAL_TOKENS,
+        limit = (bounded_retry(self._model, StoppingCriteriaList,
+                    seconds=max(0, deadline-time.monotonic()), tokens=NORMAL_TOKENS,
                     clock=time.monotonic) if deadline is not None else nullcontext({'timed_out':False}))
-        with limit as state, generation_audit(self._model,clock=time.monotonic) as generations, torch.inference_mode():
-            result=self._model.transcribe(audio=(samples,RATE),context=context,language='Chinese')[0]
-        expired=state['timed_out'] or deadline is not None and time.monotonic() >= deadline
-        capture(generations,'unhinted' if unhinted else 'normal',expired)
+        with limit as state, generation_audit(self._model, clock=time.monotonic) as generations, torch.inference_mode():
+            result = self._model.transcribe(audio=(samples, RATE), context=context, language='Chinese')[0]
+        expired = state['timed_out'] or deadline is not None and time.monotonic() >= deadline
+        evidence = [dict(item, generation_phase=phase) for item in generations]
         if expired:
-            return {'text':'','quality_state':'retry_timeout','generation_diagnostics':evidence}
-        row={'text':result.text,'quality_state':'recognized','generation_diagnostics':evidence}
-        check(result,'unhinted' if unhinted else 'normal',NORMAL_TOKENS,generations)
-        if context and context_echo(result.text,context):
-            if deadline is not None and time.monotonic() >= deadline:
-                return {'text':'','quality_state':'retry_timeout','generation_diagnostics':evidence}
-            with bounded_retry(self._model,StoppingCriteriaList,
-                    seconds=min(60,max(0,deadline-time.monotonic())) if deadline is not None else 60,
-                    clock=time.monotonic) as state, \
-                    generation_audit(self._model,clock=time.monotonic) as generations, torch.inference_mode():
-                result=self._model.transcribe(audio=(samples,RATE),context='',language='Chinese')[0]
-            expired=state['timed_out'] or deadline is not None and time.monotonic() >= deadline
-            capture(generations,'unhinted_echo_retry',expired)
-            if expired:
-                row.update(text='',quality_state='retry_timeout')
-            else:
-                check(result,'unhinted_echo_retry',UNHINTED_TOKENS,generations)
-                row.update(text=result.text,quality_state='unhinted_retry')
-        if context and context_echo(row['text'],context):
-            row.update(text='',quality_state='unresolved_context_echo')
-        if low_information(row['text']):
-            if row['quality_state'] not in ('retry_timeout','unresolved_context_echo'):
-                row['quality_state']='low_information'
-            row['text']=''
-        return row
+            for item in evidence:
+                item['stop_reason'] = 'deadline'
+            return {'text':'', 'quality_state':'retry_timeout', 'generation_diagnostics':evidence}
+        tokens = len(self._model.processor.tokenizer.encode(result.text, add_special_tokens=False))
+        capped = next((g for g in generations if g['generated_tokens'] >= g['token_limit']), None)
+        if capped or tokens >= NORMAL_TOKENS-8:
+            error = QwenTokenBudgetError(phase, capped['token_limit'] if capped else NORMAL_TOKENS, tokens,
+                                        capped['generated_tokens'] if capped else None)
+            error.diagnostic['generation_diagnostics'] = evidence
+            raise error
+        return {'text':result.text, 'quality_state':'recognized', 'generation_diagnostics':evidence}
 
     def _rescue_recognize(self, samples, budget):
         """Backend hook: retain bounded PyTorch rescue for production workers."""
         from transformers import StoppingCriteriaList
         with bounded_retry(self._model, StoppingCriteriaList, seconds=budget,
                            tokens=NORMAL_TOKENS, clock=time.monotonic) as state:
-            row = self._recognize(samples, unhinted=True)
+            row = self._recognize(samples, unhinted=True, deadline=time.monotonic()+budget)
         return dict(row, text='', quality_state='retry_timeout') if state['timed_out'] else row
 
     def _recognize_resilient(self, samples, block, deadline):

@@ -372,6 +372,26 @@ class SummaryFiguresTests(unittest.TestCase):
         self.assertNotIn('homework_previews', json.loads(self.db.read_meta('summary_figures:2')))
         api.with_options.assert_called_once_with(max_retries=0)
 
+    def test_platform_and_homework_frames_survive_stage_restart_together(self):
+        platform = {'image': base64.b64decode(self.image['data']), 'seconds': 125,
+                    'source': 'platform_screenshot'}
+        figures.cache_figure_frames(self.db, '1', '2', [platform])
+        first = json.loads(self.db.read_meta('summary_figures:2'))
+        first_hash = first['homework_previews'][0]['sha256']
+        figures.cache_homework_frames(self.db, '1', '2', [self.homework_frame()])
+        saved = json.loads(self.db.read_meta('summary_figures:2'))
+        self.assertEqual(len(saved['homework_previews']), 2)
+        ordinary = next(row for row in saved['homework_previews'] if not row.get('candidate_id'))
+        self.assertEqual(ordinary['sha256'], first_hash)
+        reopened = Database(str(self.path))
+        try:
+            restored = figures.restore_homework_frames(json.loads(reopened.read_meta('summary_figures:2')), '1', '2')
+            self.assertEqual({row['source'] for row in restored}, {'platform_screenshot', 'video_frame'})
+        finally:
+            reopened.conn.close()
+        figures.cache_figure_frames(self.db, '1', '2', [platform])
+        self.assertEqual(len(json.loads(self.db.read_meta('summary_figures:2'))['homework_previews']), 2)
+
     def test_frame_cache_never_overwrites_reserved_selection_or_exceeds_budget(self):
         figures.cache_homework_frames(self.db, '1', '2', [self.homework_frame(i) for i in range(20)])
         self.assertEqual(len(json.loads(self.db.read_meta('summary_figures:2'))['homework_previews']), 12)

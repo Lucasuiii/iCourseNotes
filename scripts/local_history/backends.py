@@ -1,9 +1,11 @@
 """MLX Apple GPU adapter; immutable weights recorded independently of CPU revision."""
 import gc
+import hashlib
 import time
 from pathlib import Path
 from src.ai.qwen_transcriber import QwenTranscriber, QwenTokenBudgetError, NORMAL_TOKENS
-from src.ai.qwen_quality import context_echo, low_information
+from src.ai.qwen_quality import context_echo
+from src.ai.recognition_policy import decode_audio_chunks
 
 
 class MLXTranscriber(QwenTranscriber):
@@ -17,12 +19,14 @@ class MLXTranscriber(QwenTranscriber):
             from mlx_qwen3_asr import load_model
             self._model, _ = load_model(str(self.model_path), dtype=mx.bfloat16)
 
-    def _recognize(self, samples, *, unhinted=False, deadline=None):
-        if deadline is not None and time.monotonic() >= deadline:
-            return {'text': '', 'quality_state': 'retry_timeout'}
+    def _decode(self, samples, *, context, phase, deadline):
+        return decode_audio_chunks(self._decode_chunk, samples, self._terms,
+                                   context=context, phase=phase, deadline=deadline)
+
+    def _decode_chunk(self, samples, *, context, phase, deadline):
+        """One MLX decode; shared policy owns echo detection and recovery."""
         import mlx.core as mx
         from mlx_qwen3_asr import transcribe
-        context = '术语：'+'、'.join(self._terms) if self._terms and not unhinted else ''
         def progress(*args, **kwargs):
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError('MLX generation deadline')
@@ -35,17 +39,8 @@ class MLXTranscriber(QwenTranscriber):
         if deadline is not None and time.monotonic() >= deadline:
             return {'text': '', 'quality_state': 'retry_timeout'}
         if result.truncated:
-            raise QwenTokenBudgetError('mlx', NORMAL_TOKENS, NORMAL_TOKENS)
-        text = result.text.strip()
-        if context and context_echo(text, context):
-            if not unhinted:
-                row = self._recognize(samples, unhinted=True, deadline=deadline)
-                if context_echo(row['text'], context):
-                    row.update(text='', quality_state='unresolved_context_echo')
-                return row
-            return {'text': '', 'quality_state': 'unresolved_context_echo'}
-        return {'text': '' if low_information(text) else text,
-                'quality_state': 'low_information' if low_information(text) else 'recognized'}
+            raise QwenTokenBudgetError(phase, NORMAL_TOKENS, NORMAL_TOKENS)
+        return {'text': result.text, 'quality_state': 'recognized'}
 
     def _rescue_recognize(self, samples, budget):
         return self._recognize(samples, unhinted=True, deadline=time.monotonic()+budget)
@@ -69,33 +64,25 @@ class MLXBatchTranscriber(MLXTranscriber):
         mx.set_memory_limit(7*1024**3)
         super()._init()
 
-    def _recognize(self, samples, *, unhinted=False, deadline=None):
+    def _decode(self, samples, *, context, phase, deadline):
         prefetched = getattr(self, '_prefetched', None)
-        if prefetched is None or unhinted:
-            return super()._recognize(samples, unhinted=unhinted, deadline=deadline)
+        if prefetched is None or phase != 'normal':
+            return super()._decode(samples, context=context, phase=phase, deadline=deadline)
         self._prefetched = None
         if prefetched.get('timed_out'):
             return {'text':'', 'quality_state':'retry_timeout'}
         if prefetched['truncated']:
-            raise QwenTokenBudgetError('mlx-batch2', NORMAL_TOKENS, NORMAL_TOKENS)
-        context = '术语：'+'、'.join(self._terms) if self._terms else ''
-        text = prefetched['text'].strip()
-        if context and context_echo(text, context):
-            # Identical full-block, unhinted bounded retry to the serial adapter.
-            row = super()._recognize(samples, unhinted=True, deadline=deadline)
-            if context_echo(row['text'], context):
-                row.update(text='',quality_state='unresolved_context_echo')
-            return row
-        return {'text':'' if low_information(text) else text,
-                'quality_state':'low_information' if low_information(text) else 'recognized'}
+            raise QwenTokenBudgetError(phase, NORMAL_TOKENS, NORMAL_TOKENS)
+        return {'text':prefetched['text'], 'quality_state':'recognized',
+                'context_echo':bool(prefetched.get('context_echo'))}
 
     def _initial_pair(self, samples, *, deadline):
         from mlx_qwen3_asr import transcribe
-        from mlx_qwen3_asr.chunking import split_audio_into_chunks
+        from src.ai.qwen_segmentation import split_inference_audio
         from mlx_qwen3_asr.tokenizer import _TokenizerHolder, join_text_parts
         from scripts.local_history.mlx_batch import decode_pair
         import mlx.core as mx
-        chunks = [split_audio_into_chunks(s,16000,max_chunk_sec=30.0) for s in samples]
+        chunks = [split_inference_audio(s) for s in samples]
         parts = [[] for _ in samples]
         tokenizer = _TokenizerHolder.get(str(self.model_path))
         context = '术语：'+'、'.join(self._terms) if self._terms else ''
@@ -116,10 +103,17 @@ class MLXBatchTranscriber(MLXTranscriber):
                 outputs = [{'text':value.text,'truncated':value.truncated}]
             if len(outputs)!=len(owners):
                 raise RuntimeError('MLX pair returned inconsistent lane identities')
-            for owner,row in zip(owners,outputs):
-                parts[owner].append(row)
+            for owner, row, clip in zip(owners, outputs, clips):
+                start = chunks[owner][index][1]
+                child = {'start_sample': start, 'end_sample': start + len(clip),
+                         'sample_sha256': hashlib.sha256(clip.tobytes()).hexdigest(),
+                         'context_echo': bool(context and context_echo(row['text'], context)),
+                         'truncated': bool(row['truncated'])}
+                parts[owner].append(dict(row, child=child))
         return [{'text':join_text_parts([r['text'] for r in rows],'Chinese'),
-                 'truncated':any(r['truncated'] for r in rows)} for rows in parts]
+                 'truncated':any(r['truncated'] for r in rows),
+                 'context_echo':any(r['child']['context_echo'] for r in rows),
+                 'child_chunks':[r['child'] for r in rows]} for rows in parts]
 
     def recognize_blocks(self, blocks, load_samples, *, checkpoint=None, timeout=18000, keep_model=False):
         if len(blocks)>2 or not blocks:
@@ -158,8 +152,10 @@ class MLXBatchTranscriber(MLXTranscriber):
                                       'initial_budget_seconds':initial_deadline-initial_started,
                                       'timeout':bool(output.get('timed_out')),
                                       'truncated':bool(output.get('truncated')),
-                                      'context_echo':bool(output.get('text') and self._terms and
-                                          context_echo(output['text'],'术语：'+'、'.join(self._terms)))})
+                                      'child_chunks':output.get('child_chunks',[]),
+                                      'context_echo':bool(output.get('context_echo') or
+                                          (output.get('text') and self._terms and
+                                           context_echo(output['text'],'术语：'+'、'.join(self._terms))))})
                 self.last_chunks.append(row)
                 for a,b in self.last_vad_windows:
                     a,b=max(a,row['start']),min(b,row['end'])

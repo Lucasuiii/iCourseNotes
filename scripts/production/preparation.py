@@ -311,14 +311,13 @@ def prepare(runtime):
     sub_id = str(lecture['sub_id'])
     scheduler = None
     handle = None
-    specification = {'course_id': course, 'course_title': title, 'lecture': lecture, 'prepare_phase': 'imports'}
+    specification = {'course_id': course, 'course_title': title, 'lecture': lecture, 'prepare_phase': 'imports', 'review_scope': 'theory'}
     files = {}
     try:
         from src.pipeline.prepared_lecture import cached_material
         from src.ai.qwen_transcriber import QwenTranscriber
         from src.ai.course_glossary import course_terms
         from main import login_with_retry
-        from src.api.icourse import ICourseClient
         from src.runtime.scheduler import Scheduler
         from src.runtime.reporter import Reporter
         from src.pipeline.ppt_pipeline import PPTPipeline
@@ -341,20 +340,12 @@ def prepare(runtime):
             # Audio retrieval uses the production downloader and its unchanged
             # authenticated playback fallback chain; no benchmark acquisition cap.
             specification['prepare_phase'] = 'login'
-            from src.api.auth_recovery import fresh_media_session
-            from functools import partial
-            reporter = Reporter(); client = ICourseClient(login_with_retry(),
-                media_reauth_factory=partial(fresh_media_session, read_timeout=45, max_attempts=2))
-            client._media_reauth_timeout = 180
-            client._media_max_fresh_sessions = 3
-            # Long lectures outlive several media sessions; each later login
-            # needs sustained verified progress since the previous recovery.
-            client._media_max_total_fresh_sessions = 8
+            from src.api.media_client import create_media_client
+            from src.runtime.audio_preparation import configure_audio_downloader
+            reporter = Reporter()
+            client = create_media_client(login_with_retry())
             scheduler = Scheduler(reporter)
-            scheduler.audio_downloader.allow_fresh_session_escalation = True
-            # Also decode the (L-R)/2 side signal; it replaces the mid downmix only
-            # for polarity-inverted stereo, where (L+R)/2 cancels the lecture.
-            scheduler.audio_downloader.write_side_channel = True
+            configure_audio_downloader(scheduler.audio_downloader)
             specification['prepare_phase'] = 'ppt'
             ppt = PPTPipeline(db, scheduler, reporter).submit(client, course, sub_id, defer_ocr=True)
             from src.runtime import config

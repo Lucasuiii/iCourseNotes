@@ -30,6 +30,17 @@ PHASE_FLIP_MARGIN_DB = 12.0
 PHASE_MIN_SIDE_DBFS = -55.0
 
 
+def configure_audio_downloader(downloader, *, audio_mode=None):
+    """Apply one acquisition/recovery policy, retaining a frozen transport choice."""
+    from src.runtime import config
+    mode = config.AUDIO_ACQUISITION if audio_mode is None else audio_mode
+    if mode not in ('aac_auto', 'mp4'):
+        raise ValueError('Invalid audio acquisition mode')
+    downloader.audio_mode = mode
+    downloader.allow_fresh_session_escalation = True
+    downloader.write_side_channel = True
+
+
 def side_path(path):
     return str(path)+SIDE_SUFFIX
 

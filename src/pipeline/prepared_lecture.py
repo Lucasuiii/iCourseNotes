@@ -50,6 +50,23 @@ def assemble_material(plan, results, *, audio_path=None, media_seconds=None, all
     return material
 
 
+def finalization_material(specification, results, *, audio_path=None):
+    """Assemble the common local/cloud boundary from a frozen specification.
+
+    Historical specifications without an explicit review scope keep the
+    ledger's legacy resolution. New callers freeze their intended scope.
+    """
+    material = assemble_material(specification['plan'], results, audio_path=audio_path,
+        media_seconds=specification.get('media_seconds'), allow_short_missing=True)
+    material['official_support'] = specification.get('official_support', [])
+    if 'review_scope' in specification:
+        material['review_scope'] = specification['review_scope']
+    runtime = specification.get('review_runtime')
+    if runtime:
+        material['alignment_model_path'] = runtime['alignment_model_path']
+    return material
+
+
 def validate_material(material, course_id, sub_id):
     if (any(str(material.get('selection', {}).get(k)) != str(v)
                    for k, v in [('course_id', course_id), ('sub_id', sub_id)])

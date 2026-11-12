@@ -82,6 +82,25 @@ class AutomaticGlossaryTests(unittest.TestCase):
             self.assertEqual(store.terms(),[])
             db.conn.close()
 
+    def test_new_local_and_cloud_targets_use_same_dated_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db=Database(str(Path(tmp)/'history.db'))
+            try:
+                db.upsert_course('10','高等代数','教师')
+                db.insert_lecture('1','10','旧课','2026-09-01')
+                glossary=AutomaticGlossary(db,'10')
+                glossary.save('1',[{'term':'基扩展定理','source':'ppt','quote':'基扩展定理'}],
+                              sources={'ppt':['基扩展定理'], 'cloud':['讲解基扩展定理']})
+                local=glossary.freeze('高等代数','2',lecture_date='2026-10-04')
+                db.insert_lecture('2','10','新课','2026-10-04')
+                cloud=glossary.freeze('高等代数','2',lecture_date='2026-10-04')
+                self.assertEqual(local,cloud)
+                self.assertIn('基扩展定理',local['confirmed_terms'])
+                earlier=glossary.freeze('高等代数','3',lecture_date='2026-08-31')
+                self.assertNotIn('基扩展定理',earlier['confirmed_terms'])
+            finally:
+                db.conn.close()
+
     def test_summary_reply_with_unescaped_latex_keeps_formulas(self):
         # Strict JSON turned "\frac" into a form feed and "\theta" into a tab.
         raw = '{"summary":"### 正态\\n\\n$$\\nf(x)=\\frac{1}{\\sqrt{2\\pi}}e^{-x^2/2},\\ \\theta\\in\\Theta$$","keywords":[]}'

@@ -2,9 +2,10 @@
 import tempfile
 import time
 import unittest
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import numpy as np
 from scripts.local_history.backends import MLXBatchTranscriber, MLXTranscriber
 from scripts.local_history import runtime
@@ -13,7 +14,7 @@ from test_qwen_production_pipeline import fixture
 
 class BatchBackendTests(unittest.TestCase):
     def setUp(self):
-        core=SimpleNamespace(clear_cache=lambda:None)
+        core=SimpleNamespace(clear_cache=lambda:None,bfloat16=object())
         self.modules=patch.dict('sys.modules',{'mlx':SimpleNamespace(core=core),'mlx.core':core})
         self.modules.start();self.addCleanup(self.modules.stop)
         self.plan,_=fixture()
@@ -25,6 +26,37 @@ class BatchBackendTests(unittest.TestCase):
         blocks=self.plan['blocks']
         load=lambda b:np.zeros(b['samples'],dtype='float32')
         return obj,blocks,load
+
+    def test_serial_retries_repeated_or_embedded_context_without_hint(self):
+        obj=MLXTranscriber('/unused'); obj._model=object()
+        obj.set_terms(['矩阵','行列式','线性方程组','线性相关','线性无关'])
+        context='术语：矩阵、行列式、线性方程组、线性相关、线性无关'
+        samples=np.arange(160,dtype='float32')
+        for text in (context*2, '这里是课堂讲解。'*20+context+'接着继续讲解。'*20):
+            with self.subTest(text=text):
+                transcribe=MagicMock(side_effect=[SimpleNamespace(text=text,truncated=False),
+                                                  SimpleNamespace(text='补救后的完整课堂讲解',truncated=False)])
+                with patch.dict('sys.modules',{'mlx_qwen3_asr':SimpleNamespace(transcribe=transcribe)}):
+                    row=obj._recognize(samples,deadline=time.monotonic()+60)
+                self.assertEqual(transcribe.call_count,2)
+                self.assertIs(transcribe.call_args_list[0].args[0],samples)
+                self.assertIs(transcribe.call_args_list[1].args[0],samples)
+                self.assertEqual(transcribe.call_args_list[0].kwargs['context'],context)
+                self.assertEqual(transcribe.call_args_list[1].kwargs['context'],'')
+                self.assertEqual(row['text'],'补救后的完整课堂讲解')
+                self.assertEqual(row['quality_state'],'unhinted_retry')
+
+    def test_serial_unhinted_echo_stays_unresolved(self):
+        obj=MLXTranscriber('/unused'); obj._model=object()
+        obj.set_terms(['矩阵','行列式','线性方程组','线性相关','线性无关'])
+        context='术语：矩阵、行列式、线性方程组、线性相关、线性无关'
+        transcribe=MagicMock(return_value=SimpleNamespace(text=context,truncated=False))
+        with patch.dict('sys.modules',{'mlx_qwen3_asr':SimpleNamespace(transcribe=transcribe)}):
+            row=obj._recognize(np.zeros(160,dtype='float32'),deadline=time.monotonic()+60)
+        self.assertEqual(transcribe.call_count,2)
+        self.assertEqual(transcribe.call_args_list[1].kwargs['context'],'')
+        self.assertEqual(row['quality_state'],'unresolved_context_echo')
+        self.assertEqual(row['text'],'')
 
     def test_one_bad_lane_rescues_without_redecoding_the_good_lane(self):
         obj,blocks,load=self.backend([{'text':'bad','truncated':True},{'text':'正确的行列式说明','truncated':False}])
@@ -42,14 +74,57 @@ class BatchBackendTests(unittest.TestCase):
         obj,blocks,load=self.backend([{'text':'术语：矩阵、行列式、秩、线性方程组、线性相关、线性无关','truncated':False},
                                       {'text':'准确的课堂原文','truncated':False}])
         obj.set_terms(['矩阵','行列式','秩','线性方程组','线性相关','线性无关'])
-        with patch.object(MLXTranscriber,'_recognize',return_value={'text':'','quality_state':'low_information'}) as retry:
+        with patch.object(MLXTranscriber,'_decode',return_value={'text':'','quality_state':'low_information'}) as retry:
             rows=obj.recognize_blocks(blocks,load,keep_model=True)
         retry.assert_called_once()
-        self.assertTrue(retry.call_args.kwargs['unhinted'])
+        self.assertEqual(retry.call_args.kwargs['context'], '')
+        self.assertEqual(retry.call_args.kwargs['phase'], 'unhinted_echo_retry')
         self.assertIsNotNone(retry.call_args.kwargs['deadline'])
         self.assertTrue(rows[0]['mlx_batch']['context_echo'])
         self.assertEqual(rows[0]['quality_state'],'low_information')
         self.assertEqual(rows[1]['text'],'准确的课堂原文')
+
+    def test_child_echo_forces_full_block_unhinted_rescue(self):
+        child={'start_sample':0,'end_sample':480000,'sample_sha256':'a'*64,
+               'context_echo':True,'truncated':False}
+        obj,blocks,load=self.backend([
+            {'text':'拼接后检测不到回显的课堂正文','truncated':False,
+             'context_echo':True,'child_chunks':[child]},
+            {'text':'准确的课堂原文','truncated':False,'context_echo':False,'child_chunks':[]}])
+        obj.set_terms(['矩阵','行列式','线性方程组','线性相关','线性无关'])
+        with patch.object(MLXTranscriber,'_decode',return_value={'text':'补救后的完整原文','quality_state':'recognized'}) as retry:
+            rows=obj.recognize_blocks(blocks,load,keep_model=True)
+        retry.assert_called_once()
+        self.assertEqual(len(retry.call_args.args[0]),blocks[0]['samples'])
+        self.assertEqual(retry.call_args.kwargs['context'], '')
+        self.assertEqual(retry.call_args.kwargs['phase'], 'unhinted_echo_retry')
+        self.assertTrue(rows[0]['mlx_batch']['context_echo'])
+        self.assertEqual(rows[0]['text'],'补救后的完整原文')
+        self.assertEqual(rows[1]['text'],'准确的课堂原文')
+        self.assertEqual(len(rows[1]['recognition_attempts']),1)
+
+    def test_initial_pair_records_child_boundaries_and_flags(self):
+        obj=MLXBatchTranscriber('/unused'); obj._model=object()
+        obj.set_terms(['矩阵','行列式','线性方程组','线性相关','线性无关'])
+        waves=[np.arange(8,dtype='float32'),np.arange(4,dtype='float32')]
+        def split(wave,*args,**kwargs):
+            return [(wave[:4],0.0),(wave[4:],4)] if len(wave)>4 else [(wave,0.0)]
+        holder=SimpleNamespace(get=lambda path:object())
+        modules={'mlx_qwen3_asr':SimpleNamespace(transcribe=lambda *a,**k:SimpleNamespace(text='课堂解释',truncated=True)),
+                 'mlx_qwen3_asr.chunking':SimpleNamespace(split_audio_into_chunks=split),
+                 'mlx_qwen3_asr.tokenizer':SimpleNamespace(_TokenizerHolder=holder,join_text_parts=lambda parts,language:''.join(parts))}
+        outputs=[{'text':'术语：矩阵、行列式、线性方程组、线性相关、线性无关','truncated':False},
+                 {'text':'正常讲解','truncated':False}]
+        with patch.dict('sys.modules',modules), patch('scripts.local_history.mlx_batch.decode_pair',return_value=outputs), \
+             patch('src.ai.qwen_segmentation.split_inference_audio',side_effect=split):
+            result=obj._initial_pair(waves,deadline=time.monotonic()+60)
+        self.assertEqual([(c['start_sample'],c['end_sample']) for c in result[0]['child_chunks']],[(0,4),(4,8)])
+        self.assertEqual(result[0]['child_chunks'][0]['sample_sha256'],hashlib.sha256(waves[0][:4].tobytes()).hexdigest())
+        self.assertTrue(result[0]['child_chunks'][0]['context_echo'])
+        self.assertTrue(result[0]['child_chunks'][1]['truncated'])
+        self.assertTrue(result[0]['context_echo'])
+        self.assertTrue(result[0]['truncated'])
+        self.assertFalse(result[1]['context_echo'])
 
     def test_native_failure_propagates_without_retry(self):
         obj,blocks,load=self.backend([])

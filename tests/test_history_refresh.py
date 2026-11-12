@@ -420,7 +420,7 @@ class HistoricalEntryTests(unittest.TestCase):
         self.assertEqual(set(workflow['on']),{'workflow_dispatch'})
         self.assertEqual(workflow['concurrency']['group'],'icourse-data-${{ github.repository }}')
         preview=workflow['jobs']['preview']['with']
-        self.assertEqual([preview[k] for k in ('automatic_terms','publish_results','send_email')],['false']*3)
+        self.assertEqual([preview[k] for k in ('automatic_terms','publish_results','send_email')],['true','false','false'])
         steps=workflow['jobs']['apply']['steps']
         upload=next(i for i,s in enumerate(steps) if s.get('uses')=='actions/upload-artifact@v4')
         commit=next(i for i,s in enumerate(steps) if s.get('run')=='python -m scripts.history_refresh commit-apply')

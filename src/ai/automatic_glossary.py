@@ -3,6 +3,7 @@ import json
 import re
 import unicodedata
 from datetime import datetime, timezone
+from src.ai.recognition_policy import MAX_TERMS, normalize_terms
 
 INSTRUCTION = '''额外输出专业术语候选，与笔记分开。只输出 JSON 对象：
 {"summary":"完整 Markdown 笔记","keywords":[{"term":"术语","source":"asr/ppt/cloud","quote":"该来源中连续原文"}]}。
@@ -116,7 +117,7 @@ def term_stages(records, *, exclude_sub_id=None, before_date=None):
 
 def active_terms(records, *, exclude_sub_id=None, before_date=None):
     return [g['term'] for g in term_stages(records, exclude_sub_id=exclude_sub_id, before_date=before_date)
-            if g['stage'] == 'confirmed'][:30]
+            if g['stage'] == 'confirmed'][:MAX_TERMS]
 
 
 class AutomaticGlossary:
@@ -156,7 +157,7 @@ class AutomaticGlossary:
         base = course_terms(title)
         # Unknown lecture dates cannot safely choose earlier confirmed records.
         confirmed = self.terms(exclude_sub_id=sub_id, before_date=date) if date else []
-        terms = list(dict.fromkeys(base+confirmed))[:30]
+        terms = normalize_terms(base+confirmed)
         return {'schema': 1, 'course_id': self.course_id, 'sub_id': str(sub_id),
                 'lecture_date': date or '', 'base_terms': base, 'confirmed_terms': confirmed,
                 'terms': terms, 'terms_sha256': fingerprint(terms)}
@@ -197,7 +198,7 @@ class AutomaticGlossary:
             values.append(dict(item, evidence=evidence, stage='candidate'))
         record = {'schema': 2, 'course_id': self.course_id, 'sub_id': str(sub_id),
                   'lecture_date': lecture.get('date') or '', 'keywords': values,
-                  'frozen_terms': list(frozen_terms)[:30],
+                  'frozen_terms': normalize_terms(frozen_terms),
                   'updated_at': datetime.now(timezone.utc).isoformat()}
         # Persist each candidate's current stage for inspection; recognition
         # always re-evaluates citations and chronology instead of trusting it.

@@ -11,6 +11,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
+import numpy as np
 from unittest.mock import MagicMock, patch
 
 from scripts import local_history_refresh as entry
@@ -149,8 +150,8 @@ class LocalHistoryTests(unittest.TestCase):
             infer.reset_mock(); row = model._recognize([0],deadline=time.monotonic()-1)
             self.assertEqual(row['quality_state'],'retry_timeout'); infer.assert_not_called()
             infer.return_value = SimpleNamespace(text='条件期望',truncated=False)
-            with patch('scripts.local_history.backends.context_echo', return_value=True), \
-                 patch('scripts.local_history.backends.low_information', return_value=False):
+            with patch('src.ai.recognition_policy.context_echo', return_value=True), \
+                 patch('src.ai.recognition_policy.low_information', return_value=False):
                 row = model._recognize([0],deadline=time.monotonic()+10)
             self.assertEqual(row['quality_state'],'unresolved_context_echo')
             self.assertEqual(infer.call_count,2)

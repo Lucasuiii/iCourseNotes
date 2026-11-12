@@ -92,3 +92,24 @@ def plan_long_chunks(windows, duration, target=120.0, silence_skip=10.0, padding
             chunks.append((max(0, cursor - padding), min(duration, stop + padding)))
             cursor = stop
     return chunks
+
+
+def split_inference_audio(samples, rate=16000, maximum=30.0):
+    """Shared <=30s inference clips, split near the lowest midpoint energy.
+
+    Offsets are exact sample indices. Clips neither overlap nor omit samples;
+    the original two-minute checkpoint plan remains authoritative.
+    """
+    import numpy as np
+    if not math.isfinite(rate) or not math.isfinite(maximum) or rate <= 0 or maximum <= 0:
+        raise ValueError('Invalid inference audio limits')
+    if len(samples) <= maximum*rate:
+        return [(samples, 0)]
+    window = max(1, round(.5*rate))
+    positions = range(int(len(samples)*.2), int(len(samples)*.8)-window, max(1,window//2))
+    position = min(positions, key=lambda start: float(np.mean(np.square(samples[start:start+window]))),
+                   default=len(samples)//2-window//2)
+    middle = max(1, min(len(samples)-1, position+window//2))
+    left = split_inference_audio(samples[:middle], rate, maximum)
+    right = split_inference_audio(samples[middle:], rate, maximum)
+    return left + [(clip, start+middle) for clip,start in right]

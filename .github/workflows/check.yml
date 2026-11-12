@@ -6,7 +6,7 @@ jobs:
   check:
     uses: ./.github/workflows/parallel_pilot.yml
     with:
-      automatic_terms: false
+      automatic_terms: true
       shard_mode: shared
       publish_results: true
       send_email: true

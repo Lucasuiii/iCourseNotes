@@ -38,7 +38,7 @@ name: iCourse Parallel Pilot
       automatic_terms:
         description: Enable evidence-bounded automatic glossary
         type: boolean
-        default: false
+        default: true
       shard_mode:
         description: Fixed two/auto shards, or shared global Runner pool (up to six workers per lecture)
         type: choice
@@ -84,7 +84,7 @@ name: iCourse Parallel Pilot
         default: ''
       automatic_terms:
         type: boolean
-        default: false
+        default: true
       shard_mode:
         type: string
         default: shared

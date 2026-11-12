@@ -4,7 +4,7 @@
 
 > 本项目基于 LeafCreeper/Fudan_iCourse_Subscriber 独立维护，原作者已许可保留显著来源链接后迁移。请遵守其传播限制，避免在树洞、班级群、大群或社交媒体等渠道发布或推广。项目用于本人有权访问的课程和个人学习。[原项目](https://github.com/LeafCreeper/Fudan_iCourse_Subscriber) · [上游许可说明](docs/upstream-permission.md)
 
-[打开笔记网页](https://lucasuiii.github.io/iCourseNotes/) · [Mac 安装与运行](docs/local-history-refresh.md) · [个人部署](PERSONAL_DEPLOYMENT.md) · [共用流程维护](docs/recognition-pipeline.md)
+[下载 macOS 应用](https://github.com/Lucasuiii/iCourseNotes/releases/latest) · [打开笔记网页](https://lucasuiii.github.io/iCourseNotes/) · [Mac 安装与运行](docs/local-history-refresh.md) · [个人部署](PERSONAL_DEPLOYMENT.md) · [共用流程维护](docs/recognition-pipeline.md)
 
 ## 选择使用方式
 
@@ -69,6 +69,8 @@ chmod 600 .env.local
 ```
 
 这里的 `plan --limit 1` 选择已发布的历史课次生成对照稿。新课使用 `plan --new-lecture <课次ID> --course-id <课程ID> --date YYYY-MM-DD`，生成本地预览。历史稿核对后可用 `apply --approval <覆盖指纹>` 发布。恢复时沿用同一运行目录和参数。[本地预览、恢复及发布](docs/local-history-refresh.md)
+
+macOS 应用源码和构建脚本位于 `macos-app/`，安装包见 Releases。[应用说明](macos-app/README.md)
 
 本机应用通过本地识别入口调用运行环境。更换源码版本时使用独立目录，已启动的冻结任务沿原版本恢复。完整转录、整理转录、精选图与审核记录应随课程结果保存。
 

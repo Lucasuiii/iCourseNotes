@@ -178,7 +178,7 @@ class AutomaticGlossaryTests(unittest.TestCase):
             store.save('1', [keyword], sources={'ppt': ['Householder变换'], 'cloud': ['使用Householder变换']})
             with patch('src.ai.course_glossary.course_terms', return_value=['基础词']):
                 snapshot = store.freeze('课', '2')
-                self.assertEqual(snapshot['terms'], ['基础词', 'Householder'])
+                self.assertEqual(snapshot['terms'], ['Householder', '基础词'])
                 self.assertEqual(store.freeze('课', '1')['terms'], ['基础词'])
                 db.conn.execute("UPDATE lectures SET date='2026-09-02' WHERE sub_id='1'"); db.conn.commit()
                 self.assertEqual(store.freeze('课', '2')['terms'], ['基础词'])

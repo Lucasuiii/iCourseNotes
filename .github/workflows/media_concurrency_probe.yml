@@ -1,0 +1,151 @@
+name: Media Concurrency Probe
+
+# Diagnostic only: small Range reads of one lecture video through WebVPN to test
+# whether concurrent sessions of one account disturb each other. No database,
+# models, publishing or email; logs contain only status codes and timings.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runners:
+        description: Separate runners (one session each)
+        default: '2'
+      same_runner_sessions:
+        description: Sessions inside one runner (run after the separate-runner phase)
+        default: '2'
+      stagger_seconds:
+        description: Delay between session logins (>=31 keeps OTP windows distinct)
+        default: '45'
+      window_seconds:
+        description: Reading time after the last login
+        default: '180'
+      read_mb:
+        description: MiB per Range read
+        default: '1'
+      interval_seconds:
+        description: Seconds between reads per session
+        default: '5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: media-concurrency-probe
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      start_at: ${{ steps.p.outputs.start_at }}
+      stop_at: ${{ steps.p.outputs.stop_at }}
+      matrix: ${{ steps.p.outputs.matrix }}
+    steps:
+      - id: p
+        env:
+          RUNNERS: ${{ inputs.runners }}
+          STAGGER: ${{ inputs.stagger_seconds }}
+          WINDOW: ${{ inputs.window_seconds }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os, time
+          n = int(os.environ['RUNNERS']); stagger = float(os.environ['STAGGER']); window = float(os.environ['WINDOW'])
+          assert 1 <= n <= 5 and 31 <= stagger <= 120 and 30 <= window <= 900
+          start = int(time.time()) + 150  # time for every runner to install dependencies
+          print(f'start_at={start}'); print(f'stop_at={int(start + (n - 1) * stagger + window)}')
+          print('matrix=' + json.dumps({'index': list(range(n))}))
+          EOF
+
+  separate:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install cryptography pycryptodome requests
+      - name: Probe
+        env:
+          StuId: ${{ secrets.STUID }}
+          UISPsw: ${{ secrets.UISPSW }}
+          UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
+          COURSE_IDS: ${{ secrets.COURSE_IDS }}
+          PROBE_READ_MB: ${{ inputs.read_mb }}
+          PROBE_INTERVAL_SECONDS: ${{ inputs.interval_seconds }}
+          START_AT: ${{ needs.plan.outputs.start_at }}
+          STOP_AT: ${{ needs.plan.outputs.stop_at }}
+          STAGGER: ${{ inputs.stagger_seconds }}
+          INDEX: ${{ matrix.index }}
+        run: |
+          start=$(python3 -c "import os;print(float(os.environ['START_AT'])+int(os.environ['INDEX'])*float(os.environ['STAGGER']))")
+          python -m scripts.media_concurrency_probe 1 "runner$INDEX" "$start" 0 "$STOP_AT" "$RUNNER_TEMP/probe-separate-$INDEX.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-separate-${{ matrix.index }}
+          path: ${{ runner.temp }}/probe-separate-*.json
+          retention-days: 7
+
+  same:
+    needs: separate
+    if: always() && inputs.same_runner_sessions != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install cryptography pycryptodome requests
+      - name: Probe
+        env:
+          StuId: ${{ secrets.STUID }}
+          UISPsw: ${{ secrets.UISPSW }}
+          UIS_OTP_SECRET: ${{ secrets.UIS_OTP_SECRET }}
+          COURSE_IDS: ${{ secrets.COURSE_IDS }}
+          PROBE_READ_MB: ${{ inputs.read_mb }}
+          PROBE_INTERVAL_SECONDS: ${{ inputs.interval_seconds }}
+          SESSIONS: ${{ inputs.same_runner_sessions }}
+          STAGGER: ${{ inputs.stagger_seconds }}
+          WINDOW: ${{ inputs.window_seconds }}
+        run: |
+          read start stop < <(python3 -c "import os,time;s=time.time()+40;n=int(os.environ['SESSIONS']);g=float(os.environ['STAGGER']);print(s, s+(n-1)*g+float(os.environ['WINDOW']))")
+          python -m scripts.media_concurrency_probe "$SESSIONS" same "$start" "$STAGGER" "$stop" "$RUNNER_TEMP/probe-same.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-same
+          path: ${{ runner.temp }}/probe-same.json
+          retention-days: 7
+
+  report:
+    needs: [separate, same]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: probe-separate-*
+          path: separate
+      - uses: actions/download-artifact@v4
+        with:
+          name: probe-same
+          path: same
+        continue-on-error: true
+      - run: |
+          echo "== separate runners"; python3 -m scripts.media_probe_report separate
+          echo "== same runner"; python3 -m scripts.media_probe_report same || true

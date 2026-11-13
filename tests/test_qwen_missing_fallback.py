@@ -17,11 +17,11 @@ from test_qwen_production_pipeline import database, snapshot, pipeline
 from test_lecture_quality_gate import _load_runner_class
 
 
-def fixture(spans=((0, 4),), *, partial=False, audio_sha256='a'*64):
+def fixture(spans=((0, 4),), *, partial=False, audio_sha256='a'*64, run_id='99'):
     plan = build_audio_plan({'selection': {'course_id': '10', 'sub_id': '1'},
         'audio_seconds': max(b for a,b in spans), 'full_chunks': [dict(start=a,end=b) for a,b in spans],
         'recognition_terms': [], 'vad_windows': list(spans)}, reference={'pipeline':'production'},
-        course_slot=0, run_id='99', audio_sha256=audio_sha256, production=True, mode='shared')
+        course_slot=0, run_id=run_id, audio_sha256=audio_sha256, production=True, mode='shared')
     results=[]
     for shard in plan['shards']:
         rows=[]
@@ -177,6 +177,27 @@ class MissingFallbackTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'immutable'):
                 repair_missing(plan,changed,'local.raw',state,lambda:None,api_key='fake')
         cloud.assert_not_called()
+
+    def test_later_daily_plan_reuses_ledger_of_the_same_blocks_and_audio(self):
+        # The next day's controller re-plans the same prepared lecture: a new run id gives a
+        # new plan hash, but the recognized blocks and audio are the ones the ledger covers.
+        plan,results=fixture();state={}
+        with patch('src.ai.qwen_missing_fallback.rescue_intervals_pcm',return_value=([],0,True)):
+            repair_missing(plan,results,'local.raw',state,lambda:None,api_key='fake')
+        self.assertTrue(state['failed']);attempts=copy.deepcopy(state['attempts'])
+        later,later_results=fixture(run_id='100')
+        self.assertNotEqual(fingerprint(plan),fingerprint(later))
+        with patch('src.ai.qwen_missing_fallback.rescue_intervals_pcm') as cloud:
+            repaired=repair_missing(later,later_results,'local.raw',state,lambda:None,api_key='fake')
+        cloud.assert_not_called();self.assertEqual(state['attempts'],attempts)
+        self.assertEqual(state['asr_fallback']['plan_hash'],fingerprint(later))
+        self.assertTrue(repaired[0]['chunks'][0]['missing_intervals'])
+        # Legacy ledgers (no audio hash) still bind; a different recording never does.
+        legacy={**state,'asr_fallback':{k:v for k,v in state['asr_fallback'].items() if k!='audio_sha256'}}
+        repair_missing(later,later_results,'local.raw',legacy,lambda:None,api_key='fake')
+        other,other_results=fixture(run_id='100',audio_sha256='b'*64)
+        with self.assertRaisesRegex(ValueError,'immutable'):
+            repair_missing(other,other_results,'local.raw',state,lambda:None,api_key='fake')
 
     def test_cloud_review_does_not_recharge_fallback_or_treat_it_as_quote(self):
         plan,results=fixture();state={}

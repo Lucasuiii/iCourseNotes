@@ -74,9 +74,14 @@ def repair_missing(plan, results, audio_path, state, checkpoint, *, api_key):
     if not api_key:
         return repaired
     rows = sorted((r for result in results for r in result['chunks']), key=lambda r: r['chunk_id'])
-    binding = {'plan_hash': fingerprint(plan), 'source_hash': fingerprint(rows)}
+    binding = {'plan_hash': fingerprint(plan), 'source_hash': fingerprint(rows),
+               'audio_sha256': plan['audio_sha256']}
     saved = state.get('asr_fallback')
-    if saved is not None and saved != binding:
+    # A later daily run re-plans the same prepared lecture (new run_id/slot, so a new
+    # plan hash) and reuses its recognized blocks. The ledger stays valid as long as
+    # the blocks and the audio are unchanged; otherwise the intervals mean nothing.
+    if saved is not None and (saved.get('source_hash') != binding['source_hash']
+                              or saved.get('audio_sha256', binding['audio_sha256']) != binding['audio_sha256']):
         raise ValueError('Missing ASR fallback belongs to different immutable results')
     state['asr_fallback'] = binding
     attempts = state.setdefault('attempts', [])

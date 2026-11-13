@@ -6,6 +6,10 @@ MAX_TOTAL = 15
 MAX_JOBS = MAX_TOTAL - 1  # The controller itself consumes a Runner.
 MAX_COURSES = 5
 MAX_WORKERS = 6
+# Every preparation logs in with the same UIS account and streams media over WebVPN.
+# Concurrent preparations keep invalidating each other's media session (302 to login
+# every ~30 s), so the pool fetches one lecture at a time; ASR still overlaps.
+MAX_PREPARES = 1
 TARGET_SECONDS = 75 * 60
 DEFAULT_RTF = 2.0
 

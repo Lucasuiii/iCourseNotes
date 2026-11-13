@@ -53,6 +53,7 @@ class Simulation:
         assert len(active) <= 14
         assert len({t['slot'] for t in active}) <= 5
         assert all(sum(t['slot'] == n for t in active) <= 6 for n in range(8))
+        assert sum(t['stage'] == 'prepare' for t in active) <= 1  # one UIS media session at a time
 
     def poll(self, state):
         for t in state['tickets']:

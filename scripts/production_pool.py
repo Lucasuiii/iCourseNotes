@@ -18,7 +18,7 @@ from scripts.asr_queue_store import GitHubQueueStore
 from scripts.coordination_transport import CoordinationError, RETRYABLE, diagnostic, read_json, read_with_retry
 from scripts.pool_progress import PoolProgress, show_progress
 
-from src.pipeline.runner_budget import (MAX_TOTAL, MAX_JOBS, MAX_COURSES, MAX_WORKERS,
+from src.pipeline.runner_budget import (MAX_TOTAL, MAX_JOBS, MAX_COURSES, MAX_WORKERS, MAX_PREPARES,
     TARGET_SECONDS, DEFAULT_RTF, estimate_rtf, desired_workers)
 WORKFLOW = 'qwen_production_stage.yml'
 TERMINAL = {'success', 'failure', 'cancelled', 'skipped', 'timed_out', 'action_required', 'startup_failure', 'stale', 'neutral'}
@@ -425,7 +425,8 @@ def controller(store, actions, *, attempt, clock=time.monotonic, sleep=time.slee
             # Give ready ASR courses basic service before admitting more prepares.
             selected = choose_asr(state, works)
             if choice is None and selected is not None: choice = (selected[0], 'asr', selected[1])
-            if choice is None and len(active_courses) < MAX_COURSES:
+            preparing = sum(t['stage'] == 'prepare' for t in active)
+            if choice is None and len(active_courses) < MAX_COURSES and preparing < MAX_PREPARES:
                 raw = next((k for k, c in state['courses'].items() if c['phase'] == 'new'), None)
                 if raw is not None: choice = (int(raw), 'prepare', 0)
             if choice is None: break

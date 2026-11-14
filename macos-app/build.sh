@@ -25,9 +25,9 @@ cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE"
 cp "$ROOT/docs/upstream-permission.md" "$APP/Contents/Resources/UPSTREAM.md"
 cp -R "$HERE/web" "$APP/Contents/Resources/web"
-mkdir -p "$APP/Contents/Resources/bridge"
+mkdir -p "$APP/Contents/Resources/bridge/templates"
 cp "$HERE/bridge/app_bridge.py" "$APP/Contents/Resources/bridge/"
-cp -R "$HERE/bridge/templates" "$APP/Contents/Resources/bridge/templates"
+cp "$HERE/bridge/templates/"*.py "$APP/Contents/Resources/bridge/templates/"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

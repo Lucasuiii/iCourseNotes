@@ -204,6 +204,9 @@ struct LocalNoteIndex: Decodable, Hashable, Identifiable {
     let appManaged: Bool?
     let publicationStatus: String?
     let publicationError: String?
+    let publicationMessage: String?
+    let publicationPhase: String?
+    let publicationRetryable: Bool?
     let notesCommit: String?
     let emailStatus: String?
     let updated: Double?
@@ -351,6 +354,7 @@ enum Labels {
 
     static func publication(_ s: String?) -> String {
         switch s ?? "" {
+        case "queued": return "等待推送"
         case "validating": return "校验中"
         case "publishing": return "推送中"
         case "published": return "已推送，回读完成"
@@ -367,4 +371,31 @@ enum Labels {
         let m = Int(s) / 60
         return m >= 60 ? "\(m / 60) 小时 \(m % 60) 分" : "\(m) 分钟"
     }
+}
+
+struct BatchPushItem: Encodable {
+    let control: String
+    let summarySha256: String
+    let overwriteRemoteSha256: String?
+}
+
+struct PushBatchItem: Decodable, Identifiable {
+    var id: String { control }
+    let control: String
+    let courseTitle: String
+    let date: String
+    let status: String
+    let errorType: String?
+    let message: String?
+}
+
+struct PushBatchState: Decodable {
+    let status: String
+    let items: [PushBatchItem]
+}
+
+struct PublicationState: Decodable {
+    let ok: Bool
+    let batch: PushBatchState?
+    let local: [LocalNoteIndex]
 }

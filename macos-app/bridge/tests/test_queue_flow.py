@@ -9,9 +9,7 @@ import json, os, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[2]
-REAL = APP.parent
-SOURCE = Path(json.loads((REAL/'work/local-runtime/active-source.json').read_text())['path'])
-PY = REAL/'work/qwen-local-asr-test-env/bin/python'
+REAL = Path(os.environ.get("ICOURSE_PROJECT_ROOT", APP.parent))
 
 FAKE_REFRESH = r'''
 import argparse, json, os, sys, time
@@ -36,7 +34,7 @@ except KeyboardInterrupt:
 
 
 def bridge(root, *args):
-    out = subprocess.run([str(PY), str(root/'local-app/bridge/app_bridge.py'), *args], capture_output=True, text=True, cwd=root)
+    out = subprocess.run([str(PY), str(root/'local-app/bridge/app_bridge.py'), *args], capture_output=True, text=True, cwd=root, env=dict(os.environ, ICOURSE_PROJECT_ROOT=str(root)))
     return json.loads(out.stdout)
 
 
@@ -50,6 +48,9 @@ def wait(pred, timeout=40):
 
 
 def main():
+    global SOURCE, PY
+    SOURCE = Path(json.loads((REAL/'work/local-runtime/active-source.json').read_text())['path'])
+    PY = REAL/'work/qwen-local-asr-test-env/bin/python'
     root = Path(tempfile.mkdtemp(prefix='icourse-app-test-'))
     try:
         work = root/'work'; rt = work/'local-runtime'

@@ -4,7 +4,8 @@ import SwiftUI
 struct SyncScreen: View {
     @Environment(AppModel.self) private var model
     @State private var pushTarget: LocalNoteIndex?
-    @State private var email = false
+    @State private var selection: Set<String> = []
+    @State private var showBatchPush = false
     @State private var checking: String?
     @State private var dryRuns: [String: DryRunResult] = [:]
 
@@ -20,8 +21,12 @@ struct SyncScreen: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("同步")
-        .task { await model.checkRemote() }
+        .task { await model.refreshPublication(); await model.checkRemote() }
+        .onChange(of: selectable.map(\.control)) { _, controls in selection.formIntersection(controls) }
         .sheet(item: $pushTarget) { item in pushSheet(item) }
+        .sheet(isPresented: $showBatchPush) {
+            BatchPushSheet(items: selectable.filter { selection.contains($0.control) }) { showBatchPush = false }
+        }
     }
 
     // MARK: pull
@@ -62,18 +67,44 @@ struct SyncScreen: View {
 
     // MARK: push
 
-    private var local: [LocalNoteIndex] { model.remote?.local ?? model.notes?.local ?? [] }
+    private var local: [LocalNoteIndex] { model.publication?.local ?? model.remote?.local ?? model.notes?.local ?? [] }
+
+    private var selectable: [LocalNoteIndex] {
+        local.filter { $0.approved == true && ($0.publicationStatus == nil || $0.publicationRetryable == true) }
+    }
 
     private var pushBlock: some View {
         let approved = local.filter { $0.approved == true && $0.publicationStatus == nil }
         let reviewing = local.filter { $0.approved != true && $0.status == "awaiting_content_review" }
-        let inFlight = local.filter { ["validating", "publishing", "mailing", "cleaning", "published"].contains($0.publicationStatus ?? "") }
+        let inFlight = local.filter { ["queued", "validating", "publishing", "mailing", "cleaning", "published"].contains($0.publicationStatus ?? "") }
         let failed = local.filter { $0.publicationStatus == "failed" }
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("推送").font(.title2.weight(.semibold))
                 Spacer()
-                Text("每堂单独推送，只写入这一堂").font(.caption).foregroundStyle(.secondary)
+                Text("可多选课次，依次推送").font(.caption).foregroundStyle(.secondary)
+            }
+            if !selectable.isEmpty {
+                HStack {
+                    Button(selection.count == selectable.count ? "取消全选" : "全选") {
+                        selection = selection.count == selectable.count ? [] : Set(selectable.map(\.control))
+                    }
+                    Text("已选 \(selectable.filter { selection.contains($0.control) }.count) 堂").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("推送所选…") { showBatchPush = true }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!selectable.contains { selection.contains($0.control) } || model.publicationBusy || model.startingPush)
+                }
+            }
+            if let batch = model.publication?.batch {
+                let done = batch.items.filter { $0.status == "completed" }.count
+                let failedCount = batch.items.filter { $0.status == "failed" }.count
+                if batch.status == "running" {
+                    ProgressView(value: Double(done + failedCount), total: Double(max(batch.items.count, 1)))
+                    Text("推送中 · 已完成 \(done)/\(batch.items.count) 堂 · 失败 \(failedCount) 堂").font(.caption).foregroundStyle(.secondary)
+                } else if failedCount > 0 || batch.status == "interrupted" {
+                    Text("上一批成功 \(done)/\(batch.items.count) 堂，请查看失败课次的说明").font(.caption).foregroundStyle(.orange)
+                }
             }
             if approved.isEmpty && reviewing.isEmpty && inFlight.isEmpty && failed.isEmpty {
                 HStack(spacing: 10) {
@@ -97,16 +128,18 @@ struct SyncScreen: View {
                     }
                     .help("按推送流程在本机构建并校验，不推送、不发邮件")
                     .disabled(checking != nil)
-                    Button("推送…") { email = false; pushTarget = item }.buttonStyle(.borderedProminent)
+                    Button("推送…") { pushTarget = item }.buttonStyle(.borderedProminent)
                 }))
             }
             ForEach(failed) { item in
                 row(item, accessory: AnyView(HStack(spacing: 8) {
-                    Label(item.publicationConflict == true ? "云端已有这堂课" : (item.publicationError ?? "失败"),
+                    Label(item.publicationConflict == true ? "云端已有这堂课" : (item.publicationMessage ?? item.publicationError ?? "失败"),
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(item.publicationConflict == true ? .orange : .red)
-                        .help("没有写入 data；断点与备份已保留")
-                    Button(item.publicationConflict == true ? "选择版本…" : "重新推送…") { pushTarget = item }
+                        .help("检查点与发布记录已保留")
+                    if item.publicationRetryable == true {
+                        Button(item.publicationConflict == true ? "选择版本…" : "重新推送…") { pushTarget = item }
+                    } else { Text("需核查发布记录").font(.caption) }
                 }))
             }
             ForEach(reviewing) { item in
@@ -144,6 +177,11 @@ struct SyncScreen: View {
 
     private func row(_ item: LocalNoteIndex, accessory: AnyView) -> some View {
         HStack(spacing: 12) {
+            if selectable.contains(where: { $0.control == item.control }) {
+                Toggle("选择课次", isOn: Binding(get: { selection.contains(item.control) }, set: { value in
+                    if value { selection.insert(item.control) } else { selection.remove(item.control) }
+                })).labelsHidden().toggleStyle(.checkbox)
+            }
             DateBadge(date: item.date ?? "", tint: .purple)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.courseTitle).font(.body.weight(.medium))

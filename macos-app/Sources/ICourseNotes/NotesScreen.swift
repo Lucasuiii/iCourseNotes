@@ -310,13 +310,6 @@ struct ApprovalSheet: View {
     let report: RenderReport
     let done: () -> Void
 
-    static let checklist = [
-        "通读摘要，概念、公式与推导没有发现明显错误",
-        "逐张看过配图，图注与图中内容相符",
-        "作业与课程事项的题号、页码与转录或板书一致",
-        "识别覆盖完整，转录没有明显缺段",
-    ]
-    @State private var checked: Set<Int> = []
     @State private var notes = ""
     @State private var working = false
 
@@ -326,12 +319,8 @@ struct ApprovalSheet: View {
                 Text("审核通过").font(.title2.weight(.semibold))
                 Text("\(row.courseTitle) · \(shortDate(row.date))").foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(Self.checklist.enumerated()), id: \.offset) { i, text in
-                    Toggle(text, isOn: Binding(get: { checked.contains(i) }, set: { if $0 { checked.insert(i) } else { checked.remove(i) } }))
-                        .toggleStyle(.checkbox)
-                }
-            }
+            Text("确认已阅读这份笔记，并同意将它加入待推送列表。")
+                .font(.callout).foregroundStyle(.secondary)
             TextField("备注（可选）", text: $notes, axis: .vertical).lineLimit(2...4).textFieldStyle(.roundedBorder)
             Text("审核绑定你刚读过的这份内容（\(summarySha.prefix(10))），并只保存在本机；推送在“同步”页单独进行。")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -342,13 +331,12 @@ struct ApprovalSheet: View {
                 Button("审核通过") {
                     working = true
                     Task {
-                        let checks = checked.sorted().map { Self.checklist[$0] }
-                        if await model.approve(control: control, summarySha: summarySha, checks: checks, notes: notes) { done(); dismiss() }
+                        if await model.approve(control: control, summarySha: summarySha, notes: notes) { done(); dismiss() }
                         working = false
                     }
                 }
                 .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                .disabled(checked.count < Self.checklist.count || working)
+                .disabled(working)
             }
         }
         .padding(24)

@@ -7,7 +7,7 @@ against current data without any journal, push or mail.  After a verified
 publication, unnecessary intermediates are removed; summary, transcripts,
 selected figures and run state are kept.
 """
-import os,sys,json,sqlite3,contextlib,shutil,hashlib,base64,io,time,importlib.util,argparse
+import os,sys,json,sqlite3,contextlib,shutil,hashlib,base64,io,time,importlib.util,argparse,fcntl,subprocess
 from pathlib import Path
 os.umask(0o077);R=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('guarded_finalize',R/'finalize.py');f=importlib.util.module_from_spec(spec);spec.loader.exec_module(f)
@@ -64,6 +64,20 @@ def load_candidate(request):
    if x['key']=='qwen_pipeline:'+SID:
     q=json.loads(x['value']);q['summary_formatting_update']={'kind':'summary_formatting','base_summary_sha256':artifact['base_summary_sha256'],'summary_sha256':artifact['summary_sha256'],'original_model_review':audit,'final_text_reviewed_by_model':False,'model_calls':0};x['value']=json.dumps(q,ensure_ascii=False)
   meta={x['key']:x['value'] for x in fresh['meta']}
+ if f.RECOVERY.exists('app-editorial-revision.enc'):
+  bridge_spec=importlib.util.spec_from_file_location('editorial_bridge',f.BASE/'local-app/bridge/app_bridge.py')
+  bridge=importlib.util.module_from_spec(bridge_spec);bridge_spec.loader.exec_module(bridge)
+  artifact=f.RECOVERY.read('app-editorial-revision.enc')
+  summary,figures=bridge.apply_editorial_revision(summary,figures,artifact,CID,SID,DAY)
+  fresh['lecture']['summary']=summary
+  fresh['meta']=[x for x in fresh['meta'] if x['key']!='summary_review:'+SID]
+  for x in fresh['meta']:
+   if x['key']=='summary_figures:'+SID:x['value']=json.dumps(figures,ensure_ascii=False)
+   if x['key']=='qwen_pipeline:'+SID:
+    q=json.loads(x['value']);q['independent_editorial_update']={'kind':artifact['kind'],'base_summary_sha256':artifact['base_summary_sha256'],'summary_sha256':artifact['summary_sha256'],'original_model_review':audit,'final_text_reviewed_by_model':False,'checks':artifact['checks'],'image_evidence':artifact.get('image_evidence',[]),'model_calls':0};x['value']=json.dumps(q,ensure_ascii=False)
+  meta={x['key']:x['value'] for x in fresh['meta']}
+  audit=dict(audit, status='independently_corrected', original_model_status=audit['status'],
+             final_text_reviewed_by_model=False)
  # Exactly the text the user read in the app; anything else is refused.
  assert f.sha(summary.encode())==request['summary_sha256'],'Reviewed summary differs from candidate'
  assert not f.RECOVERY.exists('final-reviewed-editorial-artifact.enc'),'Manual editorial artifact exists; use its delivery flow'
@@ -143,6 +157,8 @@ def cleanup(keep_remote_backup=False):
  f.record('cleanup-result.json',{'status':'complete','files_removed':len(removed),'bytes_freed':sum(x['bytes'] for x in removed),'removed':removed,'preserved_outputs':len(hashes),'policy':'after verified publication: drop audio, plaintext databases, checkouts, private logs and redundant encrypted DB backups; keep outputs, run state and recognition checkpoints'})
  return sum(x['bytes'] for x in removed)
 def publish(request):
+ from publication_support import publish_snapshot
+ f.publish=lambda database,before,base,label,receipt=False: publish_snapshot(f,database,before,base,label,receipt=receipt)
  for name in ['finalization-started.json','corrected-delivery-started.json','notes-publication.json','app-publication-started.json']:
   assert not (R/name).exists(),'Publication already attempted: '+name
  status(status='validating',email_requested=request['email'],dry_run=False)
@@ -153,13 +169,8 @@ def publish(request):
  f.record('editorial-approval.json',approval);f.RECOVERY.save('independent-editorial-approval.enc',approval)
  export_outputs(summary,figures,audit);f.durable_backup(path,'local-reviewed-candidate')
  status(status='publishing')
- before=R/'publish-before.db';base=f.load_remote(before);assert base;f.durable_backup(before,'remote-before-'+base)
- candidate,replaced=build(before,fresh,meta,request.get('overwrite_remote_sha256'))
- if replaced:
-  # Keep a readable copy of the cloud note being replaced; the encrypted full backup stays too.
-  f.atomic(f.OUT/'replaced-cloud-summary.md',('# 被本机版本替换的云端笔记\n\n模型：'+str(replaced['summary_model'])+'；处理时间：'+str(replaced['processed_at'])+'\n\n'+replaced['summary']+'\n').encode())
-  status(overwrote_remote=True,replaced_summary_sha256=f.sha(replaced['summary'].encode()),remote_backup='recovery/remote-before-'+base+'.db.enc')
- commit=f.publish(candidate,before,base,'notes')
+ from publication_support import publish_notes
+ commit,replaced=publish_notes(f,fresh,meta,request.get('overwrite_remote_sha256'),build,status)
  status(status='published',notes_commit=commit)
  email_status='not_requested';final=commit
  if request['email']:
@@ -197,11 +208,23 @@ if __name__=='__main__':
  request=json.loads((R/a.request).read_text())
  try:
   with (R/'app-publish-private.log').open('a') as log,contextlib.redirect_stdout(log),contextlib.redirect_stderr(log):
-   dry_run(request) if request['dry_run'] else publish(request)
+   sys.path.insert(0,str(R))
+   lock_dir=f.BASE/'work/local-app';lock_dir.mkdir(parents=True,exist_ok=True)
+   with (lock_dir/'publication.lock').open('a') as lock:
+    if not request['dry_run']:status(status='queued',pid=os.getpid(),publication_phase='waiting_for_publisher')
+    fcntl.flock(lock,fcntl.LOCK_EX)
+    dry_run(request) if request['dry_run'] else publish(request)
  except Exception as e:
+  error_type=type(e).__name__;message=None
+  if isinstance(e,subprocess.CalledProcessError):
+   from publication_support import git_failure
+   error_type,message=git_failure(e)
+  elif isinstance(e,RuntimeError):
+   if str(e)=='ConcurrentDataUpdatesExhausted':error_type='ConcurrentDataUpdatesExhausted';message='云端持续更新，本次合并未完成，可稍后重新推送'
+   elif 'retain journal for reconciliation' in str(e):error_type='PushOutcomeUnconfirmed';message='推送结果需要核对，发布记录已保留'
   if request['dry_run']:f.record('app-dry-run-result.json',{'status':'failed','error_type':type(e).__name__,'detail':str(e)[:200] if type(e) is AssertionError else None,'pushed':False,'mail':False,'checked':time.time()})
   else:
-   status(status='failed',error_type=type(e).__name__,detail=str(e)[:200] if type(e) is AssertionError else None,notes_journal=(R/'notes-publication.json').exists(),mail_reserved=f.RECOVERY.exists('mail-attempt.enc'),automatic_retry=False)
+   status(status='failed',error_type=error_type,message=message,detail=str(e)[:200] if type(e) is AssertionError else None,notes_journal=(R/'notes-publication.json').exists(),mail_reserved=f.RECOVERY.exists('mail-attempt.enc'),automatic_retry=False)
    try:
     st=json.loads((R/'execution-status.json').read_text())
     if st.get('status')=='publishing':st.update(status='publication_failed',phase='publication',error_type=type(e).__name__,updated=time.time());f.record('execution-status.json',st)

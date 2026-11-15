@@ -54,6 +54,13 @@ final class AppModel {
     var selectedNote: NoteRow?
     var remote: RemoteInfo?
     var remoteError: String?
+    var publication: PublicationState?
+    var startingPush = false
+    var publicationBusy: Bool {
+        publication?.batch?.status == "running" || (publication?.local ?? []).contains {
+            ["queued", "validating", "publishing", "mailing", "cleaning", "published"].contains($0.publicationStatus ?? "")
+        }
+    }
     var noteCourse: String = "全部"
 
     var toast: Toast?
@@ -116,8 +123,9 @@ final class AppModel {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshStatus()
+                await self?.refreshPublication()
                 let running = self?.currentQueue?.coordinatorAlive ?? false
-                try? await Task.sleep(for: .seconds(running ? 4 : 12))
+                try? await Task.sleep(for: .seconds(running || self?.publicationBusy == true ? 4 : 12))
             }
         }
     }
@@ -291,13 +299,13 @@ final class AppModel {
         }
     }
 
-    func approve(control: String, summarySha: String, checks: [String], notes: String) async -> Bool {
+    func approve(control: String, summarySha: String, notes: String) async -> Bool {
         guard let bridge else { return false }
-        let checksJSON = String(data: (try? JSONSerialization.data(withJSONObject: checks)) ?? Data("[]".utf8), encoding: .utf8)!
         do {
-            let r = try await bridge.run(["approve", "--control", control, "--summary-sha256", summarySha, "--checks", checksJSON, "--notes", notes],
+            let r = try await bridge.run(["approve", "--control", control, "--summary-sha256", summarySha, "--confirm", "--notes", notes],
                                          as: ActionResponse.self)
             if r.ok { show("已审核通过，可在“同步”页推送") } else { show(r.message ?? r.errorType ?? "审核未保存", error: true) }
+            await refreshPublication()
             return r.ok
         } catch { show(error.localizedDescription, error: true); return false }
     }
@@ -343,6 +351,42 @@ final class AppModel {
         await loadNotes(); await checkRemote()
     }
 
+    func refreshPublication() async {
+        guard let bridge else { return }
+        do {
+            let previous = publication
+            let fresh = try await bridge.run(["push-batch-status"], as: PublicationState.self)
+            publication = fresh
+            let batchFinished = previous?.batch?.status == "running" && fresh.batch?.status != "running"
+            let newlyCompleted = fresh.local.contains { row in
+                row.publicationStatus == "completed" && previous?.local.first { $0.control == row.control }?.publicationStatus != "completed"
+            }
+            if batchFinished {
+                let done = fresh.batch?.items.filter { $0.status == "completed" }.count ?? 0
+                show("批量推送已结束，成功 \(done)/\(fresh.batch?.items.count ?? 0) 堂", error: fresh.batch?.status != "completed")
+            }
+            if previous != nil && newlyCompleted { await syncNotes(); await checkRemote() }
+        } catch { /* Keep the last safe publication snapshot during a transient read failure. */ }
+    }
+
+    func pushMany(_ items: [BatchPushItem], email: Bool) async -> Bool {
+        guard let bridge, !startingPush else { return false }
+        startingPush = true
+        defer { startingPush = false }
+        do {
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            let encoded = String(data: try encoder.encode(items), encoding: .utf8)!
+            var args = ["push-many", "--items", encoded]
+            if email { args.append("--email") }
+            let result = try await bridge.run(args, as: ActionResponse.self)
+            guard result.ok else { show(result.message ?? result.errorType ?? "批量推送未开始", error: true); return false }
+            show("已加入推送队列，共 \(items.count) 堂")
+            await refreshPublication()
+            return true
+        } catch { show(error.localizedDescription, error: true); return false }
+    }
+
     func push(control: String, email: Bool, overwrite: String? = nil) async {
         guard let bridge else { return }
         var args = ["push", "--control", control]
@@ -352,15 +396,7 @@ final class AppModel {
             let r = try await bridge.run(args, as: ActionResponse.self)
             guard r.ok else { show(r.message ?? r.errorType ?? "推送未开始", error: true); return }
             show("开始推送")
-            for _ in 0..<120 {
-                try? await Task.sleep(for: .seconds(3))
-                await checkRemote()
-                let st = remote?.local?.first { $0.control == control }?.publicationStatus
-                if st == "completed" { show("推送完成，已远端回读核验"); break }
-                if st == "failed" { show("推送失败，未自动重试", error: true); break }
-            }
-            await syncNotes()
-            await checkRemote()
+            await refreshPublication()
         } catch { show(error.localizedDescription, error: true) }
     }
 }

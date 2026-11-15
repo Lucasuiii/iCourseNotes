@@ -6,7 +6,7 @@ an exception type name.  The bridge reuses the protected runtime (active source,
 shared Python environment, wrapper templates, encrypted Store) and never edits
 existing control files except the app-owned markers it creates.
 """
-import argparse, contextlib, hashlib, json, os, re, shutil, signal, sqlite3, subprocess, sys, time
+import argparse, contextlib, fcntl, hashlib, json, os, re, shutil, signal, sqlite3, subprocess, sys, tempfile, time
 from datetime import datetime
 from pathlib import Path
 
@@ -118,6 +118,55 @@ def apply_summary_formatting(summary, artifact, course_id, sub_id, date):
     if edits != artifact.get('edits') or summary not in (base, final):
         raise Refused('笔记内容已变化，请重新核对公式排版修订')
     return final
+
+
+def apply_editorial_revision(summary, figures, artifact, course_id, sub_id, date):
+    """Bind an independently checked local correction to exact source text/assets.
+
+    This does not approve publication or relabel the original model review.
+    """
+    sha = lambda text: hashlib.sha256(text.encode()).hexdigest()
+    display = lambda state: figure_payload(json.dumps(state, ensure_ascii=False))['figures']
+    fingerprint = lambda value: sha(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':')))
+    if (artifact.get('schema') != 1 or artifact.get('kind') != 'independent_editorial_revision'
+            or (artifact.get('course_id'), artifact.get('sub_id'), artifact.get('date')) != (course_id, sub_id, date)
+            or artifact.get('review_status') != 'reviewed_locally' or artifact.get('model_calls') != 0
+            or artifact.get('blocking_issues') != [] or len(artifact.get('checks', [])) < 4):
+        raise Refused('本机修订记录的课次或审核状态不匹配')
+    base, final = artifact.get('base_summary'), artifact.get('summary')
+    if (not isinstance(base, str) or not isinstance(final, str) or summary != base
+            or sha(base) != artifact.get('base_summary_sha256') or sha(final) != artifact.get('summary_sha256')
+            or fingerprint(display(figures)) != artifact.get('base_figures_sha256')):
+        raise Refused('原稿或配图已变化，请重新核对本机修订')
+    heading = lambda text: re.findall(r'^#{1,6} .+$', text, re.M)
+    if heading(base) != heading(final):
+        raise Refused('本机修订改变了课程章节范围')
+    state = artifact.get('figure_state')
+    source = str(active_source())
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    from src.pipeline.summary_figures import validate_assets
+    try:
+        validate_assets(state, sub_id)
+    except Exception:
+        raise Refused('本机修订图片完整性检查失败') from None
+    if state.get('course_id') != course_id or state.get('editorial_summary_sha256') != sha(final):
+        raise Refused('本机修订配图没有绑定最终文稿')
+    original = {f['id']: f for f in display(figures)}
+    revised = {f['id']: f for f in display(state)}
+    if not original.keys() <= revised.keys():
+        raise Refused('本机修订缺少原配图')
+    for ident, previous in original.items():
+        if any(previous.get(k) != revised[ident].get(k) for k in ('id', 'data', 'mime', 'seconds')):
+            raise Refused('本机修订改变了原图像素或时间')
+    refs = [m[2] for m in FIGURE_REF.finditer(final)]
+    if len(refs) != len(revised) or set(refs) != set(revised):
+        raise Refused('修订稿图片引用与资产不一致')
+    additions = set(revised)-set(original)
+    witnesses = {x.get('image_id') for x in artifact.get('image_evidence', []) if x.get('visually_checked') is True}
+    if not additions <= witnesses:
+        raise Refused('新增图片缺少目视核对记录')
+    return final, state
 
 
 # ------------------------------------------------------------------ terms
@@ -475,7 +524,7 @@ def cmd_start(args):
         for name in ['finalize.py', 'deliver_corrected.py', 'cleanup_completed.py', 'read_progress.py']:
             text = render_template((RUNTIME/'templates'/name).read_text(), row, r.name, inv['mode'])
             compile(text, str(r/name), 'exec'); (r/name).write_text(text)
-        for name in ['app_run_once.py', 'app_publish.py']:
+        for name in ['app_run_once.py', 'app_publish.py', 'publication_support.py']:
             text = render_template((TEMPLATES/name).read_text(), row, r.name, inv['mode'])
             compile(text, str(r/name), 'exec'); (r/name).write_text(text)
         (r/'queue.env').write_text('SUMMARY_FIGURES=true\nGITHUB_REPOSITORY=Lucasuiii/iCourseNotes\nCOURSE_IDS='+cid+'\n')
@@ -630,7 +679,7 @@ def remote_lecture(cid, sid):
     provider_env()
     from scripts.production_db import load_remote
     STATE.mkdir(mode=0o700, exist_ok=True)
-    tmp = STATE/'compare-tmp'; shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(mode=0o700)
+    tmp = Path(tempfile.mkdtemp(prefix='compare-', dir=STATE))
     try:
         db = tmp/'remote.db'
         with open(os.devnull, 'w') as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
@@ -696,6 +745,17 @@ def cmd_notes_sync(args):
     out({'ok': True, 'revision': revision, 'lectures': len(index)})
 
 
+def publication_status(control):
+    status = read_json(control/'app-publication-status.json') or {}
+    launch = read_json(control/'app-publication-launch.json') or {}
+    pid = status.get('pid') or launch.get('pid')
+    if (status.get('status') in ('queued', 'validating', 'publishing', 'mailing', 'cleaning', 'published')
+            and pid and not pid_alive(pid, 'app_publish.py')):
+        status = dict(status, status='failed', error_type='PublisherExited',
+                      message='发布进程已退出，检查点与发布记录已保留')
+    return status
+
+
 def local_lectures():
     rows = []; terms = known_terms()
     for p in sorted(WORK.glob('local-latest-[0-9]*-[0-9]*-*')):
@@ -711,7 +771,7 @@ def local_lectures():
         has_candidate = (p/('lecture-'+sel['sub_id'])/(sel['course_id']+'-'+sel['sub_id'])/'candidate.db').exists()
         if not has_candidate and not (output/'summary.md').exists():
             continue
-        publication = read_json(p/'app-publication-status.json') or {}
+        publication = publication_status(p)
         approval = read_json(p/'app-approval.json')
         term = term_for(sel['course_id'], sel['date'], terms)
         rows.append({'sub_id': sel['sub_id'], 'course_id': sel['course_id'], 'course_title': sel['course_title'],
@@ -722,6 +782,9 @@ def local_lectures():
                      'app_managed': (p/'app_publish.py').exists(),
                      'publication_status': safe_code(publication.get('status')),
                      'publication_error': safe_code(publication.get('error_type')),
+                     'publication_message': publication.get('message'),
+                     'publication_phase': safe_code(publication.get('publication_phase')),
+                     'publication_retryable': publication.get('status') == 'failed' and not (p/'notes-publication.json').exists() and not publication.get('mail_reserved'),
                      'publication_conflict': 'already processed' in str(publication.get('detail') or '') or 'changed since comparison' in str(publication.get('detail') or ''),
                      'notes_commit': safe_code(publication.get('notes_commit')),
                      'email_status': safe_code(publication.get('email_status') or st.get('email_status')),
@@ -791,6 +854,13 @@ def local_note(control):
         payload['formatting_revision'] = {'kind': artifact['kind'], 'model_review_of_formatted_text': False}
         # The exact formatted bytes were not reviewed by the model; retain the real audit in the candidate.
         payload['review'] = None
+    if formatting_store.exists('app-editorial-revision.enc'):
+        artifact = formatting_store.read('app-editorial-revision.enc')
+        summary, revised_figures = apply_editorial_revision(
+            payload['summary'], payload['figures'], artifact, cid, sid, sel['date'])
+        payload.update(summary=summary, figures=figure_payload(json.dumps(revised_figures, ensure_ascii=False)),
+                       summary_sha256=hashlib.sha256(summary.encode()).hexdigest(), review=None,
+                       editorial_revision={'review_status': 'reviewed_locally', 'model_review_of_final_text': False})
     asr = output/'asr-transcript.md'
     payload['asr_transcript'] = asr.read_text() if asr.exists() else ''
     status = read_json(control/'execution-status.json') or {}
@@ -804,7 +874,8 @@ def local_note(control):
     payload['publishable'] = (candidate.exists() and payload['status'] == 'awaiting_content_review'
                               and not (control/'finalization-started.json').exists()
                               and not (control/'notes-publication.json').exists()
-                              and not (control/'app-publication-started.json').exists())
+                              and not (control/'app-publication-started.json').exists()
+                              and not (control/'app-publication-request.json').exists())
     if not payload['publishable']:
         payload['publish_block_reason'] = ('已发布或已开始发布' if (control/'notes-publication.json').exists() or (control/'app-publication-started.json').exists()
                                            else '已保留云端版本' if (control/'app-superseded.json').exists()
@@ -847,11 +918,13 @@ def cmd_approve(args):
         raise Refused(note.get('publish_block_reason') or '当前不可审核通过')
     if args.summary_sha256 != note.get('summary_sha256'):
         raise Refused('内容已变化，请重新阅读后再审核')
-    checks = [c for c in json.loads(args.checks) if isinstance(c, str) and c.strip()]
-    if len(checks) < 4:
-        raise Refused('至少需要完成四项审核确认')
+    checks = [c for c in json.loads(args.checks or '[]') if isinstance(c, str) and c.strip()]
+    if not getattr(args, 'confirm', False) and len(checks) < 4:
+        raise Refused('请确认已阅读并通过审核')
+    if getattr(args, 'confirm', False):
+        checks = ['用户已阅读并确认这份笔记可发布']
     write_json(control/'app-approval.json', {'summary_sha256': args.summary_sha256, 'checks': checks,
-                                             'notes': (args.notes or '')[:2000], 'approved_at': time.time()})
+                                             'notes': (args.notes or '')[:2000], 'approval_mode': 'single_confirmation' if getattr(args, 'confirm', False) else 'checklist', 'approved_at': time.time()})
     out({'ok': True, 'approved': True})
 
 
@@ -866,14 +939,15 @@ def cmd_unapprove(args):
 def reset_failed_attempt(control):
     """A failed push that never reached GitHub (no notes journal) may be retried once the user
     has chosen again; earlier attempt files are archived, never deleted."""
-    status = read_json(control/'app-publication-status.json') or {}
-    if status.get('status') != 'failed' or (control/'notes-publication.json').exists():
+    status = publication_status(control)
+    if (status.get('status') != 'failed' or (control/'notes-publication.json').exists()
+            or status.get('mail_reserved') or pid_alive(status.get('pid'), 'app_publish.py')):
         raise Refused('已经开始或完成推送，不会重复推送')
     n = 1
     while (control/f'app-attempt-{n}').exists():
         n += 1
     archive = control/f'app-attempt-{n}'; archive.mkdir(mode=0o700)
-    for name in ('app-publication-started.json', 'app-publication-request.json', 'app-publication-status.json', 'editorial-approval.json'):
+    for name in ('app-publication-started.json', 'app-publication-request.json', 'app-publication-status.json', 'app-publication-launch.json', 'editorial-approval.json'):
         if (control/name).exists():
             (control/name).rename(archive/name)
     st = read_json(control/'execution-status.json') or {}
@@ -883,9 +957,36 @@ def reset_failed_attempt(control):
 
 def cmd_push(args):
     control = lecture_control(args.control)
+    with (control/'app-push.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refused('这堂课正在准备推送，请稍候') from None
+        return push_lecture(args, control)
+
+
+def install_publisher(control):
+    # Only publication code is upgraded. Frozen ASR/source/checkpoints stay bound to their original run.
+    previous = control/'publisher-history'
+    files = read_json(control/'control-files.json') or {}
+    for name in ('app_publish.py', 'publication_support.py'):
+        text = render_template((TEMPLATES/name).read_text(), read_json(control/'selection.json'), control.name, '')
+        compile(text, str(control/name), 'exec')
+        target = control/name
+        if target.exists() and target.read_text() != text:
+            previous.mkdir(exist_ok=True, mode=0o700)
+            digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            shutil.copyfile(target, previous/(name+'.'+digest))
+        target.write_text(text)
+        files[name] = hashlib.sha256(text.encode()).hexdigest()
+    write_json(control/'control-files.json', files)
+
+
+def push_lecture(args, control):
     if not (control/'app_publish.py').exists():
         raise Refused('该课次不是由本地应用启动，缺少应用发布脚本')
-    if not args.dry_run and (control/'app-publication-started.json').exists():
+    if (not args.dry_run and ((control/'app-publication-started.json').exists()
+                              or (control/'app-publication-request.json').exists())):
         reset_failed_attempt(control)
     if not args.dry_run:
         sel = read_json(control/'selection.json')
@@ -894,6 +995,8 @@ def cmd_push(args):
             out({'ok': False, 'conflict': True, 'message': '云端已经有这堂课的笔记，请先选择保留云端或用本机覆盖'}); return
     approval = read_json(control/'app-approval.json')
     note = local_note(control)
+    if getattr(args, 'expected_summary', None) and note.get('summary_sha256') != args.expected_summary:
+        raise Refused('批量确认后内容已变化，请重新审核')
     if not note['publishable']:
         raise Refused(note.get('publish_block_reason') or '当前不可推送')
     if args.dry_run and not approval:
@@ -912,14 +1015,74 @@ def cmd_push(args):
     name = 'app-dry-run-request.json' if args.dry_run else 'app-publication-request.json'
     if not args.dry_run and (control/name).exists():
         raise Refused('已经提交过推送请求，不会重复推送')
+    install_publisher(control)
     write_json(control/name, request)
     cmd = [str(PY), str(control/'app_publish.py'), '--request', name]
     if args.dry_run:
         p = subprocess.run(cmd, cwd=BASE, env=ENV, capture_output=True, timeout=900)
         result = read_json(control/'app-dry-run-result.json') or {'status': 'failed', 'error_type': 'DryRunNoResult'}
         out({'ok': p.returncode == 0, 'dry_run': True, 'result': result}); return
+    write_json(control/'app-publication-status.json', {'status': 'queued', 'updated': time.time()})
     with (control/'app-publication-private.log').open('ab') as log:
-        child = subprocess.Popen(cmd, cwd=BASE, env=ENV, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            child = subprocess.Popen(cmd, cwd=BASE, env=ENV, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError:
+            write_json(control/'app-publication-status.json', {'status': 'failed', 'error_type': 'PublisherLaunchFailed', 'updated': time.time()})
+            raise
+    write_json(control/'app-publication-launch.json', {'pid': child.pid, 'started': time.time()})
+    out({'ok': True, 'started': True, 'pid': child.pid})
+
+
+def batch_state():
+    state = read_json(STATE/'push-batch.json')
+    if state and state.get('status') == 'running' and not pid_alive(state.get('pid'), 'app_push_queue.py'):
+        state = dict(state, status='interrupted', error_type='BatchWorkerExited')
+    return state
+
+
+def cmd_push_batch_status(args):
+    out({'ok': True, 'batch': batch_state(), 'local': local_lectures()})
+
+
+def cmd_push_many(args):
+    STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (STATE/'push-batch.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if (batch_state() or {}).get('status') == 'running':
+            raise Refused('上一批仍在推送，请等待完成')
+        items = json.loads(args.items)
+        if not isinstance(items, list) or not items:
+            raise Refused('请选择要推送的课次')
+        prepared = []; seen = set()
+        for item in items:
+            control = lecture_control(item['control'])
+            note = local_note(control)
+            approval = read_json(control/'app-approval.json') or {}
+            publication = publication_status(control)
+            retryable = (publication.get('status') == 'failed' and not (control/'notes-publication.json').exists()
+                         and not publication.get('mail_reserved') and not pid_alive(publication.get('pid'), 'app_publish.py'))
+            if not note.get('publishable') and not retryable:
+                raise Refused('所选课次已开始推送或需要核查，请刷新列表')
+            if not note.get('approved') or approval.get('summary_sha256') != item.get('summary_sha256'):
+                raise Refused('审核内容已变化，请重新审核后选择')
+            if note['sub_id'] in seen:
+                raise Refused('同一课次不能在一批里重复推送')
+            seen.add(note['sub_id'])
+            overwrite = item.get('overwrite_remote_sha256')
+            if overwrite and not re.fullmatch(r'[0-9a-f]{64}', overwrite):
+                raise Refused('云端覆盖确认无效')
+            prepared.append({'control': str(control), 'sub_id': note['sub_id'], 'course_title': note['course_title'],
+                             'date': note['date'], 'summary_sha256': item['summary_sha256'],
+                             'overwrite_remote_sha256': overwrite, 'status': 'pending'})
+        write_json(STATE/'push-batch.json', {'status': 'starting', 'items': prepared, 'email': bool(args.email),
+                                           'started': time.time(), 'bridge': str(HERE/'app_bridge.py')})
+        with (STATE/'push-batch-private.log').open('ab') as log:
+            child = subprocess.Popen([str(PY), str(TEMPLATES/'app_push_queue.py'), '--state', str(STATE/'push-batch.json')],
+                                     cwd=BASE, env=dict(ENV, ICOURSE_PROJECT_ROOT=str(BASE)),
+                                     stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        state = read_json(STATE/'push-batch.json')
+        state.update(pid=child.pid, status='running')
+        write_json(STATE/'push-batch.json', state)
     out({'ok': True, 'started': True, 'pid': child.pid})
 
 
@@ -986,10 +1149,12 @@ def main():
     sub.add_parser('notes-sync'); sub.add_parser('notes-list')
     s = sub.add_parser('note'); s.add_argument('--sub-id'); s.add_argument('--control')
     s = sub.add_parser('approve'); s.add_argument('--control', required=True); s.add_argument('--summary-sha256', required=True)
-    s.add_argument('--checks', required=True); s.add_argument('--notes')
+    s.add_argument('--checks'); s.add_argument('--confirm', action='store_true'); s.add_argument('--notes')
     s = sub.add_parser('unapprove'); s.add_argument('--control', required=True)
     s = sub.add_parser('push'); s.add_argument('--control', required=True); s.add_argument('--email', action='store_true')
-    s.add_argument('--dry-run', action='store_true'); s.add_argument('--overwrite-remote')
+    s.add_argument('--dry-run', action='store_true'); s.add_argument('--overwrite-remote'); s.add_argument('--expected-summary')
+    s = sub.add_parser('push-many'); s.add_argument('--items', required=True); s.add_argument('--email', action='store_true')
+    sub.add_parser('push-batch-status')
     s = sub.add_parser('compare'); s.add_argument('--control', required=True)
     s = sub.add_parser('keep-remote'); s.add_argument('--control', required=True)
     sub.add_parser('remote')
@@ -998,7 +1163,8 @@ def main():
         {'status': cmd_status, 'scan': cmd_scan, 'inventory': cmd_inventory, 'start': cmd_start, 'pause': cmd_pause,
          'resume': cmd_resume, 'notes-sync': cmd_notes_sync, 'notes-list': cmd_notes_list, 'note': cmd_note,
          'approve': cmd_approve, 'unapprove': cmd_unapprove, 'push': cmd_push, 'remote': cmd_remote,
-         'compare': cmd_compare, 'keep-remote': cmd_keep_remote}[args.command](args)
+         'compare': cmd_compare, 'keep-remote': cmd_keep_remote,
+         'push-many': cmd_push_many, 'push-batch-status': cmd_push_batch_status}[args.command](args)
     except Refused as e:
         out({'ok': False, 'message': str(e)})
     except Exception as e:

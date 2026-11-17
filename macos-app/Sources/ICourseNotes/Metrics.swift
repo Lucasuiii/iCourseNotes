@@ -166,6 +166,8 @@ struct LectureRunCard: View {
     let lecture: LectureRun
     let isCurrent: Bool
     let history: [PerfPoint]
+    /// Inside the shared card of finished lectures: no own background, rows divided by the parent.
+    var grouped = false
 
     static let steps: [(String, String)] = [("acquisition", "获取"), ("vad", "切分"), ("ppt", "课件"), ("asr", "识别"),
                                             ("summary", "摘要"), ("candidate_validation", "校验"), ("independent_review", "审核")]
@@ -200,12 +202,23 @@ struct LectureRunCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background { if !grouped { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.background.secondary) } }
         .help("展开查看各阶段")
     }
 
-    private var full: some View {
-        Card {
+    @ViewBuilder private var full: some View {
+        if grouped {
+            details.padding(16)
+        } else {
+            Card { details }
+                .overlay(alignment: .leading) {
+                    if isCurrent { RoundedRectangle(cornerRadius: 2).fill(Color.blue).frame(width: 3).padding(.vertical, 14) }
+                }
+        }
+    }
+
+    private var details: some View {
+        Group {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -252,9 +265,6 @@ struct LectureRunCard: View {
                     Spacer()
                 }
             }
-        }
-        .overlay(alignment: .leading) {
-            if isCurrent { RoundedRectangle(cornerRadius: 2).fill(Color.blue).frame(width: 3).padding(.vertical, 14) }
         }
     }
 

@@ -208,9 +208,22 @@ struct RecognizeScreen: View {
                     trend
                 }
             }
-            ForEach(q.lectures) { lecture in
-                LectureRunCard(lecture: lecture, isCurrent: lecture.subId == q.currentSubId && q.coordinatorAlive,
+            let isCurrent = { (l: LectureRun) in l.subId == q.currentSubId && q.coordinatorAlive }
+            let finished = q.lectures.filter { !isCurrent($0) && LectureRunCard.settled.contains($0.status) }
+            // Lectures that still need attention or are running keep their own card, on top.
+            ForEach(q.lectures.filter { l in !finished.contains { $0.subId == l.subId } }) { lecture in
+                LectureRunCard(lecture: lecture, isCurrent: isCurrent(lecture),
                                history: lecture.subId == q.currentSubId ? (model.status?.history ?? []) : [])
+            }
+            if !finished.isEmpty {
+                Card(padding: 0) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(finished.enumerated()), id: \.element.id) { i, lecture in
+                            if i > 0 { Divider().padding(.leading, 16) }
+                            LectureRunCard(lecture: lecture, isCurrent: false, history: [], grouped: true)
+                        }
+                    }
+                }
             }
         }
     }

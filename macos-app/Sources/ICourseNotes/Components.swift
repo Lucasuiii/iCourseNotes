@@ -4,10 +4,9 @@ extension Color {
     static func status(_ s: String?) -> Color {
         switch s ?? "" {
         case "running", "starting", "publishing": return .blue
-        case "paused": return .orange
+        // Three meanings only: orange needs you, red failed, blue is the system working; the rest is quiet.
+        case "paused", "awaiting_content_review", "awaiting_review", "awaiting_publication": return .orange
         case "failed", "publication_failed", "coordinator_failed", "interrupted", "finished_with_failures", "blocked_resource": return .red
-        case "awaiting_content_review", "awaiting_review", "awaiting_publication": return .purple
-        case "completed", "completed_editorial", "delivered", "published", "complete": return .green
         default: return .secondary
         }
     }

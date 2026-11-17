@@ -27,7 +27,7 @@
     if (note.figures && note.figures.status && note.figures.status !== 'complete')
       meta.push('<span class="warn">配图' + (note.figures.status === 'failed' ? '未生成' : '状态 ' + esc(note.figures.status)) + '</span>');
     if (note.review && note.review.status === 'passed') meta.push('<span class="good">理论审核通过</span>');
-    else if (note.review && note.review.status === 'revised') meta.push('<span class="warn">按审核意见修订一次</span>');
+    else if (note.review && note.review.status === 'revised') meta.push('<span class="quiet">按审核意见修订一次</span>');
     if (note.coverage && note.coverage.missing_seconds) meta.push('<span class="warn">识别缺口 ' + note.coverage.missing_seconds + ' 秒</span>');
     meta.push(note.source === 'local' ? '本机结果' : '已发布');
     return '<header class="note-head"><div class="note-kicker">' + esc(note.course_title) + '</div>' +
@@ -65,7 +65,8 @@
     toc.innerHTML = '<div class="toc-title">目录</div>' + heads.map(function (h, i) {
       h.id = 'sec-' + i;
       var copy = h.cloneNode(true); copy.querySelectorAll('.katex-mathml').forEach(function (n) { n.remove(); });
-      return '<a href="#sec-' + i + '">' + esc(copy.textContent.trim()) + '</a>';
+      var label = esc(copy.textContent.trim());
+      return '<a href="#sec-' + i + '" title="' + label + '">' + label + '</a>';
     }).join('');
     toc.hidden = false;
     layout();
@@ -82,8 +83,12 @@
     if (mode !== 'drawer') root.classList.remove('toc-open');
     tocToggle.hidden = mode !== 'drawer';
     var left = Math.max(8, (w - side) / 2);
-    page.style.marginLeft = mode === 'side' ? left + 'px' : '';
-    toc.style.left = mode === 'side' ? (left + pageW + 8) + 'px' : '';
+    // Wide: centre page and outline together instead of the page alone, so the outline
+    // does not hug the window edge and the page does not leave an empty left margin.
+    var railGap = 48, railW = 220, railLeft = Math.max(24, (w - pageW - railGap - railW) / 2);
+    page.style.marginLeft = mode === 'side' ? left + 'px' : mode === 'rail' ? railLeft + 'px' : '';
+    toc.style.left = mode === 'side' ? (left + pageW + 8) + 'px' : mode === 'rail' ? (railLeft + pageW + railGap) + 'px' : '';
+    toc.style.width = mode === 'rail' ? railW + 'px' : '';
   }
   function closeToc() { document.documentElement.classList.remove('toc-open'); }
   tocToggle.addEventListener('click', function (e) { e.stopPropagation(); document.documentElement.classList.toggle('toc-open'); });

@@ -54,12 +54,13 @@ struct RootView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 240)
+                .frame(width: 216)
             }
             ToolbarItem(placement: .primaryAction) {
                 if model.currentQueue?.coordinatorAlive == true { RunningChip() }
             }
-            ToolbarItem(placement: .primaryAction) {
+            // Same place on every tab; page actions stay on the right.
+            ToolbarItem(placement: .navigation) {
                 if model.bridge != nil { AttentionButton() }
             }
         }

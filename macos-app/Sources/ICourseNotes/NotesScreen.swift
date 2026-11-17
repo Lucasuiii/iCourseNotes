@@ -39,7 +39,7 @@ struct NotesScreen: View {
     var body: some View {
         @Bindable var model = model
         NavigationSplitView {
-            list.navigationSplitViewColumnWidth(min: 200, ideal: 236, max: 300)
+            list.navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             reader
         }
@@ -54,7 +54,7 @@ struct NotesScreen: View {
                         .disabled(payload == nil)
                     Divider()
                     Button("批量导出…") { model.showBatchExport = true }
-                } label: { Label("导出 PDF", systemImage: "square.and.arrow.up") }
+                } label: { Label("导出 PDF", systemImage: "arrow.down.doc") }
                 .help("导出 PDF")
                 .disabled(model.exporting != nil)
                 Menu {
@@ -79,6 +79,11 @@ struct NotesScreen: View {
         }
         .onChange(of: model.selectedNote) { _, row in
             if let row { Task { await load(row) } } else { payload = nil }
+            // Opening a note (e.g. from 待处理) reveals it once; a later manual collapse is kept.
+            if let row, !row.isLocal {
+                var state = expansionState; state[row.termLabel + "|" + row.courseTitle] = true
+                expansionRaw = (try? String(data: JSONEncoder().encode(state), encoding: .utf8)) ?? "{}"
+            }
         }
         .task {
             if model.selectedNote == nil { model.selectedNote = model.noteRows.first { !$0.isLocal } }
@@ -116,19 +121,21 @@ struct NotesScreen: View {
             }
             let inTerm = rows.filter { !$0.isLocal && (!query.isEmpty || $0.termLabel == activeTerm) }
             ForEach(terms(inTerm), id: \.0) { term, courses in
-                Section(query.isEmpty ? "课程" : term) {
+                Section {
                     ForEach(courses, id: \.0) { course, items in
                         DisclosureGroup(isExpanded: expansion(term + "|" + course)) {
                             ForEach(items) { NoteListRow(row: $0, showCourse: false).tag($0) }
                         } label: {
                             HStack(spacing: 6) {
                                 Circle().fill(courseTint(items[0].courseId)).frame(width: 6, height: 6)
-                                Text(course).lineLimit(1)
+                                Text(course).font(.system(size: 13, weight: .medium)).lineLimit(1)
                                 Spacer()
                                 Text("\(items.count)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                             }
                         }
                     }
+                } header: {
+                    if !query.isEmpty { Text(term) }
                 }
             }
         }
@@ -276,9 +283,12 @@ struct NoteListRow: View {
             }
             .padding(.vertical, 2)
         } else {
-            HStack(spacing: 8) {
-                Text(shortDate(row.date)).monospacedDigit()
-                Text("\(weekday(row.date)) \(sessionLabel(row.title, date: row.date))").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text(shortDate(row.date)).font(.system(size: 12.5)).monospacedDigit()
+                    .frame(width: 58, alignment: .leading)
+                Text(weekday(row.date)).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .frame(width: 26, alignment: .leading)
+                Text(sessionLabel(row.title, date: row.date)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 0)
                 badge
             }
@@ -287,7 +297,12 @@ struct NoteListRow: View {
 
     @ViewBuilder private var badge: some View {
         if row.isLocal {
-            Text(row.approved ? "待推送" : "待审核").font(.caption2).foregroundStyle(.secondary)
+            // Not yet in data: the one state in this list that needs the user.
+            HStack(spacing: 4) {
+                Circle().fill(Color.orange).frame(width: 6, height: 6)
+                Text(row.approved ? "待推送" : "待审核").font(.caption2.weight(.medium))
+            }
+            .foregroundStyle(.orange)
         }
     }
 }

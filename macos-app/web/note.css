@@ -73,6 +73,7 @@ html.native-selection .katex *::selection { background: transparent; }
 .note-title { font: 600 calc(34px * var(--scale))/1.3 var(--serif); margin: 10px 0 14px; letter-spacing: .01em; }
 .note-meta { font-size: 13.5px; color: var(--faint); display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .note-meta .warn { color: #c07a1c; }
+.note-meta .quiet { color: inherit; }
 .note-meta .good { color: #3f8f4f; }
 .note-head::after { content: ""; display: block; width: 40px; height: 1px; background: var(--rule); margin-top: 28px; }
 
@@ -190,3 +191,16 @@ html.print .summary-classroom-figure, html.print .callout, html.print .katex-dis
 html.print .prose h3, html.print .prose h4 { break-after: avoid; }
 html.print .print-transcript { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--rule); font-size: 13.5px; line-height: 1.75; color: var(--muted); }
 html.print .print-transcript h2 { font-family: var(--serif); color: var(--text); font-size: 20px; }
+
+/* Screen reading density (PDF keeps its own html.print rules). */
+html:not(.print) body { line-height: 1.8; }
+html:not(.print) #page { padding-top: 36px; }
+html:not(.print) .note-head { margin-bottom: 28px; }
+html:not(.print) .note-head::after { margin-top: 20px; }
+html:not(.print) .note-title { margin: 8px 0 10px; }
+html:not(.print) .note-meta { font-size: 13px; gap: 4px 0; }
+html:not(.print) .note-meta > span + span::before, html:not(.print) .note-meta > * + *::before { content: "·"; margin: 0 8px; color: var(--faint); }
+html:not(.print) .callout { padding: 16px 20px 2px; border-radius: 10px; margin-bottom: 2em; }
+html:not(.print) .callout > h3 { font-size: .95em; margin-bottom: .4em !important; }
+html:not(.print) .callout p, html:not(.print) .callout li { font-size: .94em; line-height: 1.75; }
+#toc a { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 3px 0 3px 12px; }

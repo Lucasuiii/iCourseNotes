@@ -314,7 +314,7 @@ struct StageStepper: View {
                 let active = i == current && current < LectureRunCard.steps.count
                 VStack(spacing: 5) {
                     ZStack {
-                        Circle().fill(done ? Color.green : active ? Color.status(status) : Color.secondary.opacity(0.15))
+                        Circle().fill(done ? Color.secondary.opacity(0.55) : active ? Color.status(status) : Color.secondary.opacity(0.15))
                             .frame(width: 18, height: 18)
                         if done { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white) }
                         else if active && status == "running" { Circle().fill(.white).frame(width: 6, height: 6) }
@@ -325,7 +325,7 @@ struct StageStepper: View {
                 }
                 .frame(width: 44)
                 if i < LectureRunCard.steps.count - 1 {
-                    Rectangle().fill(i < current ? Color.green.opacity(0.6) : Color.secondary.opacity(0.15))
+                    Rectangle().fill(i < current ? Color.secondary.opacity(0.4) : Color.secondary.opacity(0.15))
                         .frame(height: 2).offset(y: -9)
                 }
             }

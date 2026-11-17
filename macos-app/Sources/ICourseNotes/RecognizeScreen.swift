@@ -11,7 +11,7 @@ struct RecognizeScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: 30) {
                 if let q = model.currentQueue, q.coordinatorAlive {
                     queueBlock(q)
                     scanBlock
@@ -28,11 +28,12 @@ struct RecognizeScreen: View {
                     .font(.caption).foregroundStyle(.orange)
                 }
             }
-            .padding(.horizontal, 32).padding(.vertical, 26)
-            .frame(maxWidth: 980)
+            .padding(.horizontal, 32).padding(.vertical, 24)
+            // Hardware tiles need room only while recognising.
+            .frame(maxWidth: model.currentQueue?.coordinatorAlive == true ? 880 : 720)
             .frame(maxWidth: .infinity)
         }
-        .navigationTitle("识别")
+        .navigationTitle("")
         .toolbar {
             ToolbarItemGroup {
                 if let qs = model.status?.queues, qs.count > 1 {
@@ -69,7 +70,7 @@ struct RecognizeScreen: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("新回放").font(.title2.weight(.semibold))
+                    Text("新回放").font(.title3.weight(.semibold))
                     Group {
                         if model.scanning, let s = model.scanStarted {
                             TimelineView(.periodic(from: s, by: 1)) { ctx in
@@ -192,7 +193,7 @@ struct RecognizeScreen: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 10) {
-                        Text(q.coordinatorAlive ? "正在识别" : "最近一次识别").font(.title2.weight(.semibold))
+                        Text(q.coordinatorAlive ? "正在识别" : "最近一次识别").font(.title3.weight(.semibold))
                         StatusPill(status: q.isRunning ? "running" : q.status, label: q.pauseRequested ? "将暂停" : nil)
                     }
                     Text("启动于 \(shortTime(q.startedDate))\(q.appManaged ? "" : " · 旧流程启动，仅查看")")

@@ -12,16 +12,16 @@ struct SyncScreen: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 30) {
                 pullBlock
                 pushBlock
                 historyBlock
             }
-            .padding(.horizontal, 32).padding(.vertical, 26)
-            .frame(maxWidth: 860)
+            .padding(.horizontal, 32).padding(.vertical, 24)
+            .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
         }
-        .navigationTitle("同步")
+        .navigationTitle("")
         .task { await model.refreshPublication(); await model.checkRemote() }
         .onChange(of: selectable.map(\.control)) { _, controls in selection.formIntersection(controls) }
         .sheet(item: $pushTarget) { item in pushSheet(item) }
@@ -35,27 +35,31 @@ struct SyncScreen: View {
     private var pullBlock: some View {
         let r = model.remote
         return VStack(alignment: .leading, spacing: 12) {
-            Text("GitHub data").font(.title2.weight(.semibold))
-            HStack(spacing: 16) {
-                ZStack {
-                    Circle().fill((r?.upToDate ?? false) ? Color.green.opacity(0.15) : Color.blue.opacity(0.15))
-                    Image(systemName: (r?.upToDate ?? false) ? "checkmark.icloud" : "icloud.and.arrow.down")
-                        .font(.title2).foregroundStyle((r?.upToDate ?? false) ? .green : .blue)
-                }
-                .frame(width: 52, height: 52)
+            Text("GitHub data").font(.title3.weight(.semibold))
+            HStack(spacing: 12) {
+                let fresh = r?.upToDate ?? false
+                Image(systemName: fresh ? "checkmark.icloud" : "icloud.and.arrow.down")
+                    .font(.system(size: 16)).foregroundStyle(fresh ? Color.secondary : Color.orange)
                 VStack(alignment: .leading, spacing: 3) {
                     if let r {
-                        Text(r.upToDate ? "本机笔记已是最新" : r.cachedRevision == nil ? "尚未拉取笔记" : "云端有新的提交").font(.headline)
-                        HStack(spacing: 4) {
-                            Text("data \(r.remoteHead?.prefix(7) ?? "—") · 本机 \(r.cachedRevision?.prefix(7) ?? "—") · 拉取于 \(relative(r.syncedAt.map { Date(timeIntervalSince1970: $0) })) ·")
-                            FreshnessLabel(prefix: "检查于", time: r.checkedAt, staleAfter: 3600)
+                        HStack(spacing: 8) {
+                            Text(r.upToDate ? "本机笔记已是最新" : r.cachedRevision == nil ? "尚未拉取笔记" : "云端有新的提交")
+                                .font(.callout.weight(.medium))
+                            HStack(spacing: 4) {
+                                Text("本机 \(r.cachedRevision?.prefix(7) ?? "—") ·")
+                                FreshnessLabel(prefix: "检查于", time: r.checkedAt, staleAfter: 3600)
+                            }
+                            .font(.caption).foregroundStyle(.secondary)
                         }
-                        .font(.caption).foregroundStyle(.secondary)
+                        if !r.upToDate {
+                            Text("data \(r.remoteHead?.prefix(7) ?? "—") · 拉取于 \(relative(r.syncedAt.map { Date(timeIntervalSince1970: $0) }))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         if let e = model.remoteError {
                             Label("最近一次检查失败：\(e)", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
                         }
                     } else {
-                        Text(model.remoteError.map { "无法连接 GitHub：\($0)" } ?? "正在连接 GitHub…").font(.headline)
+                        Text(model.remoteError.map { "无法连接 GitHub：\($0)" } ?? "正在连接 GitHub…").font(.callout.weight(.medium))
                             .foregroundStyle(model.remoteError == nil ? Color.primary : Color.orange)
                     }
                 }
@@ -66,10 +70,10 @@ struct SyncScreen: View {
                     HStack { if model.syncing { ProgressView().controlSize(.small) }; Text(model.syncing ? "拉取中" : "拉取最新") }
                 }
                 .buttonStyle(.borderedProminent).disabled(model.syncing)
+                .help("拉取只读：解密云端 data 后加密缓存在本机，不修改云端。")
             }
-            .padding(18)
-            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            Text("拉取只读：解密云端 data 后加密缓存在本机，不修改云端。").font(.caption).foregroundStyle(.tertiary)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
@@ -88,9 +92,9 @@ struct SyncScreen: View {
         let failed = local.filter { $0.publicationStatus == "failed" }
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("推送").font(.title2.weight(.semibold))
+                Text("推送").font(.title3.weight(.semibold))
                 Spacer()
-                Text("可多选课次，依次推送").font(.caption).foregroundStyle(.secondary)
+                if !selectable.isEmpty { Text("可多选课次，依次推送").font(.caption).foregroundStyle(.secondary) }
             }
             if !selectable.isEmpty {
                 HStack {
@@ -115,13 +119,7 @@ struct SyncScreen: View {
                 }
             }
             if approved.isEmpty && reviewing.isEmpty && inFlight.isEmpty && failed.isEmpty {
-                HStack(spacing: 10) {
-                    Image(systemName: "tray").foregroundStyle(.secondary)
-                    Text("没有待推送的本机结果").foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(16)
-                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text("没有待推送的本机结果").font(.callout).foregroundStyle(.secondary)
             }
             ForEach(inFlight) { item in row(item, accessory: AnyView(HStack { ProgressView().controlSize(.small); Text(Labels.publication(item.publicationStatus)).foregroundStyle(.secondary) })) }
             ForEach(approved) { item in
@@ -164,10 +162,10 @@ struct SyncScreen: View {
         return Group {
             if !done.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("最近推送").font(.headline)
+                    Text("最近推送").font(.title3.weight(.semibold))
                     ForEach(done.prefix(showAllHistory ? 30 : 5)) { item in
                         HStack {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.secondary)
                             Text("\(item.courseTitle) · \(shortDate(item.date ?? ""))")
                             Spacer()
                             if item.emailStatus == "sent" { Text("已发邮件").font(.caption).foregroundStyle(.secondary) }

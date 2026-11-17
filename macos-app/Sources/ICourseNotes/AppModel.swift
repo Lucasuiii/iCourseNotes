@@ -64,6 +64,11 @@ final class AppModel {
     }
     var noteCourse: String = "全部"
 
+    // ticked-off attention items (persisted; see Attention.swift)
+    var acknowledged: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "acknowledgedAttention") ?? []) {
+        didSet { UserDefaults.standard.set(Array(acknowledged), forKey: "acknowledgedAttention") }
+    }
+
     // cloud daily check
     var cloud: CloudStatus?
     var cloudError: String?

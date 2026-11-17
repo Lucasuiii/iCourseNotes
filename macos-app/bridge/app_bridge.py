@@ -1153,6 +1153,74 @@ def cmd_remote(args):
          'local': local_lectures()})
 
 
+# ------------------------------------------------------------------- cloud
+
+CLOUD_REPOSITORY = 'Lucasuiii/iCourseNotes'
+CLOUD_WORKFLOW = 'check.yml'
+CLOUD_STALE_SECONDS = 26*3600  # A daily schedule that has not succeeded for longer is silently broken.
+
+
+def github_get(path):
+    """Read-only GitHub API through the logged-in gh CLI; the public API without it."""
+    gh = shutil.which('gh') or next((p for p in ('/opt/homebrew/bin/gh', '/usr/local/bin/gh') if Path(p).exists()), None)
+    if gh:
+        r = subprocess.run([gh, 'api', path], capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            return json.loads(r.stdout)
+    import urllib.request
+    request = urllib.request.Request('https://api.github.com/'+path, headers={'Accept': 'application/vnd.github+json'})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read())
+
+
+def iso_time(value):
+    return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp() if value else None
+
+
+def cloud_health(runs, now):
+    """runs: newest first. Returns (health, consecutive_failures, last_success_at)."""
+    finished = [r for r in runs if r['status'] == 'completed' and r.get('conclusion') != 'cancelled']
+    failures = 0
+    for r in finished:
+        if r.get('conclusion') == 'success': break
+        failures += 1
+    last_success = next((r['updated'] for r in finished if r.get('conclusion') == 'success'), None)
+    if runs and runs[0]['status'] != 'completed':
+        health = 'running'
+    elif finished and finished[0].get('conclusion') != 'success':
+        health = 'failing'
+    elif last_success is None or now-last_success > CLOUD_STALE_SECONDS:
+        health = 'stale'
+    else:
+        health = 'ok'
+    return health, failures, last_success
+
+
+def cmd_cloud(args):
+    """Daily cloud check status: run states only, no logs or private data."""
+    now = time.time()
+    try:
+        data = github_get(f'repos/{CLOUD_REPOSITORY}/actions/workflows/{CLOUD_WORKFLOW}/runs?per_page=10')
+    except Exception as e:
+        raise Refused('无法读取云端运行状态（'+type(e).__name__+'）')
+    runs = []
+    for r in data.get('workflow_runs', [])[:10]:
+        runs.append({'id': r['id'], 'status': safe_code(r.get('status')), 'conclusion': safe_code(r.get('conclusion')),
+                     'event': safe_code(r.get('event')), 'created': iso_time(r.get('created_at')),
+                     'updated': iso_time(r.get('updated_at')), 'url': r.get('html_url')})
+    health, failures, last_success = cloud_health(runs, now)
+    latest = runs[0] if runs else None
+    if latest and latest['status'] == 'completed' and latest['conclusion'] != 'success':
+        try:
+            jobs = github_get(f'repos/{CLOUD_REPOSITORY}/actions/runs/{latest["id"]}/jobs?per_page=30').get('jobs', [])
+            latest['failed_jobs'] = [str(j.get('name', '')).split(' / ')[-1][:40] for j in jobs
+                                     if j.get('conclusion') in ('failure', 'timed_out')]
+        except Exception:
+            latest['failed_jobs'] = []
+    out({'ok': True, 'checked_at': now, 'health': health, 'consecutive_failures': failures,
+         'last_success_at': last_success, 'latest': latest, 'runs': runs})
+
+
 # ------------------------------------------------------------------- main
 
 def main():
@@ -1177,14 +1245,14 @@ def main():
     sub.add_parser('push-batch-status')
     s = sub.add_parser('compare'); s.add_argument('--control', required=True)
     s = sub.add_parser('keep-remote'); s.add_argument('--control', required=True)
-    sub.add_parser('remote')
+    sub.add_parser('remote'); sub.add_parser('cloud')
     args = p.parse_args()
     try:
         {'status': cmd_status, 'scan': cmd_scan, 'inventory': cmd_inventory, 'start': cmd_start, 'pause': cmd_pause,
          'resume': cmd_resume, 'notes-sync': cmd_notes_sync, 'notes-list': cmd_notes_list, 'note': cmd_note,
          'approve': cmd_approve, 'unapprove': cmd_unapprove, 'push': cmd_push, 'remote': cmd_remote,
          'compare': cmd_compare, 'keep-remote': cmd_keep_remote,
-         'push-many': cmd_push_many, 'push-batch-status': cmd_push_batch_status}[args.command](args)
+         'push-many': cmd_push_many, 'push-batch-status': cmd_push_batch_status, 'cloud': cmd_cloud}[args.command](args)
     except Refused as e:
         out({'ok': False, 'message': str(e)})
     except Exception as e:

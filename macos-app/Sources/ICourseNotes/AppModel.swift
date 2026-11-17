@@ -63,6 +63,11 @@ final class AppModel {
     }
     var noteCourse: String = "全部"
 
+    // cloud daily check
+    var cloud: CloudStatus?
+    var cloudError: String?
+    var cloudChecking = false
+
     var toast: Toast?
     var exporting: (done: Int, total: Int)?
     var showBatchExport = false
@@ -72,6 +77,7 @@ final class AppModel {
         let e = PDFExporter(); pdfExporter = e; return e
     }
     private var pollTask: Task<Void, Never>?
+    private var cloudTask: Task<Void, Never>?
 
     init() {
         if let root = Bridge.locateProject() { bridge = Bridge(projectRoot: root) }
@@ -80,6 +86,7 @@ final class AppModel {
     func startup() {
         guard bridge != nil else { return }
         startPolling()
+        startCloudPolling()
         // Launch arguments (e.g. `--args -section notes -noteSub 695615`) open a view directly.
         let d = UserDefaults.standard
         if let s = d.string(forKey: "section").flatMap(AppSection.init(rawValue:)) { section = s }
@@ -116,6 +123,32 @@ final class AppModel {
         guard let q = currentQueue else { return nil }
         return q.lectures.first { $0.subId == q.currentSubId && ["running", "starting"].contains($0.status) }
             ?? q.lectures.first { ["running", "starting"].contains($0.status) }
+    }
+
+    /// Cloud runs change at most a few times a day: launch, every 15 minutes, and on reactivation.
+    func startCloudPolling() {
+        cloudTask?.cancel()
+        cloudTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshCloud()
+                try? await Task.sleep(for: .seconds(15 * 60))
+            }
+        }
+    }
+
+    func refreshCloudIfStale(after seconds: Double = 300) {
+        let age = cloud.map { Date().timeIntervalSince1970 - $0.checkedAt } ?? .infinity
+        if age > seconds { Task { await refreshCloud() } }
+    }
+
+    func refreshCloud() async {
+        guard let bridge, !cloudChecking else { return }
+        cloudChecking = true
+        defer { cloudChecking = false }
+        do {
+            cloud = try await bridge.run(["cloud"], as: CloudStatus.self, timeout: 75)
+            cloudError = nil
+        } catch { cloudError = error.localizedDescription }
     }
 
     func startPolling() {

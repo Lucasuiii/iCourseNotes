@@ -59,6 +59,12 @@ struct RootView: View {
             ToolbarItem(placement: .primaryAction) {
                 if model.currentQueue?.coordinatorAlive == true { RunningChip() }
             }
+            ToolbarItem(placement: .primaryAction) {
+                if model.bridge != nil { AttentionButton() }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if model.bridge != nil { model.refreshCloudIfStale() }
         }
         .overlay(alignment: .bottom) {
             if let e = model.exporting {

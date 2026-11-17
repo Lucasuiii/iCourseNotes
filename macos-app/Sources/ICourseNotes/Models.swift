@@ -399,3 +399,27 @@ struct PublicationState: Decodable {
     let batch: PushBatchState?
     let local: [LocalNoteIndex]
 }
+
+// MARK: cloud daily check
+
+struct CloudRun: Decodable, Hashable, Identifiable {
+    let id: Int
+    let status: String?
+    let conclusion: String?
+    let event: String?
+    let created: Double?
+    let updated: Double?
+    let url: String?
+    let failedJobs: [String]?
+}
+
+struct CloudStatus: Decodable {
+    let ok: Bool
+    let checkedAt: Double
+    /// running · ok · failing · stale (no success for over 26 h)
+    let health: String
+    let consecutiveFailures: Int
+    let lastSuccessAt: Double?
+    let latest: CloudRun?
+    let runs: [CloudRun]
+}

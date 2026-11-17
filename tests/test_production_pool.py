@@ -39,7 +39,7 @@ class Simulation:
         self.store = store; store.key = b'k'*32
         self.tick = 0; self.started = {}; self.events = []; self.peak = 0
         self.remaining = [80, 300, 300, 300, 300, 40, 40, 40][:store.state['task_count']]
-        self.fail = fail
+        self.fail = fail; self.reserve = 0
 
     def source_ref(self): return 'frozen'
 
@@ -79,7 +79,8 @@ class Simulation:
 
     def run(self):
         return pool.controller(self.store, self, attempt=1, clock=lambda: self.tick*30,
-            sleep=self.sleep, timeout=3600, get_work=self.work, acquire=lambda *a: None)
+            sleep=self.sleep, timeout=3600, get_work=self.work, acquire=lambda *a: None,
+            admission_reserve=self.reserve)
 
 
 class SchedulerTests(unittest.TestCase):
@@ -107,6 +108,16 @@ class SchedulerTests(unittest.TestCase):
         self.assertLess(first_gather, last_asr)
         self.assertGreater(len({t for t, slot, phase, _ in simulation.events if slot == 3 and phase == 'asr'}), 1)
         self.assertTrue(all(t['status'] == 'completed' for t in result['tickets']))
+
+    def test_late_lectures_are_deferred_so_every_child_ends_before_the_deadline(self):
+        store = MemoryStore(journal(8)); simulation = Simulation(store); simulation.reserve = 3450
+        result = simulation.run()  # Admits only for the first 150 s (5 ticks) of a 3600 s budget.
+        phases = [c['phase'] for c in result['courses'].values()]
+        self.assertIn('new', phases); self.assertIn('done', phases)
+        self.assertNotIn('failed', phases)
+        self.assertTrue(all(t['status'] == 'completed' for t in result['tickets']))
+        self.assertTrue(all(tick < 5 for tick, _, stage, _ in simulation.events if stage == "prepare"))
+        self.assertLess(simulation.tick*30, 3600)
 
     def test_one_course_failure_does_not_cancel_other_courses_or_finalize_failure(self):
         store = MemoryStore(journal(5)); simulation = Simulation(store, fail=2)
@@ -288,6 +299,34 @@ class OwnerTests(unittest.TestCase):
         self.check(journal(1), owner, old, poll=poll)
         self.assertEqual(owner.state['run_id'], '99')
         self.assertEqual(old.state['tickets'][0]['status'], 'completed')
+
+    def test_lost_dispatch_expires_only_after_the_parent_has_long_ended(self):
+        ended = '2026-11-13T17:41:06Z'; at = pool.datetime.fromisoformat(ended.replace('Z', '+00:00')).timestamp()
+        for delay, released in [(None, False), (600, False), (3*24*3600, True)]:
+            owner = MemoryStore({'schema': 1, 'run_id': '98'}); old = MemoryStore(journal(2, '98'))
+            pool.reserve(old.state, 0, 'prepare', 1)['status'] = 'in_progress'  # live child never expires
+            old.state['tickets'][0].update(status='completed', conclusion='success', run='7')
+            lost = pool.reserve(old.state, 1, 'prepare', 1)
+            parent = {'status': 'completed', **({} if delay is None else {'updated_at': ended})}
+            call = lambda: pool.claim_owner(journal(1), owner, open_pool=lambda run: old,
+                inspect_parent=lambda run: parent, poll=lambda s: None, now=at + (delay or 0))
+            if released:
+                call(); self.assertEqual(owner.state['run_id'], '99')
+                saved = old.state['tickets'][1]
+                self.assertEqual((saved['status'], saved['conclusion'], saved['run'], saved['dispatch_unconfirmed_expired']),
+                                 ('completed', 'failure', None, True))
+                pool.validate(old.state)
+            else:
+                with self.assertRaises(ValueError): call()
+                self.assertEqual(owner.state['run_id'], '98'); self.assertEqual(lost['status'], 'reserved')
+        # A run that is registered or still listed is never expired.
+        owner = MemoryStore({'schema': 1, 'run_id': '98'}); old = MemoryStore(journal(1, '98'))
+        pool.reserve(old.state, 0, 'prepare', 1).update(status='queued', run='5')
+        with self.assertRaises(ValueError):
+            pool.claim_owner(journal(1), owner, open_pool=lambda run: old, poll=lambda s: None,
+                             inspect_parent=lambda run: {'status': 'completed', 'updated_at': ended}, now=at + 10**6)
+        bad = journal(1); pool.reserve(bad, 0, 'prepare', 1).update(dispatch_unconfirmed_expired=True)
+        with self.assertRaises(ValueError): pool.validate(bad)
 
     def test_active_parent_or_missing_journal_cannot_be_overwritten(self):
         owner = MemoryStore({'schema': 1, 'run_id': '98'})

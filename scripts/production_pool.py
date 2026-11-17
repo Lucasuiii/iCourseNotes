@@ -53,7 +53,25 @@ class OwnerStore(GitHubQueueStore):
         self.aad = f'icourse-runner-pool-owner-v1:{os.environ["GITHUB_REPOSITORY"]}'.encode()
 
 
-def claim_owner(state, owner_store, *, open_pool=store_for, inspect_parent=None, poll=None, transfer=True):
+# A dispatch whose reply was lost stays charged while its parent can still see it.
+# Once the parent has ended and a full listing since the pool began shows no child
+# for that nonce long after the request, the dispatch never happened. Without this
+# the reservation blocked every later controller forever (11/14-11/16).
+DISPATCH_SETTLE_SECONDS = 3600
+
+
+def expire_unconfirmed(state, parent, *, now=None):
+    ended = parent.get('updated_at')
+    if not ended: return
+    ended = datetime.fromisoformat(ended.replace('Z', '+00:00')).timestamp()
+    if (now or time.time()) - ended < DISPATCH_SETTLE_SECONDS: return
+    for t in state['tickets']:
+        if t['status'] == 'reserved' and t.get('run') is None:
+            t.update(status='completed', conclusion='failure', dispatch_unconfirmed_expired=True)
+    validate(state)
+
+
+def claim_owner(state, owner_store, *, open_pool=store_for, inspect_parent=None, poll=None, transfer=True, now=None):
     revision, owner = owner_store.read()
     if owner is not None:
         if (set(owner) != {'schema', 'run_id'} or owner['schema'] != 1
@@ -61,13 +79,15 @@ def claim_owner(state, owner_store, *, open_pool=store_for, inspect_parent=None,
             raise ValueError('Invalid runner-pool owner; refusing to reset')
         if owner['run_id'] == state['run_id']: return
         inspect_parent = inspect_parent or (lambda run: api(f'repos/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{run}'))
-        if inspect_parent(owner['run_id'])['status'] != 'completed':
+        parent = inspect_parent(owner['run_id'])
+        if parent['status'] != 'completed':
             raise ValueError('Previous pool parent still active')
         previous = open_pool(owner['run_id'])
         try:
             old_revision, old = read_state(previous)
             before = copy.deepcopy(old)
             (poll or Actions(old).poll)(old)
+            expire_unconfirmed(old, parent, now=now)
             save_if_changed(previous, old_revision, old, before)
             if any(t['status'] != 'completed' for t in old['tickets']):
                 raise ValueError('Previous pool children active or dispatch outcome unknown')
@@ -122,6 +142,9 @@ def validate(state):
         if 'dispatch_rejected_http' in t and (t['dispatch_rejected_http'] not in DISPATCH_REJECTIONS
                 or t['status'] != 'completed' or t.get('run') is not None or t.get('conclusion') != 'failure'):
             raise ValueError('Invalid rejected dispatch reservation')
+        if 'dispatch_unconfirmed_expired' in t and (t['dispatch_unconfirmed_expired'] is not True
+                or t['status'] != 'completed' or t.get('run') is not None or t.get('conclusion') != 'failure'):
+            raise ValueError('Invalid expired dispatch reservation')
         if t['status'] != 'completed': active.append(t)
     if len(active) > MAX_JOBS:
         raise ValueError('Runner budget exceeded')
@@ -384,8 +407,16 @@ def reconcile_dispatch(store, actions, nonce, *, sleep=time.sleep):
     return False
 
 
+# Preparations run one at a time (~30-50 min each) and a lecture still needs ASR and
+# finalization afterwards. Stop admitting new lectures when less than this remains, so
+# every child ends before the deadline and the run's finalize (catalog, email) still
+# runs. Lectures not admitted stay unprepared and the next run plans them again.
+PREPARE_ADMISSION_RESERVE = 2.5*3600
+
+
 def controller(store, actions, *, attempt, clock=time.monotonic, sleep=time.sleep, timeout=5.5*3600,
-               get_work=workload, acquire=acquire_owner, progress=None):
+               get_work=workload, acquire=acquire_owner, progress=None, admission_reserve=None):
+    if admission_reserve is None: admission_reserve = min(PREPARE_ADMISSION_RESERVE, timeout/2)
     _, identity = read_state(store)
     acquire(identity, store.key)
     began = clock(); actions.source_ref()  # Freeze before any model/prepare job dispatch.
@@ -412,6 +443,12 @@ def controller(store, actions, *, attempt, clock=time.monotonic, sleep=time.slee
         show_progress(progress, state, works)
         if all(c['phase'] in ('done', 'failed') for c in state['courses'].values()):
             return state
+        admitting = clock()-began < timeout-admission_reserve
+        if (not admitting and all(t['status'] == 'completed' for t in state['tickets'])
+                and all(c['phase'] in ('new', 'done', 'failed') for c in state['courses'].values())):
+            deferred = sum(c['phase'] == 'new' for c in state['courses'].values())
+            print(f'剩余时间不足以完成新课次；{deferred} 堂未开始的课留给下一次运行。', flush=True)
+            return state
         while True:
             revision, state = read_state(store)
             active = [t for t in state['tickets'] if t['status'] != 'completed']
@@ -426,7 +463,7 @@ def controller(store, actions, *, attempt, clock=time.monotonic, sleep=time.slee
             selected = choose_asr(state, works)
             if choice is None and selected is not None: choice = (selected[0], 'asr', selected[1])
             preparing = sum(t['stage'] == 'prepare' for t in active)
-            if choice is None and len(active_courses) < MAX_COURSES and preparing < MAX_PREPARES:
+            if choice is None and admitting and len(active_courses) < MAX_COURSES and preparing < MAX_PREPARES:
                 raw = next((k for k, c in state['courses'].items() if c['phase'] == 'new'), None)
                 if raw is not None: choice = (int(raw), 'prepare', 0)
             if choice is None: break

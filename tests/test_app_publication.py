@@ -197,5 +197,27 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(build.call_count, 3)
 
 
+class QueueStatusTests(unittest.TestCase):
+    def snapshot(self, queue_status, lectures):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(bridge, 'lecture_status', side_effect=lambda t, *a: dict(lectures[t['sub_id']], sub_id=t['sub_id'])):
+            root = Path(tmp)
+            (root/'queue-status.json').write_text(json.dumps({'status': queue_status, 'pid': None}))
+            (root/'targets.json').write_text(json.dumps([{'sub_id': s, 'control': tmp} for s in lectures]))
+            return bridge.queue_snapshot(root, None)['status']
+
+    def test_finished_queue_follows_lecture_review_and_publication(self):
+        done = {'status': 'completed', 'publication': {'status': 'completed'}}
+        review = {'status': 'awaiting_content_review'}
+        self.assertEqual(self.snapshot('awaiting_content_review', {'1': done, '2': done}), 'completed')
+        self.assertEqual(self.snapshot('awaiting_content_review', {'1': done, '2': review}), 'awaiting_content_review')
+        self.assertEqual(self.snapshot('awaiting_content_review', {'1': done, '2': {'status': 'publishing'}}), 'publishing')
+        self.assertEqual(self.snapshot('awaiting_content_review', {'1': {'status': 'awaiting_content_review',
+                                                                        'publication': {'status': 'completed'}}}), 'completed')
+        # Failures, running and interrupted queues keep their own status.
+        self.assertEqual(self.snapshot('finished_with_failures', {'1': done}), 'finished_with_failures')
+        self.assertEqual(self.snapshot('running', {'1': done}), 'interrupted')
+
+
 if __name__ == '__main__':
     unittest.main()

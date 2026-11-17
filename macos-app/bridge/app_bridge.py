@@ -266,7 +266,27 @@ def queue_snapshot(root, crypto):
               'error_type': safe_code(q.get('error_type')), 'lectures': lectures}
     if result['status'] == 'running' and not result['coordinator_alive']:
         result['status'] = 'interrupted'
+    if not result['coordinator_alive'] and result['status'] in REVIEW_STAGES and lectures:
+        # The coordinator writes its status once when recognition ends; review and
+        # publication then only update each lecture. Follow the lectures afterwards.
+        result['status'] = after_review_status(lectures, result['status'])
     return result
+
+
+REVIEW_STAGES = ('awaiting_content_review', 'awaiting_review', 'awaiting_publication', 'publishing',
+                 'publication_failed', 'completed', 'delivered')
+_SETTLED = ('completed', 'completed_editorial', 'complete', 'delivered', 'published', 'not_needed', 'superseded')
+
+
+def after_review_status(lectures, current):
+    states = []
+    for row in lectures:
+        published = (row.get('publication') or {}).get('status')
+        states.append('completed' if published in ('completed', 'delivered', 'published') else row.get('status'))
+    for status in ('publishing', 'publication_failed', 'awaiting_content_review', 'awaiting_review', 'awaiting_publication'):
+        if status in states:
+            return status
+    return 'completed' if all(s in _SETTLED for s in states) else current
 
 
 def history(root, sub_id, seconds=3600):

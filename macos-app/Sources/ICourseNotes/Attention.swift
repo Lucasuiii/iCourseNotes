@@ -38,6 +38,10 @@ extension AppModel {
         } else if let e = cloudError {
             items.append(AttentionItem(id: "cloud-read", kind: .statusRead, title: "无法读取云端状态", detail: e, target: .section(.sync)))
         }
+        if let e = publicationError {
+            items.append(AttentionItem(id: "pub-read", kind: .statusRead, title: "推送状态读取失败",
+                                       detail: "显示的是上一次读取的结果 · \(e)", target: .section(.sync)))
+        }
         if let e = statusError {
             items.append(AttentionItem(id: "status-read", kind: .statusRead, title: "本机识别状态读取失败", detail: e, target: .section(.recognize)))
         }

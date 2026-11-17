@@ -8,6 +8,7 @@ struct SyncScreen: View {
     @State private var showBatchPush = false
     @State private var checking: String?
     @State private var dryRuns: [String: DryRunResult] = [:]
+    @State private var showAllHistory = false
 
     var body: some View {
         ScrollView {
@@ -45,10 +46,17 @@ struct SyncScreen: View {
                 VStack(alignment: .leading, spacing: 3) {
                     if let r {
                         Text(r.upToDate ? "本机笔记已是最新" : r.cachedRevision == nil ? "尚未拉取笔记" : "云端有新的提交").font(.headline)
-                        Text("\(r.repository ?? "") · data \(r.remoteHead?.prefix(7) ?? "—") · 本机 \(r.cachedRevision?.prefix(7) ?? "—") · 拉取于 \(relative(r.syncedAt.map { Date(timeIntervalSince1970: $0) }))")
-                            .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                            Text("data \(r.remoteHead?.prefix(7) ?? "—") · 本机 \(r.cachedRevision?.prefix(7) ?? "—") · 拉取于 \(relative(r.syncedAt.map { Date(timeIntervalSince1970: $0) })) ·")
+                            FreshnessLabel(prefix: "检查于", time: r.checkedAt, staleAfter: 3600)
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                        if let e = model.remoteError {
+                            Label("最近一次检查失败：\(e)", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                        }
                     } else {
-                        Text(model.remoteError ?? "正在连接 GitHub…").font(.headline)
+                        Text(model.remoteError.map { "无法连接 GitHub：\($0)" } ?? "正在连接 GitHub…").font(.headline)
+                            .foregroundStyle(model.remoteError == nil ? Color.primary : Color.orange)
                     }
                 }
                 Spacer()
@@ -157,18 +165,23 @@ struct SyncScreen: View {
             if !done.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("最近推送").font(.headline)
-                    ForEach(done.prefix(8)) { item in
+                    ForEach(done.prefix(showAllHistory ? 30 : 5)) { item in
                         HStack {
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                             Text("\(item.courseTitle) · \(shortDate(item.date ?? ""))")
                             Spacer()
-                            Text(item.emailStatus == "sent" ? "已发邮件" : "未发邮件").font(.caption).foregroundStyle(.secondary)
+                            if item.emailStatus == "sent" { Text("已发邮件").font(.caption).foregroundStyle(.secondary) }
                             if let c = item.notesCommit {
                                 Link(String(c.prefix(7)), destination: URL(string: "https://github.com/Lucasuiii/iCourseNotes/commit/\(c)")!)
-                                    .font(.caption.monospaced())
+                                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                                    .help("在 GitHub 查看这次提交")
                             }
                         }
                         .font(.callout)
+                    }
+                    if done.count > 5 {
+                        Button(showAllHistory ? "收起" : "显示全部 \(min(done.count, 30)) 条") { showAllHistory.toggle() }
+                            .buttonStyle(.link).font(.caption)
                     }
                 }
             }

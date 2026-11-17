@@ -169,8 +169,42 @@ struct LectureRunCard: View {
 
     static let steps: [(String, String)] = [("acquisition", "获取"), ("vad", "切分"), ("ppt", "课件"), ("asr", "识别"),
                                             ("summary", "摘要"), ("candidate_validation", "校验"), ("independent_review", "审核")]
+    static let settled: Set<String> = ["completed", "completed_editorial", "complete", "delivered", "published", "superseded", "not_needed"]
+
+    @State private var expanded = false
+
+    /// Finished lectures fold to one line; running, failed and waiting ones stay open.
+    private var folded: Bool { !expanded && !isCurrent && Self.settled.contains(lecture.status) }
 
     var body: some View {
+        if folded { compact } else { full }
+    }
+
+    private var compact: some View {
+        Button { withAnimation(.snappy) { expanded = true } } label: {
+            HStack(spacing: 14) {
+                Text(lecture.courseTitle ?? lecture.courseId).font(.body.weight(.medium))
+                Text("\(lecture.date.map { shortDate($0) + " " + weekday($0) } ?? "") \(sessionLabel(lecture.title, date: lecture.date))")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let a = lecture.audioSeconds { Text(Labels.duration(a)).foregroundStyle(.secondary) }
+                if let m = lecture.missingSeconds, m > 0 {
+                    Label("缺口 \(Int(m)) 秒", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                }
+                if let c = lecture.dataCommit { Text("data \(c.prefix(7))").font(.caption.monospaced()).foregroundStyle(.secondary) }
+                Text(Labels.status(lecture.publication?.status ?? lecture.status)).foregroundStyle(.secondary)
+                Image(systemName: "chevron.down").font(.caption).foregroundStyle(.tertiary)
+            }
+            .font(.callout)
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .help("展开查看各阶段")
+    }
+
+    private var full: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
@@ -184,6 +218,10 @@ struct LectureRunCard: View {
                         Text(e).font(.caption.monospaced()).foregroundStyle(.secondary).padding(.trailing, 4)
                     }
                     StatusPill(status: lecture.status)
+                    if expanded {
+                        Button { withAnimation(.snappy) { expanded = false } } label: { Image(systemName: "chevron.up") }
+                            .buttonStyle(.borderless).help("收起")
+                    }
                 }
                 StageStepper(current: currentStep, status: lecture.status)
                 if let why = lecture.failureExplanation {
@@ -204,9 +242,11 @@ struct LectureRunCard: View {
                 }
                 HStack(spacing: 18) {
                     if let a = lecture.audioSeconds { Fact(icon: "waveform", text: "音频 \(Labels.duration(a))") }
-                    if let m = lecture.missingSeconds { Fact(icon: m == 0 ? "checkmark.seal" : "exclamationmark.triangle", text: "缺口 \(Int(m)) 秒") }
+                    if let m = lecture.missingSeconds, m > 0 { Fact(icon: "exclamationmark.triangle", text: "缺口 \(Int(m)) 秒") }
                     if let eta { Fact(icon: "timer", text: eta) }
-                    if let t = lecture.checkpointTime { Fact(icon: "externaldrive", text: "检查点 \(relative(Date(timeIntervalSince1970: t)))") }
+                    if let t = lecture.checkpointTime, !Self.settled.contains(lecture.status) {
+                        Fact(icon: "externaldrive", text: "检查点 \(relative(Date(timeIntervalSince1970: t)))")
+                    }
                     if let c = lecture.dataCommit { Fact(icon: "arrow.up.doc", text: "data \(c.prefix(7))") }
                     if let p = lecture.publication?.status { Fact(icon: "paperplane", text: "发布 \(Labels.status(p))") }
                     Spacer()

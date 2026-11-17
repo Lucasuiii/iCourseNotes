@@ -55,6 +55,7 @@ final class AppModel {
     var remote: RemoteInfo?
     var remoteError: String?
     var publication: PublicationState?
+    var publicationError: String?
     var startingPush = false
     var publicationBusy: Bool {
         publication?.batch?.status == "running" || (publication?.local ?? []).contains {
@@ -131,6 +132,7 @@ final class AppModel {
         cloudTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshCloud()
+                await self?.checkRemote()
                 try? await Task.sleep(for: .seconds(15 * 60))
             }
         }
@@ -138,7 +140,7 @@ final class AppModel {
 
     func refreshCloudIfStale(after seconds: Double = 300) {
         let age = cloud.map { Date().timeIntervalSince1970 - $0.checkedAt } ?? .infinity
-        if age > seconds { Task { await refreshCloud() } }
+        if age > seconds { Task { await refreshCloud(); await checkRemote() } }
     }
 
     func refreshCloud() async {
@@ -390,6 +392,7 @@ final class AppModel {
             let previous = publication
             let fresh = try await bridge.run(["push-batch-status"], as: PublicationState.self)
             publication = fresh
+            publicationError = nil
             let batchFinished = previous?.batch?.status == "running" && fresh.batch?.status != "running"
             let newlyCompleted = fresh.local.contains { row in
                 row.publicationStatus == "completed" && previous?.local.first { $0.control == row.control }?.publicationStatus != "completed"
@@ -399,7 +402,10 @@ final class AppModel {
                 show("批量推送已结束，成功 \(done)/\(fresh.batch?.items.count ?? 0) 堂", error: fresh.batch?.status != "completed")
             }
             if previous != nil && newlyCompleted { await syncNotes(); await checkRemote() }
-        } catch { /* Keep the last safe publication snapshot during a transient read failure. */ }
+        } catch {
+            // Keep the last safe snapshot, but say that it is old.
+            publicationError = error.localizedDescription
+        }
     }
 
     func pushMany(_ items: [BatchPushItem], email: Bool) async -> Bool {

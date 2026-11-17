@@ -20,7 +20,12 @@ struct RecognizeScreen: View {
                     if let q = model.currentQueue { queueBlock(q) }
                 }
                 if let err = model.statusError {
-                    Label(err, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                    HStack(spacing: 6) {
+                        Label(err, systemImage: "exclamationmark.triangle")
+                        FreshnessLabel(prefix: "· 显示的是", time: model.status?.time, staleAfter: 0)
+                        Text("的状态")
+                    }
+                    .font(.caption).foregroundStyle(.orange)
                 }
             }
             .padding(.horizontal, 32).padding(.vertical, 26)
@@ -71,7 +76,10 @@ struct RecognizeScreen: View {
                                 Text("正在登录校园并核对订阅课程的播放地址… \(Int(ctx.date.timeIntervalSince(s))) 秒")
                             }
                         } else if let t = model.inventory?.scannedAt {
-                            Text("上次检查 \(relative(Date(timeIntervalSince1970: t)))")
+                            HStack(spacing: 4) {
+                                FreshnessLabel(prefix: "上次检查", time: t, staleAfter: 24 * 3600)
+                                if model.inventory != nil && ready.isEmpty { Text("· 没有新的可识别回放") }
+                            }
                         } else {
                             Text("检查订阅课程是否有新的课堂回放")
                         }
@@ -89,9 +97,7 @@ struct RecognizeScreen: View {
             if model.scanning && model.inventory == nil {
                 ProgressView().frame(maxWidth: .infinity).padding(30)
             } else if model.inventory != nil {
-                if ready.isEmpty {
-                    quietCard(icon: "checkmark.circle", text: "没有新的可识别回放。已有笔记、已删除、课表排除和本地已有任务的课次都会自动跳过。")
-                } else {
+                if !ready.isEmpty {
                     VStack(spacing: 0) {
                         ForEach(Array(ready.enumerated()), id: \.element.id) { i, l in
                             if i > 0 { Divider().padding(.leading, 64) }

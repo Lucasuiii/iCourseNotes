@@ -123,3 +123,19 @@ func sessionLabel(_ title: String?, date: String?) -> String {
     if let date, t.hasPrefix(date) { t.removeFirst(date.count) }
     return t.trimmingCharacters(in: .whitespaces)
 }
+
+
+/// "<prefix> 3 分钟前" that turns orange once the data is older than `staleAfter` seconds.
+struct FreshnessLabel: View {
+    let prefix: String
+    let time: Double?
+    let staleAfter: Double
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            let age = time.map { ctx.date.timeIntervalSince1970 - $0 } ?? .infinity
+            Text("\(prefix) \(relative(time.map { Date(timeIntervalSince1970: $0) }))")
+                .foregroundStyle(age > staleAfter ? Color.orange : Color.secondary)
+                .help(age > staleAfter ? "数据可能已过期" : "")
+        }
+    }
+}

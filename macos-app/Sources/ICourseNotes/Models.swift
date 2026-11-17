@@ -244,6 +244,7 @@ struct RemoteInfo: Decodable {
     let cachedRevision: String?
     let syncedAt: Double?
     let upToDate: Bool
+    let checkedAt: Double?
     let local: [LocalNoteIndex]?
 }
 

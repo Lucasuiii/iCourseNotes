@@ -19,6 +19,17 @@ def command(args, *, cwd=None, env=None, input=None):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180).stdout
 
 
+def read_command(args, *, cwd=None, env=None, attempts=3, sleep=time.sleep):
+    """Network reads only (ls-remote/fetch): a brief outage, e.g. right after waking, is retried."""
+    for attempt in range(attempts):
+        try:
+            return command(args, cwd=cwd, env=env)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if attempt == attempts-1:
+                raise
+            sleep(5*3**attempt)
+
+
 def auth_env():
     env = dict(os.environ)
     token = os.environ.get('GH_TOKEN', '')
@@ -66,14 +77,14 @@ def load_remote(destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     url = 'https://github.com/'+os.environ['GITHUB_REPOSITORY']+'.git'
     env = auth_env()
-    refs = command(['git', 'ls-remote', '--heads', url, 'refs/heads/data'], env=env).decode().strip()
+    refs = read_command(['git', 'ls-remote', '--heads', url, 'refs/heads/data'], env=env).decode().strip()
     if not refs:
         db = Database(str(destination)); db.conn.close()
         return None
     revision = refs.split()[0]
     with tempfile.TemporaryDirectory() as tmp:
         command(['git', 'init', '-q', tmp])
-        command(['git', 'fetch', '-q', '--depth=1', url, revision], cwd=tmp, env=env)
+        read_command(['git', 'fetch', '-q', '--depth=1', url, revision], cwd=tmp, env=env)
         paths = command(['git', 'ls-tree', '-r', '--name-only', 'FETCH_HEAD', 'data/'], cwd=tmp).decode().splitlines()
         if 'data/icourse-index.enc' in paths:
             from src.data.sharder import load_index, reassemble_database

@@ -359,6 +359,17 @@ def supersede_failed(control, new_control):
     write_json(control/'execution-status.json', st)
 
 
+def abandoned_preparation(row):
+    """A lecture directory from a start that stopped before its preparation finished (older app versions)."""
+    return row['status'] == 'prepared' and not (Path(row['control'])/'preparation-result.json').exists()
+
+
+def mark_preparation_failed(controls, step):
+    for c in controls:
+        write_json(c/'execution-status.json', {'status': 'failed', 'phase': 'preparation', 'error_type': 'PreparationFailed',
+                                               'failed_step': step, 'updated': time.time()})
+
+
 def local_controls(cid, sid):
     rows = []
     for p in sorted(WORK.glob('local-latest-'+cid+'-'+sid+'-*')):
@@ -526,9 +537,9 @@ def cmd_start(args):
         existing = local_controls(ready[sid]['course_id'], sid)
         # A failed (or already retired) local run may be redone from scratch with the current
         # code; its checkpoint and audio stay where they are. Anything else must be resumed.
-        if any(row['status'] not in ('failed', 'superseded') for row in existing):
+        if any(row['status'] not in ('failed', 'superseded') and not abandoned_preparation(row) for row in existing):
             raise Refused('课次 '+sid+' 已有本地任务，请在识别进度中续跑，避免重复识别')
-        retired[sid] = [Path(row['control']) for row in existing if row['status'] == 'failed']
+        retired[sid] = [Path(row['control']) for row in existing if row['status'] == 'failed' or abandoned_preparation(row)]
     source, sha = source_identity()
     if sha != inv['source_sha'] or Path(os.readlink(control/'repo')).resolve() != source:
         raise Refused('扫描后源码已变化，请重新检查新回放')
@@ -555,7 +566,10 @@ def cmd_start(args):
             with (r/name).open('wb') as log:
                 code = subprocess.run(cmd+suffix, cwd=source, env=ENV, stdout=log, stderr=subprocess.STDOUT).returncode
             if code:
-                raise Refused('课次 '+sid+' 准备失败（'+name.split('-')[0]+'），未启动识别')
+                # Nothing was queued: retire this start's directories so the lectures can simply be started again.
+                step = name.split('-')[0]
+                mark_preparation_failed([Path(x['control']) for x in prepared]+[r], step)
+                raise Refused('课次 '+sid+' 准备失败（'+step+'），未启动识别。多为网络暂时不可用，可直接重新开始。')
         write_json(r/'preparation-result.json', {'doctor_passed': True, 'plan_created': True, 'inference_calls': 0, 'data_writes': 0,
                                                 'mail_calls': 0, 'common_source': str(source), 'prepared_by': 'local-app'})
         files = {n: hashlib.sha256((r/n).read_bytes()).hexdigest() for n in ['app_run_once.py', 'app_publish.py', 'finalize.py', 'read_progress.py']}

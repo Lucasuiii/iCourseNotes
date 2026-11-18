@@ -153,10 +153,12 @@ class Summarizer:
         """Use the explicit DeepSeek vision route, never text-only fallback."""
         if not any(p['name'] == 'deepseek' for p in self.providers):
             return None
+        import threading
         from src.ai.homework_vision import read_images
         client = self._clients['deepseek']
+        lock = threading.Lock()  # cues of one lecture may be read concurrently
         return lambda frames: read_images(client, config.HOMEWORK_VISION_MODEL,
-                                         frames, ledger, checkpoint)
+                                         frames, ledger, checkpoint, lock)
 
     def summary_figure_client(self):
         if not any(p['name'] == 'deepseek' for p in self.providers):

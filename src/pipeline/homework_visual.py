@@ -1,5 +1,6 @@
 """Bounded, native-resolution board OCR with delayed frame coverage."""
 import io
+from concurrent.futures import ThreadPoolExecutor
 import math
 from pathlib import Path
 import subprocess
@@ -129,6 +130,9 @@ def collect_visual_evidence(client, course_id, sub_id, candidates, intervals, *,
         pages = []
     results, seen, windows, ids = [], set(), [], []
     video_count = 0
+    pending = []
+    pool = ThreadPoolExecutor(max_workers=MAX_FOCUS)
+    assemble = lambda captured, reading: _assemble(results, captured, reading, ocr, frame_observer)
     latest_cue_end = max((c.get('block_end', 0) for c in candidates[:MAX_FOCUS]), default=0)
     for candidate in candidates[:MAX_FOCUS]:
         cid = candidate_key(candidate['id'], candidate['quote']); ids.append(cid)
@@ -179,38 +183,53 @@ def collect_visual_evidence(client, course_id, sub_id, candidates, intervals, *,
                 captured.append({'image': image, 'source': 'video_frame', 'seconds': seconds,
                                  'candidate_id': cid, 'capture_error_code': error})
         valid = [row for row in captured if row['image']]
-        readings, vision_error, vision_error_code = None, None, None
-        if callable(vision_reader) and valid:
-            try:
-                readings = vision_reader(valid)
-                if not isinstance(readings, list) or len(readings) != len(valid):
-                    raise ValueError('Incomplete image readings')
-            except Exception as error:
-                readings = None; vision_error = type(error).__name__
-                vision_error_code = getattr(error, 'code', None)
-        index = 0
-        for capture in captured:
-            image = capture['image']
-            if image and readings is not None:
-                row = readings[index]; index += 1
-                row = dict(row, vision_status='complete')
-            else:
-                row = dict(read_frame(image, ocr), reader='local_ocr',
-                           vision_status='failed' if vision_error else 'unavailable')
-                if vision_error:
-                    row['vision_error_type'] = vision_error
-                    if vision_error_code:
-                        row['vision_error_code'] = vision_error_code
-            row.update({k: v for k, v in capture.items() if k != 'image' and v is not None})
-            results.append(row)
-            if callable(frame_observer):
-                frame_observer(image, row)
+        if callable(vision_reader):
+            # Frames must be fetched one at a time (the media server rejects parallel
+            # seeks), but this cue's model reading can run while the next cue is captured.
+            # Results are assembled afterwards in the original cue order.
+            pending.append((captured, pool.submit(read_cue, vision_reader, valid) if valid else None))
+        else:
+            assemble(captured, None)  # local OCR only: unchanged, one cue at a time
+    for captured, reading in pending:
+        assemble(captured, reading.result() if reading else None)
+    pool.shutdown()
     valid = [r for r in results if r['status'] in ('ok', 'no_text')]
     complete = results and len(valid) == len(results) and all(
         all(v['status'] in ('ok', 'no_text') for v in r['views']) for r in valid)
     capture = 'complete' if complete else 'partial' if valid else 'unavailable'
     return assess_visual({'schema_version': 3, 'capture_status': capture, 'candidate_ids': ids,
                           'windows': windows, 'frames': results})
+
+
+def read_cue(vision_reader, valid):
+    try:
+        readings = vision_reader(valid)
+        if not isinstance(readings, list) or len(readings) != len(valid):
+            raise ValueError('Incomplete image readings')
+        return readings, None, None
+    except Exception as error:
+        return None, type(error).__name__, getattr(error, 'code', None)
+
+
+def _assemble(results, captured, reading, ocr, frame_observer):
+    readings, vision_error, vision_error_code = reading or (None, None, None)
+    index = 0
+    for capture in captured:
+        image = capture['image']
+        if image and readings is not None:
+            row = readings[index]; index += 1
+            row = dict(row, vision_status='complete')
+        else:
+            row = dict(read_frame(image, ocr), reader='local_ocr',
+                       vision_status='failed' if vision_error else 'unavailable')
+            if vision_error:
+                row['vision_error_type'] = vision_error
+                if vision_error_code:
+                    row['vision_error_code'] = vision_error_code
+        row.update({k: v for k, v in capture.items() if k != 'image' and v is not None})
+        results.append(row)
+        if callable(frame_observer):
+            frame_observer(image, row)
 
 
 def video_frame(params, seconds, *, diagnostic=False):

@@ -1,5 +1,6 @@
 """Direct image reading with a durable, bounded, non-repeating call ledger."""
 import base64
+import contextlib
 import hashlib
 import io
 import json
@@ -180,7 +181,7 @@ def validated_frames(data, count):
     return output
 
 
-def read_images(client, model, frames, ledger, checkpoint):
+def read_images(client, model, frames, ledger, checkpoint, lock=None):
     """One request per cue, saved before transport; SDK retries are disabled.
 
     Completed results are reused only for the exact image hashes and clocks.
@@ -193,20 +194,24 @@ def read_images(client, model, frames, ledger, checkpoint):
         raise ValueError('Invalid vision batch')
     identities = [{'seconds': f['seconds'], 'source': f['source'],
                    'sha256': hashlib.sha256(f['image']).hexdigest()} for f in frames]
-    previous = next((c for c in ledger if c.get('candidate_id') == candidate), None)
-    if previous is not None:
-        if previous.get('status') == 'complete' and previous.get('images') == identities:
-            return previous['results']
-        raise ValueError('Vision checkpoint not safely reusable')
-    if len(ledger) >= MAX_CALLS:
-        raise ValueError('Vision request limit reached')
+    # Cues may be read concurrently: the ledger and its checkpoint change only under
+    # the lock; the request itself runs outside it.
+    guard = lock or contextlib.nullcontext()
     from src.pipeline.homework_visual import image_views
     encoded, images, profile = encoded_image_content(frames, image_views)
     content = [{'type': 'text', 'text': PROMPT}] + encoded
-    entry = {'candidate_id': candidate, 'images': identities, 'status': 'reserved',
-             'model': model, 'image_count': images, 'image_encoding': profile}
-    ledger.append(entry)
-    checkpoint()  # Failure here stops before any transport.
+    with guard:
+        previous = next((c for c in ledger if c.get('candidate_id') == candidate), None)
+        if previous is not None:
+            if previous.get('status') == 'complete' and previous.get('images') == identities:
+                return previous['results']
+            raise ValueError('Vision checkpoint not safely reusable')
+        if len(ledger) >= MAX_CALLS:
+            raise ValueError('Vision request limit reached')
+        entry = {'candidate_id': candidate, 'images': identities, 'status': 'reserved',
+                 'model': model, 'image_count': images, 'image_encoding': profile}
+        ledger.append(entry)
+        checkpoint()  # Failure here stops before any transport.
     try:
         response = client.with_options(max_retries=0).chat.completions.create(
             model=model, messages=[{'role': 'user', 'content': content}],
@@ -216,13 +221,16 @@ def read_images(client, model, frames, ledger, checkpoint):
         if not response.choices or response.choices[0].finish_reason != 'stop':
             raise ValueError('Incomplete vision response')
         results = validated_frames(json.loads(response.choices[0].message.content), len(frames))
-        entry.update(status='complete', results=results)
         usage = getattr(response, 'usage', None)
-        if usage is not None:
-            entry['tokens'] = {name: getattr(usage, name, None) for name in ('prompt_tokens', 'completion_tokens')}
+        with guard:
+            entry.update(status='complete', results=results)
+            if usage is not None:
+                entry['tokens'] = {name: getattr(usage, name, None) for name in ('prompt_tokens', 'completion_tokens')}
+            checkpoint()
     except Exception as error:
-        entry.update(status='failed', error_type=type(error).__name__)
-        checkpoint()
+        with guard:
+            if entry.get('status') == 'reserved':
+                entry.update(status='failed', error_type=type(error).__name__)
+            checkpoint()
         raise
-    checkpoint()
     return results

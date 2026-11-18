@@ -27,6 +27,51 @@ def client_response(client, data):
         choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=json.dumps(data)))], usage=None)
 
 
+class ConcurrentReadingTests(unittest.TestCase):
+    def test_next_cue_is_captured_while_the_previous_one_is_read_and_order_is_kept(self):
+        import threading, time
+        client = MagicMock(); client.get_ppt_list.return_value = []
+        client.get_video_url.return_value = 'private'; client.get_stream_params.return_value = ('private', '')
+        candidates = [{'id': i, 'quote': f'作业第{i+1}题', 'block_start': 600*i+100, 'block_end': 600*i+200} for i in range(3)]
+        events, first_read = [], threading.Event()
+        def capture(params, seconds, **kwargs):
+            events.append(('capture', seconds)); return {'image': board_png(), 'error_code': None}
+        def reader(frames):
+            cue = frames[0]['candidate_id']
+            events.append(('read-start', cue))
+            if not first_read.is_set():
+                first_read.set(); time.sleep(.3)  # slow first reading
+            events.append(('read-end', cue))
+            return [dict(validated_frames(response(1), 1)[0], text=cue) for _ in frames]
+        observed = []
+        with patch('src.pipeline.homework_visual.video_frame', side_effect=capture):
+            result = collect_visual_evidence(client, '10', '1', candidates, [], audio_seconds=3000,
+                                             vision_reader=reader, frame_observer=lambda image, row: observed.append(row['candidate_id']))
+        first_cue = result['candidate_ids'][0]
+        end_first = events.index(('read-end', first_cue))
+        later_captures = [i for i, e in enumerate(events) if e[0] == 'capture' and e[1] > 700]
+        self.assertTrue(later_captures and min(later_captures) < end_first)  # overlapped
+        cues = [row['candidate_id'] for row in result['frames']]
+        self.assertEqual(cues, sorted(cues, key=result['candidate_ids'].index))  # original cue order
+        self.assertEqual(observed, cues)
+        self.assertTrue(all(row['text'] == row['candidate_id'] for row in result['frames']))
+
+    def test_concurrent_readings_keep_one_ledger_entry_per_cue_under_the_lock(self):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        client = MagicMock(); client_response(client, response(2))
+        ledger, saves, lock = [], [], threading.Lock()
+        def checkpoint(): saves.append(json.dumps(ledger))  # would fail on a concurrently mutated list
+        def read(cue):
+            frames = [dict(f, candidate_id=cue) for f in inputs(2)]
+            return read_images(client, 'model', frames, ledger, checkpoint, lock)
+        with ThreadPoolExecutor(4) as pool:
+            list(pool.map(read, ['a', 'b', 'c', 'd']))
+        self.assertEqual(sorted(e['candidate_id'] for e in ledger), ['a', 'b', 'c', 'd'])
+        self.assertTrue(all(e['status'] == 'complete' for e in ledger))
+        self.assertEqual(len(saves), 8)
+
+
 class DirectVisionTests(unittest.TestCase):
     def test_missing_tail_window_gets_two_final_probes_without_extra_calls(self):
         client=MagicMock();client.get_ppt_list.return_value=[]

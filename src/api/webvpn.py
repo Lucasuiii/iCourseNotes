@@ -6,7 +6,10 @@ Handles:
 - Full 7-step IDP authentication flow against id.fudan.edu.cn
 """
 
+import fcntl
 import html as html_mod
+import os
+import tempfile
 import re
 import threading
 import time as _time_module
@@ -168,22 +171,40 @@ def auth_observation(stage, response, data=None, **flags):
 _OTP_LOCK = threading.Lock()
 _OTP_LAST_WINDOW = [None]
 _otp_clock, _otp_sleep = _time_module.time, _time_module.sleep
+# Pipelined local lectures run in separate processes that may log in at the same time.
+_OTP_STATE_PATH = os.environ.get('ICOURSE_OTP_STATE') or os.path.join(tempfile.gettempdir(), 'icoursenotes-otp-window')
+
+
+def _shared_window(update=None):
+    """Read (or record) the window last used by any process on this machine; best effort."""
+    try:
+        with open(_OTP_STATE_PATH, 'a+') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.seek(0)
+            text = handle.read().strip()
+            if update is not None:
+                handle.seek(0); handle.truncate(); handle.write(str(update)); handle.flush()
+            return int(text) if text.isdigit() else None
+    except OSError:
+        return None
 
 
 def next_totp(secret_b32, *, step=30):
-    """A code from a 30-second window this process has not submitted yet.
+    """A code from a 30-second window no local process has submitted yet.
 
-    A login retried right after a timeout (or a second-factor retry) would otherwise
-    resend the same one-time code, which UIS may already have consumed.
+    A login retried right after a timeout (or a second-factor retry, or a second
+    lecture logging in at the same moment) would otherwise resend the same
+    one-time code, which UIS may already have consumed.
     """
     with _OTP_LOCK:
         while True:
             now = _otp_clock()
             window = int(now // step)
-            if _OTP_LAST_WINDOW[0] is None or window > _OTP_LAST_WINDOW[0]:
+            if (_OTP_LAST_WINDOW[0] is None or window > _OTP_LAST_WINDOW[0]) and _shared_window() != window:
                 break
             _otp_sleep((window+1)*step - now + 0.5)
         _OTP_LAST_WINDOW[0] = window
+        _shared_window(window)
         return totp(secret_b32, now=now, step=step)
 
 

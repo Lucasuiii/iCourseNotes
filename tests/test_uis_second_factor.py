@@ -44,8 +44,14 @@ class WindowTests(unittest.TestCase):
     def setUp(self):
         self.clock = FakeClock(1000.0)
         for patcher in (patch.object(webvpn, '_otp_clock', self.clock.time), patch.object(webvpn, '_otp_sleep', self.clock.sleep),
-                        patch.object(webvpn, '_OTP_LAST_WINDOW', [None])):
+                        patch.object(webvpn, '_OTP_LAST_WINDOW', [None]),
+                        patch.object(webvpn, '_OTP_STATE_PATH', self.state_path())):
             patcher.start(); self.addCleanup(patcher.stop)
+
+    def state_path(self):
+        import tempfile
+        folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
+        return folder.name + '/otp-window'
 
     def test_a_window_is_never_submitted_twice(self):
         first = next_totp(SEED)
@@ -58,6 +64,14 @@ class WindowTests(unittest.TestCase):
         self.assertNotEqual(int(1000.0 // 30), int(self.clock.now // 30))
         self.clock.now += 60
         next_totp(SEED); self.assertEqual(len(self.clock.slept), 1)  # a later window needs no wait
+
+
+    def test_a_window_used_by_another_process_is_skipped(self):
+        with open(webvpn._OTP_STATE_PATH, 'w') as f: f.write(str(int(1000.0 // 30)))
+        code = next_totp(SEED)
+        self.assertEqual(len(self.clock.slept), 1)
+        self.assertEqual(code, totp(SEED, now=self.clock.now))
+        with open(webvpn._OTP_STATE_PATH) as f: self.assertEqual(int(f.read()), int(self.clock.now // 30))
 
 
 class SecondFactorFlowTests(WindowTests):

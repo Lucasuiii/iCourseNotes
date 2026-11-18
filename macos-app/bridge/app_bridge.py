@@ -26,7 +26,7 @@ WORKER_PATTERN = 'python.*-m scripts.local_history_refresh.* run'
 ENV = dict(os.environ, DYLD_FALLBACK_LIBRARY_PATH='/opt/homebrew/lib', PYTHONUNBUFFERED='1')
 # Stages that only touch local audio/GPU; interrupting a cloud request instead
 # leaves an uncertain call that the backend refuses to replay automatically.
-LOCAL_STAGES = {'starting', 'authentication', 'source_selection', 'acquisition', 'vad', 'asr'}
+LOCAL_STAGES = {'starting', 'authentication', 'source_selection', 'acquisition', 'vad', 'gpu_wait', 'asr'}
 PENDING = ('running', 'starting', 'paused', 'failed', 'awaiting_content_review', 'awaiting_review',
            'awaiting_publication', 'publishing', 'published', 'delivered', 'completed', 'blocked_resource')
 ID = re.compile(r'^\d{1,12}$')
@@ -261,6 +261,7 @@ def queue_snapshot(root, crypto):
     result = {'control': str(root), 'name': root.name, 'status': safe_code(q.get('status')) or 'not_started',
               'started': number(q.get('started')), 'finished': number(q.get('finished')),
               'current_sub_id': safe_code(q.get('current_sub_id')),
+              'active_sub_ids': [x for x in map(safe_code, q.get('active_sub_ids') or []) if x],
               'coordinator_alive': pid_alive(pid, 'app_queue.py') or pid_alive(pid, 'run_queue.py') or pid_alive(pid, 'resume_queue.py'),
               'pause_requested': (root/'app-pause-request.json').exists(), 'app_managed': (root/'app_queue.py').exists(),
               'error_type': safe_code(q.get('error_type')), 'lectures': lectures}
@@ -617,24 +618,32 @@ def cmd_pause(args):
     q = read_json(control/'queue-status.json') or {}
     if not pid_alive(q.get('pid'), 'app_queue.py'):
         raise Refused('队列当前没有在运行')
-    current = next((t for t in read_json(control/'targets.json', []) if t['sub_id'] == q.get('current_sub_id')), None)
-    snapshot = lecture_status(current, store) if current else {}
+    targets = {t['sub_id']: t for t in read_json(control/'targets.json', [])}
+    # A pipelined queue runs up to two lectures; older queue files only name the current one.
+    active = [targets[s] for s in (q.get('active_sub_ids') or [q.get('current_sub_id')]) if s in targets]
     if args.after_current:
         write_json(control/'app-pause-request.json', {'requested': time.time(), 'mode': 'after_current'})
         out({'ok': True, 'pause_requested': True, 'signalled_worker': False, 'after_current': True}); return
-    if (snapshot.get('phase') == 'content_validation'):
+    snapshots = [(t, lecture_status(t, store)) for t in active]
+    if any(s.get('phase') == 'content_validation' for _, s in snapshots) and not any(s.get('safe_to_pause') for _, s in snapshots):
         raise Refused('正在导出审核材料，几秒后即完成，请稍候再暂停')
-    if not snapshot.get('safe_to_pause') and not args.force:
-        out({'ok': False, 'needs_confirmation': True, 'stage': snapshot.get('stage') or snapshot.get('phase'),
-             'message': '当前处于云端阶段（'+str(snapshot.get('stage') or snapshot.get('phase'))+'），立即暂停会让进行中的请求记为不明确，续跑时后端会拒绝自动重放。建议等待其完成。'})
+    local = [(t, s) for t, s in snapshots if s.get('safe_to_pause')]
+    cloud = [s for _, s in snapshots if not s.get('safe_to_pause') and s.get('phase') != 'content_validation']
+    if cloud and not local and not args.force:
+        stage = cloud[0].get('stage') or cloud[0].get('phase')
+        out({'ok': False, 'needs_confirmation': True, 'stage': stage,
+             'message': '当前处于云端阶段（'+str(stage)+'），立即暂停会让进行中的请求记为不明确，续跑时后端会拒绝自动重放。建议等待其完成。'})
         return
-    write_json(control/'app-pause-request.json', {'requested': time.time(), 'stage': snapshot.get('stage')})
-    status = (read_json(Path(current['control'])/'execution-status.json') or {}) if current else {}
-    worker = status.get('worker_pid')
+    write_json(control/'app-pause-request.json', {'requested': time.time(), 'stage': (local or snapshots or [(None, {})])[0][1].get('stage')})
+    # Lectures in a cloud stage finish their current requests; the queue then stops.
     signalled = False
-    if pid_alive(worker, 'scripts.local_history_refresh'):
-        os.kill(worker, signal.SIGINT); signalled = True
-    out({'ok': True, 'pause_requested': True, 'signalled_worker': signalled, 'stage': snapshot.get('stage')})
+    for t, _ in (local if not args.force else [(t, s) for t, s in snapshots if s.get('phase') != 'content_validation']):
+        worker = (read_json(Path(t['control'])/'execution-status.json') or {}).get('worker_pid')
+        if pid_alive(worker, 'scripts.local_history_refresh'):
+            os.kill(worker, signal.SIGINT); signalled = True
+    out({'ok': True, 'pause_requested': True, 'signalled_worker': signalled,
+         'stage': (local or snapshots or [(None, {})])[0][1].get('stage'),
+         'finishing_cloud_stage': len(cloud) if not args.force else 0})
 
 
 def cmd_resume(args):

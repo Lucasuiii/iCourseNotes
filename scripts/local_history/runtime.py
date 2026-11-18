@@ -204,6 +204,9 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
         store.save(tag+'.enc', state)
     def stage(value):
         state['stage'] = value; save()
+        # Plain stage name only: lets a pipelined queue start the next lecture safely.
+        from scripts.local_history.storage import atomic
+        atomic(store.root/'stage.json', json.dumps({'stage': value, 'time': time.time()}).encode())
     audio = root/'audio.raw'
     reporter = Reporter()
     scheduler = Scheduler(reporter)
@@ -332,10 +335,15 @@ def process(store, manifest, target, deadline, *, allow_active_actions=False):
             state['ppt_complete'] = True; save()
         def save_rows(rows):
             state['rows'] = rows; save()
-        stage('asr')
         if 'final_rows' not in state:
-            state['rows'] = transcribe_pending(transcriber, plan, audio, state['rows'], save_rows, deadline,
-                                              allow_cloud_repair=manifest.get('cloud_review',False))
+            from scripts.local_history.gpu_lock import exclusive_gpu
+            with exclusive_gpu(lambda: stage('gpu_wait')):
+                stage('asr')
+                budget(deadline)
+                state['rows'] = transcribe_pending(transcriber, plan, audio, state['rows'], save_rows, deadline,
+                                                  allow_cloud_repair=manifest.get('cloud_review',False))
+        else:
+            stage('asr')
         rows = state.get('final_rows',state['rows'])
         results = [{'shard_id': s['shard_id'], 'plan_hash': fingerprint(plan),
                     'complete': not any(incomplete_row(r) for r in rows if r['chunk_id'] in s['chunk_ids']),

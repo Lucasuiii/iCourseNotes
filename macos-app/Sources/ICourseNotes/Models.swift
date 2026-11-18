@@ -339,6 +339,7 @@ enum Labels {
         case "acquisition": return "获取音频"
         case "vad": return "语音切分"
         case "ppt": return "课件 OCR"
+        case "gpu_wait": return "等待 GPU"
         case "asr": return "本机识别"
         case "asr_fallback": return "缺口补救"
         case "summary": return "摘要与复核"

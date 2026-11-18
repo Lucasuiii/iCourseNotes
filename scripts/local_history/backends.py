@@ -53,7 +53,13 @@ class MLXTranscriber(QwenTranscriber):
 
 
 class MLXBatchTranscriber(MLXTranscriber):
-    """Two original blocks share decoding; each keeps the serial rescue policy."""
+    """Two original blocks share decoding; each keeps the serial rescue policy.
+
+    Three or four lanes were measured on an M4 (2026-11-18, real lecture blocks) and
+    rejected: about 30% faster on equal-length clips, but with real blocks of unequal
+    sub-chunk lengths the extra padding moved text further from serial decoding and
+    produced a repetition loop that two lanes did not.
+    """
     batch_size = 2
 
     def _init(self):

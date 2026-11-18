@@ -384,6 +384,40 @@ class SummaryReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             audit.validate_revision({'summary':'理论修订稿。'}, source)
 
+    def test_paraphrased_gap_notice_is_restored_in_place(self):
+        notice = '> 转录提示：有 27.7 秒语音未识别（00:57:02.190–00:57:29.851）。摘要仅依据已识别内容，这些时段请对照原录播。'
+        source = '错误的理论。\n\n'+notice+'\n\n结尾。'
+        proposed = '已修正的理论。\n\n> 转录提示：该处语音有缺失，摘要仅依据已识别内容，请对照原录播。\n\n结尾。'
+        self.assertEqual(audit.validate_revision({'summary': proposed}, source), source.replace('错误的理论', '已修正的理论'))
+        with self.assertRaises(ValueError):  # dropping it is still refused
+            audit.validate_revision({'summary': '已修正的理论。\n\n结尾。'}, source)
+
+    def test_correction_rejected_by_our_validation_is_rechecked_from_its_stored_response(self):
+        state = self.needs_revision()
+        source = state['reviewed_summary']; fixed = '在0<=x<1时，{I_A<=x}=A的补集。'
+        state['revision'] = {'status': 'failed', 'source_summary': source, 'source_summary_sha256': audit.digest(source),
+                             'findings_sha256': audit.digest(json.dumps(state['result'], ensure_ascii=False, sort_keys=True)),
+                             'revision_model': 'deepseek/x', 'response_finish_reason': 'stop',
+                             'response_content': json.dumps({'summary': fixed}, ensure_ascii=False),
+                             'error_type': 'ValueError', 'error_code': 'invalid_response',
+                             'validation_error': 'Revision changed images or evidence notices'}
+        state['schema'] = 3; audit.save_state(self.db, state)
+        self.api.reset_mock()
+        state = audit.revise(self.db, self.summarizer, '1', '2', '概率论', self.material)
+        self.api.with_options.return_value.chat.completions.create.assert_not_called()
+        self.assertEqual((state['status'], state['reviewed_summary']), ('revised', fixed))
+        self.assertTrue(state['revision']['revalidated_stored_response'])
+        self.assertEqual(state['revision']['earlier_rejection']['error_code'], 'invalid_response')
+        audit.require_accepted(state)
+        audit.validate_published(state, '1', '2', fixed, '2026-10-09')
+        # Transport failures, truncated or still-invalid responses are never replayed or accepted.
+        for change in ({'error_code': 'request_failed'}, {'response_finish_reason': 'length'},
+                       {'response_content': '{"summary":"' + source + '"}'}):
+            bad = json.loads(json.dumps(state)); bad.update(status='needs_revision', reviewed_summary=source,
+                                                            summary_sha256=audit.digest(source))
+            bad['revision'] = {**bad['revision'], 'status': 'failed', 'error_code': 'invalid_response', **change}
+            self.assertFalse(audit.recover_stored_revision(bad))
+
     def test_caption_copyedit_is_restored_without_rejecting_prose_correction(self):
         figure='![课件写羽毛](#icourse-figure-'+'a'*64+')'
         source='错误的理论。\n'+figure+'\n*课堂原图 · 00:01:00：课件写羽毛*'

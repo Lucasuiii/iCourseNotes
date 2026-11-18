@@ -43,7 +43,12 @@ extension AppModel {
 
     var allAttentionItems: [AttentionItem] {
         var items: [AttentionItem] = []
-        if let c = cloud, c.health == "failing" || c.health == "stale", let run = c.latest {
+        if let c = cloud, c.health == "partial", let run = c.latest {
+            let when = shortTime(run.created.map { Date(timeIntervalSince1970: $0) })
+            items.append(AttentionItem(id: "cloud", kind: .cloud, title: "云端部分课次未完成",
+                                       detail: "\(when) · 其余课次已发布并发信，失败的课次下次会重试",
+                                       target: run.url.map { .url($0) } ?? .section(.sync), version: "\(run.id)"))
+        } else if let c = cloud, c.health == "failing" || c.health == "stale", let run = c.latest {
             let when = shortTime(run.created.map { Date(timeIntervalSince1970: $0) })
             let jobs = (run.failedJobs ?? []).joined(separator: "、")
             let streak = c.consecutiveFailures > 1 ? "，已连续 \(c.consecutiveFailures) 次" : ""

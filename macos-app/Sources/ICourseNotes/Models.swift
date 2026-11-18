@@ -412,12 +412,14 @@ struct CloudRun: Decodable, Hashable, Identifiable {
     let updated: Double?
     let url: String?
     let failedJobs: [String]?
+    /// Planning and finalization succeeded, but some lecture failed; the rest were published.
+    let partial: Bool?
 }
 
 struct CloudStatus: Decodable {
     let ok: Bool
     let checkedAt: Double
-    /// running · ok · failing · stale (no success for over 26 h)
+    /// running · ok · partial · failing · stale (no working run for over 26 h)
     let health: String
     let consecutiveFailures: Int
     let lastSuccessAt: Double?

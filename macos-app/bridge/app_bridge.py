@@ -1193,19 +1193,27 @@ def iso_time(value):
 
 
 def cloud_health(runs, now):
-    """runs: newest first. Returns (health, consecutive_failures, last_success_at)."""
+    """runs: newest first. Returns (health, consecutive_failures, last_success_at).
+
+    A run whose planning and finalization succeeded but where some lecture failed is
+    "partial": the others were published and mailed, so it neither counts as a failure
+    streak nor makes the schedule look stale.
+    """
     finished = [r for r in runs if r['status'] == 'completed' and r.get('conclusion') != 'cancelled']
+    worked = lambda r: r.get('conclusion') == 'success' or r.get('partial') is True
     failures = 0
     for r in finished:
-        if r.get('conclusion') == 'success': break
+        if worked(r): break
         failures += 1
-    last_success = next((r['updated'] for r in finished if r.get('conclusion') == 'success'), None)
+    last_success = next((r['updated'] for r in finished if worked(r)), None)
     if runs and runs[0]['status'] != 'completed':
         health = 'running'
-    elif finished and finished[0].get('conclusion') != 'success':
+    elif finished and not worked(finished[0]):
         health = 'failing'
     elif last_success is None or now-last_success > CLOUD_STALE_SECONDS:
         health = 'stale'
+    elif finished and finished[0].get('partial') is True:
+        health = 'partial'
     else:
         health = 'ok'
     return health, failures, last_success
@@ -1223,15 +1231,22 @@ def cmd_cloud(args):
         runs.append({'id': r['id'], 'status': safe_code(r.get('status')), 'conclusion': safe_code(r.get('conclusion')),
                      'event': safe_code(r.get('event')), 'created': iso_time(r.get('created_at')),
                      'updated': iso_time(r.get('updated_at')), 'url': r.get('html_url')})
+    for run in runs:
+        if run['status'] != 'completed' or run['conclusion'] == 'success':
+            continue
+        try:
+            jobs = github_get(f'repos/{CLOUD_REPOSITORY}/actions/runs/{run["id"]}/jobs?per_page=30').get('jobs', [])
+        except Exception:
+            run['failed_jobs'] = []
+            break  # Leave older runs unclassified rather than spending more requests.
+        name = lambda j: str(j.get('name', '')).split(' / ')[-1]
+        ok = {name(j) for j in jobs if j.get('conclusion') == 'success'}
+        run['failed_jobs'] = [name(j)[:40] for j in jobs if j.get('conclusion') in ('failure', 'timed_out')]
+        run['partial'] = {'plan', 'finalize'} <= ok and bool(run['failed_jobs'])
+        if run['partial'] is False and run is not runs[0]:
+            break  # The streak is known once a full failure past the newest run is found.
     health, failures, last_success = cloud_health(runs, now)
     latest = runs[0] if runs else None
-    if latest and latest['status'] == 'completed' and latest['conclusion'] != 'success':
-        try:
-            jobs = github_get(f'repos/{CLOUD_REPOSITORY}/actions/runs/{latest["id"]}/jobs?per_page=30').get('jobs', [])
-            latest['failed_jobs'] = [str(j.get('name', '')).split(' / ')[-1][:40] for j in jobs
-                                     if j.get('conclusion') in ('failure', 'timed_out')]
-        except Exception:
-            latest['failed_jobs'] = []
     out({'ok': True, 'checked_at': now, 'health': health, 'consecutive_failures': failures,
          'last_success_at': last_success, 'latest': latest, 'runs': runs})
 

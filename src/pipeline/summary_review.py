@@ -322,6 +322,13 @@ def validate_revision(value, source):
         raise ValueError('Revision changed capture times')
     rows = iter(before)
     summary = captures.sub(lambda _: next(rows), summary)
+    # The transcript-gap notices are generated text with exact periods; a correction once
+    # paraphrased one in place, dropping its times. Restore them in order, like captions.
+    notices = re.compile(r'^[ \t]*>[ \t]*转录提示[^\n]*$', re.M)
+    before, after = notices.findall(source), notices.findall(summary)
+    if before and len(before) == len(after):
+        rows = iter(before)
+        summary = notices.sub(lambda _: next(rows), summary)
     if protected_lines(summary) != protected_lines(source):
         raise ValueError('Revision changed images or evidence notices')
     if summary == source.strip():
@@ -336,12 +343,40 @@ def validate_revision(value, source):
 REVISION_MAX_TOKENS = 32000
 
 
+def recover_stored_revision(state):
+    """Re-check a correction rejected only by our own validation, using its stored response.
+
+    No model call: the exact response is kept on parse/validation failure, so a validation
+    rule that was too strict (e.g. a paraphrased gap notice) can accept it later.
+    """
+    revision = state.get('revision') or {}
+    if (revision.get('status') != 'failed' or revision.get('error_code') != 'invalid_response'
+            or revision.get('response_finish_reason') != 'stop' or not isinstance(revision.get('response_content'), str)
+            or revision.get('source_summary_sha256') != state.get('summary_sha256')
+            or digest(revision.get('source_summary') or '') != state.get('summary_sha256')):
+        return False
+    try:
+        corrected = validate_revision(loads_model_json(revision['response_content']), revision['source_summary'])
+    except (ValueError, TypeError):
+        return False
+    previous = {k: revision.get(k) for k in ('error_type', 'error_code', 'validation_error')}
+    for k in previous: revision.pop(k, None)
+    revision.update(status='complete', revised_summary=corrected, revised_summary_sha256=digest(corrected),
+                    acceptance='complete_correction_without_second_review', second_review_performed=False,
+                    revalidated_stored_response=True, earlier_rejection=previous)
+    state.update(status='revised', reviewed_summary=corrected, summary_sha256=digest(corrected))
+    return True
+
+
 def revise(db, summarizer, course, sub, title, material, *, state=None):
     """A known review finding authorizes one correction, never another review."""
     state = state or read_state(db, sub)
     if (not state or state.get('course_id') != str(course) or state.get('sub_id') != str(sub)
             or state.get('material_sha256') != digest(material)):
         raise SummaryReviewBlocked('SummaryRevisionDraftMissing')
+    if state.get('status') == 'needs_revision' and recover_stored_revision(state):
+        save_state(db, state)
+        return state
     if state.get('status') != 'needs_revision' or 'revision' in state:
         # Includes complete, reserved and failed corrections: do not replay.
         return state

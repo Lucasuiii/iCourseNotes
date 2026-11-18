@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 import test_webvpn_auth_diagnostics as fixtures
-from src.api.webvpn import AuthenticationError, totp
+from src.api import webvpn
+from src.api.webvpn import AuthenticationError, totp, next_totp
 
 response = fixtures.response
 SEED = base64.b32encode(b'12345678901234567890').decode()  # RFC 6238 SHA-1 test key
@@ -32,7 +33,34 @@ class TotpTests(unittest.TestCase):
             self.assertEqual(caught.exception.reason, 'otp_secret_invalid')
 
 
-class SecondFactorFlowTests(unittest.TestCase):
+class FakeClock:
+    """Shared by the window guard: sleeping advances time instead of waiting."""
+    def __init__(self, now=1000.0): self.now, self.slept = now, []
+    def time(self): return self.now
+    def sleep(self, seconds): self.slept.append(seconds); self.now += seconds
+
+
+class WindowTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = FakeClock(1000.0)
+        for patcher in (patch.object(webvpn, '_otp_clock', self.clock.time), patch.object(webvpn, '_otp_sleep', self.clock.sleep),
+                        patch.object(webvpn, '_OTP_LAST_WINDOW', [None])):
+            patcher.start(); self.addCleanup(patcher.stop)
+
+    def test_a_window_is_never_submitted_twice(self):
+        first = next_totp(SEED)
+        self.assertEqual(first, totp(SEED, now=1000.0))
+        self.clock.now += 5  # a retry 5 s later is still in window 33
+        second = next_totp(SEED)
+        self.assertEqual(len(self.clock.slept), 1)
+        self.assertGreaterEqual(self.clock.now, 34*30)
+        self.assertEqual(second, totp(SEED, now=self.clock.now))
+        self.assertNotEqual(int(1000.0 // 30), int(self.clock.now // 30))
+        self.clock.now += 60
+        next_totp(SEED); self.assertEqual(len(self.clock.slept), 1)  # a later window needs no wait
+
+
+class SecondFactorFlowTests(WindowTests):
     def session(self, *replies):
         vpn = fixtures.AuthDiagnosticTests().session(execute=response(SECOND))
         posts = list(vpn.session.post.side_effect)
@@ -65,14 +93,25 @@ class SecondFactorFlowTests(unittest.TestCase):
                 self.assertEqual(caught.exception.reason, 'second_factor_required')
                 self.assertEqual(vpn.session.post.call_count, 2)
 
-    def test_rejected_code_is_reported_and_never_resubmitted(self):
-        vpn = self.session(response({'code': 400, 'message': 'private-wrong-code'}))
+    def test_rejected_code_is_retried_once_with_the_next_window_then_reported(self):
+        wrong = response({'code': 400, 'message': 'private-wrong-code'})
+        vpn = self.session(wrong, wrong)
         with patch('src.runtime.config.UIS_OTP_SECRET', SEED):
             with self.assertRaises(AuthenticationError) as caught:
                 vpn.authenticate_icourse('id', 'password', strict=True)
         self.assertEqual(caught.exception.reason, 'second_factor_rejected')
-        self.assertEqual(vpn.session.post.call_count, 3)
+        self.assertEqual(vpn.session.post.call_count, 4)  # password, two codes, never a third
+        codes = [c.kwargs['json']['authPara']['otpCode'] for c in vpn.session.post.call_args_list[2:4]]
+        self.assertNotEqual(codes[0], codes[1])
         self.assertNotIn('private', json.dumps(vpn.auth_diagnostics))
+
+    def test_second_code_on_the_same_page_completes_the_login(self):
+        vpn = self.session(response({'code': 400, 'message': 'private-wrong-code'}),
+                           response({'code': 200, 'loginToken': 'private-token'}))
+        with patch('src.runtime.config.UIS_OTP_SECRET', SEED):
+            self.assertTrue(vpn.authenticate_icourse('id', 'password', strict=True))
+        retry = vpn.session.post.call_args_list[3].kwargs['json']
+        self.assertEqual((retry['authChainCode'], retry['requestNumber']), ('private-second-chain', 'private-request'))
 
 
 if __name__ == '__main__':

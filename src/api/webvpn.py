@@ -8,6 +8,8 @@ Handles:
 
 import html as html_mod
 import re
+import threading
+import time as _time_module
 from binascii import hexlify, unhexlify
 from urllib.parse import urlparse, urlencode, quote, urljoin, urlsplit, parse_qsl
 
@@ -161,6 +163,28 @@ def auth_observation(stage, response, data=None, **flags):
                'login_token_found', 'ticket_found', 'verified', 'second_factor', 'otp_offered'}
     row.update({k:v for k,v in flags.items() if k in allowed and type(v) is bool})
     return row
+
+
+_OTP_LOCK = threading.Lock()
+_OTP_LAST_WINDOW = [None]
+_otp_clock, _otp_sleep = _time_module.time, _time_module.sleep
+
+
+def next_totp(secret_b32, *, step=30):
+    """A code from a 30-second window this process has not submitted yet.
+
+    A login retried right after a timeout (or a second-factor retry) would otherwise
+    resend the same one-time code, which UIS may already have consumed.
+    """
+    with _OTP_LOCK:
+        while True:
+            now = _otp_clock()
+            window = int(now // step)
+            if _OTP_LAST_WINDOW[0] is None or window > _OTP_LAST_WINDOW[0]:
+                break
+            _otp_sleep((window+1)*step - now + 0.5)
+        _OTP_LAST_WINDOW[0] = window
+        return totp(secret_b32, now=now, step=step)
 
 
 def totp(secret_b32, *, now=None, step=30, digits=6):
@@ -914,25 +938,32 @@ class WebVPNSession:
             if not offered or not config.UIS_OTP_SECRET:
                 raise AuthenticationError('second_factor_required')
             self.auth_phase = phase
-            print("    Second factor: submitting authenticator code")
-            # Mirrors the IDP second page: requestNumber and userName come from the
-            # previous reply; verifyCode is sent only when a picture code is demanded.
-            payload = {
-                "authModuleCode": "userAndOtp",
-                "authChainCode": level.get("authChainCode", ""),
-                "entityId": entity_id,
-                "requestNumber": level.get("requestNumber", ""),
-                "requestType": request_type,
-                "lck": lck,
-                "authPara": {"loginName": level.get("userName") or student_id,
-                             "otpCode": totp(config.UIS_OTP_SECRET)},
-            }
-            resp = self.session.post(url, json=payload, headers=headers, timeout=60)
-            level = self._auth_json(resp)
-            self._record_icourse_auth(label+'_otp', resp, level,
-                                      login_token_found=bool(level.get('loginToken')))
-            if str(level.get("code")) != "200":
-                raise AuthenticationError('second_factor_rejected')
+            page = level
+            for submit in range(2):
+                print("    Second factor: submitting authenticator code")
+                # Mirrors the IDP second page: requestNumber and userName come from the
+                # previous reply; verifyCode is sent only when a picture code is demanded.
+                payload = {
+                    "authModuleCode": "userAndOtp",
+                    "authChainCode": page.get("authChainCode", ""),
+                    "entityId": entity_id,
+                    "requestNumber": page.get("requestNumber", ""),
+                    "requestType": request_type,
+                    "lck": lck,
+                    "authPara": {"loginName": page.get("userName") or student_id,
+                                 "otpCode": next_totp(config.UIS_OTP_SECRET)},
+                }
+                resp = self.session.post(url, json=payload, headers=headers, timeout=60)
+                level = self._auth_json(resp)
+                self._record_icourse_auth(label+'_otp', resp, level,
+                                          login_token_found=bool(level.get('loginToken')))
+                if str(level.get("code")) == "200":
+                    break
+                # A code can already be spent by another login in the same window. One more
+                # try with the next window's code, as a person would; never a third.
+                if submit == 1:
+                    raise AuthenticationError('second_factor_rejected')
+                print("    Second factor: code not accepted; retrying once with the next code")
             if level.get("loginToken"):
                 return level["loginToken"]
             if not level.get("second"):

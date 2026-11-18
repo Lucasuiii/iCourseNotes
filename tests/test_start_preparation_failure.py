@@ -30,6 +30,23 @@ class PreparationFailureTests(unittest.TestCase):
             self.assertFalse(bridge.abandoned_preparation({'control': str(left), 'status': 'running'}))
 
 
+class InventoryTests(unittest.TestCase):
+    def test_scan_list_offers_a_lecture_whose_previous_start_stopped_in_preparation(self):
+        row = {'course_id': '1', 'course_title': 'c', 'sub_id': '2', 'title': 't', 'date': '2026-11-17'}
+        with tempfile.TemporaryDirectory() as tmp:
+            control = Path(tmp); (control/'inventory.json').write_text(json.dumps(
+                {'status': 'complete', 'unrecognized_available': [row], 'deferred_unavailable': [], 'courses': []}))
+            left = Path(tmp)/'left'; left.mkdir()
+            controls = [{'control': str(left), 'status': 'prepared'}]
+            with patch.object(bridge, 'local_controls', return_value=controls):
+                ready = bridge.summarize_inventory(control)['ready'][0]
+            self.assertEqual((ready['selectable'], ready['local_existing'], ready['local_restart']), (True, False, True))
+            (left/'preparation-result.json').write_text('{}')  # a real prepared task still blocks
+            with patch.object(bridge, 'local_controls', return_value=controls):
+                ready = bridge.summarize_inventory(control)['ready'][0]
+            self.assertEqual((ready['selectable'], ready['local_existing']), (False, True))
+
+
 class DataReadRetryTests(unittest.TestCase):
     def test_transient_git_read_failures_are_retried_then_raised(self):
         error = subprocess.CalledProcessError(128, ['git'])

@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 from contextlib import redirect_stdout
+from datetime import datetime
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -44,7 +45,10 @@ class HealthTests(unittest.TestCase):
                                  {'name': 'check / finalize', 'conclusion': 'success'}]}
         failed_jobs = {'jobs': [{'name': 'check / plan', 'conclusion': 'failure'}]}
         fake = lambda path: partial_jobs if '/runs/2/' in path else failed_jobs if '/runs/1/' in path else runs
-        with patch.object(bridge, 'github_get', side_effect=fake), redirect_stdout(io.StringIO()) as output:
+        recent = datetime.fromisoformat(runs['workflow_runs'][0]['updated_at']).timestamp()+3600
+        with (patch.object(bridge, 'github_get', side_effect=fake),
+              patch.object(bridge.time, 'time', return_value=recent),
+              redirect_stdout(io.StringIO()) as output):
             bridge.cmd_cloud(None)
         result = json.loads(output.getvalue())
         self.assertEqual((result['health'], result['consecutive_failures']), ('partial', 0))

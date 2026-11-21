@@ -11,13 +11,16 @@ runs:
     with:
       python-version: '3.12'
       cache: pip
+      cache-dependency-path: |
+        requirements-runtime.txt
+        requirements-qwen.txt
   - uses: actions/setup-node@v4
     with:
       node-version: '24'
       cache: npm
   - shell: bash
     run: |
-      python -m pip install -r requirements.txt
+      python -m pip install -r requirements-runtime.txt
       npm ci --ignore-scripts
       sudo apt-get update
       sudo apt-get install -y ffmpeg fonts-noto-cjk libpango-1.0-0 libcairo2
@@ -26,6 +29,8 @@ runs:
       fi
   - uses: ./.github/actions/qwen-cpu-model
     if: inputs.inference == 'true'
+    with:
+      extras: 'true'
   - uses: actions/cache@v4
     with:
       path: |

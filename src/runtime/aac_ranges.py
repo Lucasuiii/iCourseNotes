@@ -447,7 +447,17 @@ class AACIndex:
         return PacketWindow(tuple(output),start,seconds)
 
 
-def load_index(reader):
+AAC_FRAME_SAMPLES = 1024
+
+
+def needs_pcm_retiming(timing):
+    """Uniform AAC frames may have one shortened final packet."""
+    return (any(delta != AAC_FRAME_SAMPLES for _, delta in timing[:-1])
+            or timing[-1][1] > AAC_FRAME_SAMPLES
+            or timing[-1][1] != AAC_FRAME_SAMPLES and timing[-1][0] != 1)
+
+
+def load_index(reader, *, allow_variable_timing=False):
     began=time.monotonic(); limits=reader.limits
     def read(offset, size):
         if reader.audit()['index_bytes']+size>limits.index_bytes: fail('index_byte_limit')
@@ -571,12 +581,13 @@ def load_index(reader):
     timing_table=table(data,unique(st,b'stts'),8,limits.samples)
     if len(data)+len(timing_table)//8*96>limits.index_memory_bytes:fail('index_memory_limit')
     timing=tuple(struct.iter_unpack('>II',timing_table))
-    if any(c<=0 or d<=0 for c,d in timing): fail('invalid_sample_timing')
+    if not timing or any(c<=0 or d<=0 for c,d in timing): fail('invalid_sample_timing')
     count=sum(c for c,d in timing)
     if count>limits.samples or sum(c*d for c,d in timing)!=duration: fail('invalid_sample_timing')
     if timescale!=sample_rate:fail('aac_timescale_unsupported')
-    if (any(d!=1024 for c,d in timing[:-1]) or not 0<timing[-1][1]<=1024
-            or timing[-1][1]!=1024 and timing[-1][0]!=1):fail('aac_sample_gap_unsupported')
+    if needs_pcm_retiming(timing) and (
+            not allow_variable_timing or any(delta > 2*AAC_FRAME_SAMPLES for _, delta in timing)):
+        fail('aac_sample_gap_unsupported')
     groups=[b for b in st if b.kind in (b'sgpd',b'sbgp')];requires_preroll=False
     if groups:
         sgpd=unique(groups,b'sgpd');sbgp=unique(groups,b'sbgp')

@@ -18,6 +18,7 @@ jobs:
       with:
         python-version: '3.12'
         cache: pip
+        cache-dependency-path: requirements-runtime.txt
     - uses: actions/setup-node@v4
       with:
         node-version: '24'
@@ -25,22 +26,8 @@ jobs:
     - run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg fonts-noto-cjk libpango-1.0-0 libcairo2
-    - name: Install test dependencies without model inference runtimes
-      env:
-        TEST_REQUIREMENTS: ${{ runner.temp }}/test-requirements.txt
-      run: |
-        python - <<'PYTHON'
-        import os
-        import re
-        from pathlib import Path
-        # Tests mock inference and VAD; keep versions sourced from requirements.txt.
-        inference_only = {'sherpa-onnx', 'transformers', 'accelerate', 'nagisa',
-                          'soynlp', 'librosa', 'qwen-omni-utils', 'sox'}
-        lines = [line for line in Path('requirements.txt').read_text().splitlines()
-                 if re.split(r'[<>=!~ ]', line.strip(), 1)[0] not in inference_only]
-        Path(os.environ['TEST_REQUIREMENTS']).write_text('\n'.join(lines) + '\nPyYAML\n')
-        PYTHON
-        python -m pip install -r "$TEST_REQUIREMENTS"
+    - name: Install the shared runtime and test dependencies
+      run: python -m pip install -r requirements-runtime.txt PyYAML
     - run: npm ci --ignore-scripts
     - name: Full repository tests including frontend security
       run: python -m unittest discover -s tests

@@ -1,12 +1,13 @@
 """Verified AAC batches -> streaming PCM with an aggregate process lifecycle."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 import threading
 
-from src.runtime.aac_ranges import (MediaTransportError, iter_track_packets,
-    load_index, packet_ranges, stream_full_track, track_batches)
+from src.runtime.aac_ranges import (AAC_FRAME_SAMPLES, MediaTransportError, iter_track_packets,
+    load_index, needs_pcm_retiming, packet_ranges, stream_full_track, track_batches)
 
 
 # Only unsupported format/resource shapes qualify, never damaged data, source
@@ -32,7 +33,7 @@ def adts_frame(index, payload):
 
 def prepare_aac(reader):
     """Reject unsupported formats and validate the first batch before spawning."""
-    index = load_index(reader)
+    index = load_index(reader, allow_variable_timing=True)
     if not 0 < sum(index.sizes) <= MAX_AUDIO_BYTES:
         raise MediaTransportError('full_track_payload_limit')
     next(iter_track_packets(index))  # Includes full edit coverage checks.
@@ -70,6 +71,96 @@ class _InitialBatch:
         return self.reader.fetch(ranges)
 
 
+def copy_timed_pcm(source, destination, index):
+    """Match each decoded frame to its exact duration in the source time table."""
+    stride = index.channels * 4
+    frame_bytes = AAC_FRAME_SAMPLES * stride
+    silence = bytes(frame_bytes)
+    for count, duration in index.timing:
+        if duration == AAC_FRAME_SAMPLES:
+            while count:
+                frames = min(count, 64)
+                block = source.read(frames * frame_bytes)
+                if len(block) != frames * frame_bytes:
+                    raise MediaTransportError('aac_decoder_failed')
+                destination.write(block)
+                count -= frames
+        else:
+            for _ in range(count):
+                frame = source.read(frame_bytes)
+                if len(frame) != frame_bytes:
+                    raise MediaTransportError('aac_decoder_failed')
+                destination.write(frame[:duration * stride])
+                if duration > AAC_FRAME_SAMPLES:
+                    destination.write(silence[:(duration - AAC_FRAME_SAMPLES) * stride])
+    if source.read(1):
+        raise MediaTransportError('aac_decoder_failed')
+
+
+class TimedAACDecoder:
+    """Decode continuous AAC, restore native sample timing, then render PCM."""
+
+    def __init__(self, command, outputs, index):
+        read_fd, write_fd = os.pipe()
+        self.stderr = os.fdopen(read_fd, 'rb')
+        self.decoder = self.renderer = None
+        try:
+            self.decoder = subprocess.Popen(
+                [*command, '-c:a', 'pcm_f32le', '-f', 'f32le', 'pipe:1'],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=write_fd)
+            self.renderer = subprocess.Popen(
+                ['ffmpeg', '-nostdin', '-y', '-f', 'f32le', '-ar', str(index.sample_rate),
+                 '-ac', str(index.channels), '-i', 'pipe:0', *outputs],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=write_fd)
+            self.stdin = self.decoder.stdin
+            self.result = None
+            self.thread = threading.Thread(target=self.render, args=(index,),
+                                           name='aac-pcm-timing', daemon=True)
+            self.thread.start()
+        except BaseException:
+            for process in (self.decoder, self.renderer):
+                if process is None:
+                    continue
+                process.kill()
+                process.wait()
+                process.stdin.close()
+                if process.stdout is not None:
+                    process.stdout.close()
+            self.stderr.close()
+            raise
+        finally:
+            os.close(write_fd)
+
+    def render(self, index):
+        try:
+            with self.decoder.stdout, self.renderer.stdin:
+                copy_timed_pcm(self.decoder.stdout, self.renderer.stdin, index)
+        except (OSError, MediaTransportError):
+            self.kill()
+            self.result = 1
+        finally:
+            decode_code = self.decoder.wait()
+            render_code = self.renderer.wait()
+            self.result = self.result or decode_code or render_code
+
+    def wait(self, timeout=None):
+        self.thread.join(timeout)
+        if self.thread.is_alive():
+            raise subprocess.TimeoutExpired('aac_pcm_timing', timeout)
+        return self.result
+
+    def poll(self):
+        return self.result if not self.thread.is_alive() else None
+
+    def terminate(self):
+        self.decoder.terminate()
+        self.renderer.terminate()
+
+    def kill(self):
+        self.decoder.kill()
+        self.renderer.kill()
+
+
 class AACDecodeProcess:
     """Popen-compatible completion includes producer coverage and PCM endpoint.
 
@@ -92,14 +183,18 @@ class AACDecodeProcess:
         index = prepared[0]
         offset = index.presentation_offset/index.timescale
         end = (index.presentation_offset+index.duration)/index.timescale
-        # Native timing has no internal gaps and all but the last frame are
-        # 1024 samples. Restore the edit offset and trim only final AAC padding.
+        # Restore the edit offset and trim final AAC padding. The variable
+        # timing path applies per-frame corrections before resampling.
         filters = (f'asetpts=N/SR/TB+{offset:.12f}/TB,atrim=end={end:.12f},'
                    'aresample=async=1:first_pts=0')
         from src.runtime.audio_preparation import downmix_outputs
-        decoder = subprocess.Popen(['ffmpeg', '-nostdin', '-y', '-f', 'aac', '-i', 'pipe:0', '-vn',
-            *downmix_outputs(path, prefix_filters=filters+',', with_side=with_side)],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        command = ['ffmpeg', '-nostdin', '-y', '-xerror', '-f', 'aac', '-i', 'pipe:0', '-vn']
+        outputs = downmix_outputs(path, prefix_filters=filters+',', with_side=with_side)
+        if needs_pcm_retiming(index.timing):
+            decoder = TimedAACDecoder(command, outputs, index)
+        else:
+            decoder = subprocess.Popen([*command, *outputs], stdin=subprocess.PIPE,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
             return cls(decoder, reader, prepared, path)
         except BaseException:

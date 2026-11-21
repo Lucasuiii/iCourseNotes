@@ -1,0 +1,16 @@
+requests
+pycryptodome
+sherpa-onnx
+numpy
+openai
+pillow
+markdown
+psutil
+pygments
+rapidocr-onnxruntime
+imagehash
+weasyprint==70.0
+CairoSVG==2.9.1
+bleach==6.3.0
+cryptography
+soundfile

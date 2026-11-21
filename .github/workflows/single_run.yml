@@ -35,16 +35,18 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ env.pythonLocation }}/lib/python*/site-packages
-        key: pip-${{ hashFiles('requirements.txt') }}
+        key: pip-${{ hashFiles('requirements-runtime.txt') }}
     - name: Install Python dependencies
       if: steps.cache-pip.outputs.cache-hit != 'true'
-      run: pip install -r requirements.txt
+      run: pip install -r requirements-runtime.txt
     - name: Install media and PDF dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg fonts-noto-cjk libpango-1.0-0 libcairo2
     - name: Install Qwen CPU runtime
       uses: ./.github/actions/qwen-cpu-model
+      with:
+        extras: 'true'
     - name: Cache ASR models
       id: cache-models
       uses: actions/cache@v4

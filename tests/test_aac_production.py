@@ -41,6 +41,22 @@ def add_empty_edit(data, seconds=.021):
     return bytes(result)
 
 
+def vary_first_frames(data):
+    def rewrite(node):
+        if node.kind in (b'moov', b'trak', b'mdia', b'minf', b'stbl'):
+            return box(node.kind, b''.join(rewrite(child)
+                       for child in boxes(data, node.payload, node.end)))
+        if node.kind == b'stts':
+            timing = list(struct.iter_unpack('>II', data[node.payload+8:node.end]))
+            count, delta = timing[0]
+            assert delta == 1024 and count > 3
+            timing[:1] = [(1, 1032), (1, 456), (1, 1584), (count-3, 1024)]
+            return full(b'stts', struct.pack('>I', len(timing))
+                        + b''.join(struct.pack('>II', *row) for row in timing))
+        return data[node.start:node.end]
+    return b''.join(rewrite(node) for node in boxes(data))
+
+
 @unittest.skipUnless(shutil.which('ffmpeg'), 'FFmpeg required')
 class AACProductionTests(unittest.TestCase):
     def setUp(self):
@@ -62,9 +78,10 @@ class AACProductionTests(unittest.TestCase):
         if edited: source.write_bytes(add_empty_edit(source.read_bytes()))
         return source
 
-    def start(self, folder, origin):
+    def start(self, folder, origin, *, with_side=False):
         origin.client.get_video_url = lambda *args: origin.url
         downloader = AudioDownloader(str(Path(folder)/'pcm'), max_concurrent=1)
+        downloader.write_side_channel = with_side
         downloader.schedule(origin.client, 'synthetic', '1', preserve_timestamps=True)
         handle = downloader.get('1', timeout=10)
         self.assertIsNotNone(handle, downloader.startup_failure('1'))
@@ -128,6 +145,43 @@ class AACProductionTests(unittest.TestCase):
                     self.assertAlmostEqual(spec['audio_seconds'], spec['media_seconds'], places=3)
                     self.assertIn(b'Duration:', b''.join(handle.stderr_chunks))
                 finally: downloader.shutdown()
+
+    def test_shorter_and_longer_interior_frames_use_aac_with_exact_timeline(self):
+        from src.runtime.audio_preparation import downmix_outputs
+        with tempfile.TemporaryDirectory(prefix='aac-production-test-') as tmp:
+            source = self.source(tmp)
+            original = source.read_bytes()
+            modified = vary_first_frames(original)
+            with self.assertRaisesRegex(MediaTransportError, 'aac_sample_gap_unsupported'):
+                load_index(MemoryReader(modified))
+            index = load_index(MemoryReader(modified), allow_variable_timing=True)
+            # Decode the original track continuously, then independently build
+            # the expected PCM around the three altered frame boundaries.
+            native = subprocess.run(
+                ['ffmpeg', '-v', 'error', '-i', str(source), '-c:a', 'pcm_f32le',
+                 '-f', 'f32le', 'pipe:1'], capture_output=True, check=True).stdout
+            stride = 8
+            expected = (native[:1024*stride] + bytes(8*stride)
+                        + native[1024*stride:(1024+456)*stride]
+                        + native[2048*stride:3072*stride] + bytes(560*stride)
+                        + native[3072*stride:index.duration*stride])
+            expected_path = Path(tmp)/'expected.pcm'
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'f32le', '-ar', '48000',
+                            '-ac', '2', '-i', 'pipe:0', *downmix_outputs(
+                                str(expected_path), prefix_filters='aresample=async=1:first_pts=0,',
+                                with_side=True)], input=expected, check=True)
+            with Origin(modified) as origin:
+                downloader, handle = self.start(tmp, origin, with_side=True)
+                try:
+                    self.assertEqual(handle.process.wait(timeout=15), 0)
+                    spec = self.specification(handle)
+                    validate_prepared_audio(spec)
+                    self.assertEqual(spec['audio_diagnostics']['source_transport']['mode'], 'aac_ranges')
+                    self.assertEqual(Path(handle.path).read_bytes(), expected_path.read_bytes())
+                    self.assertEqual(Path(handle.path+'.side').read_bytes(),
+                                     Path(str(expected_path)+'.side').read_bytes())
+                finally:
+                    downloader.shutdown()
 
     def test_unsupported_codec_falls_back_before_output_with_same_frozen_source(self):
         with tempfile.TemporaryDirectory(prefix='aac-production-test-') as tmp:

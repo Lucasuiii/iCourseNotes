@@ -2,7 +2,7 @@ name: Qwen CPU model runtime
 description: Install the pinned CPU-only Qwen inference runtime
 inputs:
   extras:
-    description: Install recognition dependencies when requirements.txt was not installed
+    description: Install the additional Python dependencies for recognition
     default: 'false'
 runs:
   using: composite
@@ -14,5 +14,5 @@ runs:
       python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
       python -m pip install qwen-asr==0.0.6 --no-deps
       if [ "$INSTALL_RECOGNITION_EXTRAS" = 'true' ]; then
-        python -m pip install transformers==4.57.6 accelerate==1.12.0 nagisa==0.2.11 soynlp==0.0.493 librosa qwen-omni-utils sox
+        python -m pip install -r requirements-qwen.txt
       fi

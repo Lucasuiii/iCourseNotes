@@ -75,8 +75,9 @@ final class AppModel {
     var cloudChecking = false
 
     var toast: Toast?
-    var exporting: (done: Int, total: Int)?
+    var exporting: (done: Int, total: Int, label: String)?
     var showBatchExport = false
+    var showBatchMarkdownExport = false
     @ObservationIgnored private var pdfExporter: PDFExporter?
     var exporter: PDFExporter {
         if let pdfExporter { return pdfExporter }

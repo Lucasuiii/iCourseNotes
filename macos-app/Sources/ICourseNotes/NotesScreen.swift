@@ -58,6 +58,14 @@ struct NotesScreen: View {
                 .help("导出 PDF")
                 .disabled(model.exporting != nil)
                 Menu {
+                    Button("导出当前笔记…") { exportCurrentMarkdown() }
+                        .disabled(payload == nil)
+                    Divider()
+                    Button("批量导出 Markdown…") { model.showBatchMarkdownExport = true }
+                } label: { Label("导出 Markdown", systemImage: "doc.plaintext") }
+                .help("导出 Markdown 文件夹")
+                .disabled(model.exporting != nil)
+                Menu {
                     Picker("字号", selection: $scale) {
                         Text("小").tag(0.92)
                         Text("标准").tag(1.0)
@@ -70,6 +78,7 @@ struct NotesScreen: View {
             }
         }
         .sheet(isPresented: $model.showBatchExport) { BatchExportSheet() }
+        .sheet(isPresented: $model.showBatchMarkdownExport) { BatchMarkdownExportSheet() }
         .sheet(isPresented: $showApproval) {
             if let row = model.selectedNote, let control = row.control, let sha = meta.summarySha {
                 ApprovalSheet(row: row, control: control, summarySha: sha, report: report) {
@@ -248,6 +257,11 @@ struct NotesScreen: View {
     private func exportCurrent(transcript: Bool) {
         guard let row = model.selectedNote, let payload else { return }
         Task { await model.exportCurrent(row, payload: payload, transcript: transcript) }
+    }
+
+    private func exportCurrentMarkdown() {
+        guard let row = model.selectedNote, let payload else { return }
+        Task { await model.exportCurrentMarkdown(row, payload: payload) }
     }
 
     private func load(_ row: NoteRow) async {

@@ -20,6 +20,7 @@ struct ICourseLocalApp: App {
                 Button("拉取 data 笔记") { Task { await model.syncNotes() } }.keyboardShortcut("s", modifiers: [.command, .shift])
                 Divider()
                 Button("批量导出 PDF…") { model.section = .notes; model.showBatchExport = true }.keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("批量导出 Markdown…") { model.section = .notes; model.showBatchMarkdownExport = true }
             }
         }
     }
@@ -69,7 +70,7 @@ struct RootView: View {
         }
         .overlay(alignment: .bottom) {
             if let e = model.exporting {
-                ExportProgress(done: e.done, total: e.total)
+                ExportProgress(done: e.done, total: e.total, label: e.label)
             } else if let t = model.toast {
                 ToastView(toast: t).transition(.move(edge: .bottom).combined(with: .opacity))
             }

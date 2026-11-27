@@ -361,8 +361,21 @@ def supersede_failed(control, new_control):
 
 
 def abandoned_preparation(row):
-    """A lecture directory from a start that stopped before its preparation finished (older app versions)."""
-    return row['status'] == 'prepared' and not (Path(row['control'])/'preparation-result.json').exists()
+    """A lecture directory from a start that stopped before a queue was written."""
+    if row['status'] != 'prepared':
+        return False
+    control = Path(row['control'])
+    if not (control/'preparation-result.json').exists():
+        return True
+    resolved = control.resolve()
+    for q in queue_dirs():
+        for t in read_json(q/'targets.json') or []:
+            try:
+                if Path(t.get('control', '')).resolve() == resolved:
+                    return False
+            except OSError:
+                continue
+    return True
 
 
 def mark_preparation_failed(controls, step):
@@ -518,6 +531,29 @@ def publish_claims(rows):
         return {'status': 'failed', 'error_type': type(e).__name__}
 
 
+def launch_claims_async(control):
+    """Publish local claims in a detached subprocess so slow GitHub I/O never blocks queue startup."""
+    initial = {'status': 'publishing', 'time': time.time()}
+    write_json(control/'local-claim.json', initial)
+    try:
+        subprocess.Popen([str(PY), str(HERE/'app_bridge.py'), 'publish-claims', '--control', str(control)],
+                         cwd=BASE, env=dict(ENV, ICOURSE_PROJECT_ROOT=str(BASE)),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return initial
+    except Exception as e:
+        failed = {'status': 'failed', 'error_type': type(e).__name__, 'time': time.time()}
+        write_json(control/'local-claim.json', failed)
+        return failed
+
+
+def cmd_publish_claims(args):
+    control = queue_control(args.control)
+    targets = read_json(control/'targets.json') or []
+    claim = publish_claims(targets)
+    write_json(control/'local-claim.json', dict(claim, time=time.time()))
+    out({'ok': True, 'claim': claim})
+
+
 def cmd_start(args):
     control = Path(args.control).resolve(); control.relative_to(WORK.resolve())
     inv = read_json(control/'inventory.json')
@@ -583,11 +619,10 @@ def cmd_start(args):
     write_json(control/'targets.json', prepared)
     shutil.copyfile(TEMPLATES/'app_queue.py', control/'app_queue.py')
     shutil.copyfile(RUNTIME/'templates/read_queue.py', control/'read_progress.py')
-    claim = publish_claims(prepared)
-    write_json(control/'local-claim.json', dict(claim, time=time.time()))
     pid = launch_queue(control, [])
     write_json(LAUNCH, {'control': str(control), 'started': time.time(), 'scope': 'local app: user-selected new lectures; newest-first',
                         'ready_lectures': len(prepared), 'deferred_lectures': len(inv.get('deferred_unavailable', []))})
+    claim = launch_claims_async(control)
     out({'ok': True, 'started': True, 'pid': pid, 'control': str(control), 'claim': claim,
          'lectures': [{'date': x['date'], 'course_title': x['course_title'], 'sub_id': x['sub_id']} for x in prepared]})
 
@@ -671,6 +706,8 @@ def cmd_resume(args):
     (control/'app-pause-request.json').unlink(missing_ok=True)
     extra = ['--resume'] + (['--retry-failed'] if args.retry_failed else [])
     pid = launch_queue(control, extra)
+    if WORK.is_dir():
+        write_json(LAUNCH, {'control': str(control), 'started': time.time(), 'scope': 'local app: resumed queue'})
     out({'ok': True, 'resumed': True, 'pid': pid, 'retry_failed': args.retry_failed})
 
 
@@ -1273,6 +1310,7 @@ def main():
     s = sub.add_parser('pause'); s.add_argument('--control', required=True); s.add_argument('--force', action='store_true')
     s.add_argument('--after-current', action='store_true')
     s = sub.add_parser('resume'); s.add_argument('--control', required=True); s.add_argument('--retry-failed', action='store_true')
+    s = sub.add_parser('publish-claims'); s.add_argument('--control', required=True)
     sub.add_parser('notes-sync'); sub.add_parser('notes-list')
     s = sub.add_parser('note'); s.add_argument('--sub-id'); s.add_argument('--control')
     s = sub.add_parser('approve'); s.add_argument('--control', required=True); s.add_argument('--summary-sha256', required=True)
@@ -1288,7 +1326,7 @@ def main():
     args = p.parse_args()
     try:
         {'status': cmd_status, 'scan': cmd_scan, 'inventory': cmd_inventory, 'start': cmd_start, 'pause': cmd_pause,
-         'resume': cmd_resume, 'notes-sync': cmd_notes_sync, 'notes-list': cmd_notes_list, 'note': cmd_note,
+         'resume': cmd_resume, 'publish-claims': cmd_publish_claims, 'notes-sync': cmd_notes_sync, 'notes-list': cmd_notes_list, 'note': cmd_note,
          'approve': cmd_approve, 'unapprove': cmd_unapprove, 'push': cmd_push, 'remote': cmd_remote,
          'compare': cmd_compare, 'keep-remote': cmd_keep_remote,
          'push-many': cmd_push_many, 'push-batch-status': cmd_push_batch_status, 'cloud': cmd_cloud}[args.command](args)

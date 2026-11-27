@@ -98,6 +98,23 @@ class RetryRuleTests(unittest.TestCase):
         self.assertEqual((ready['22']['selectable'], ready['22']['local_existing']), (False, True))
         self.assertEqual((ready['23']['selectable'], ready['23']['local_restart']), (True, False))
 
+    def test_orphaned_prepared_lecture_without_queue_does_not_block_scan(self):
+        scan = self.root/'work/local-latest-new-2026-11-06-020202'; scan.mkdir()
+        rows = [{'course_id': '1', 'sub_id': sid, 'course_title': '课程', 'date': '2026-11-04'} for sid in ('31', '32')]
+        self.b.write_json(scan/'inventory.json', {'status': 'complete', 'unrecognized_available': rows})
+        # 31 finished preparation-result.json, but no queue's targets.json references it (interrupted start).
+        orphan = self.root/'work/local-latest-1-31-2026-11-06-010000'; orphan.mkdir()
+        self.b.write_json(orphan/'selection.json', rows[0])
+        self.b.write_json(orphan/'preparation-result.json', {'doctor_passed': True, 'plan_created': True})
+        # 32 is prepared AND referenced by a queue's targets.json: resume from queue instead of duplicating.
+        queued = self.root/'work/local-latest-1-32-2026-11-06-010000'; queued.mkdir()
+        self.b.write_json(queued/'selection.json', rows[1])
+        self.b.write_json(queued/'preparation-result.json', {'doctor_passed': True, 'plan_created': True})
+        self.b.write_json(self.queue/'targets.json', [{'course_id': '1', 'sub_id': '32', 'control': str(queued)}])
+        ready = {r['sub_id']: r for r in self.b.summarize_inventory(scan)['ready']}
+        self.assertEqual((ready['31']['selectable'], ready['31']['local_existing'], ready['31']['local_restart']), (True, False, True))
+        self.assertEqual((ready['32']['selectable'], ready['32']['local_existing']), (False, True))
+
 
 if __name__ == '__main__':
     unittest.main()

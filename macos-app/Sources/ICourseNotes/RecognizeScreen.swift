@@ -240,8 +240,11 @@ struct RecognizeScreen: View {
                 .help("保存检查点后停止；之后可以从断点续跑")
             }
             if q.canResume {
-                Button { Task { await model.resume(q, retryFailed: false) } } label: { Label("继续", systemImage: "play.fill") }
-                    .buttonStyle(.borderedProminent)
+                Button { Task { await model.resume(q, retryFailed: false) } } label: {
+                    Label(q.status == "not_started" ? "开始识别" : "继续", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.status?.workerActive ?? false)
             }
             if q.canRetryFailed {
                 Button { Task { await model.resume(q, retryFailed: true) } } label: { Label("重试失败课次", systemImage: "arrow.counterclockwise") }

@@ -251,8 +251,9 @@ final class AppModel {
         starting = true
         defer { starting = false }
         do {
+            let timeout = max(900.0, TimeInterval(selection.count) * 480.0)
             let r = try await bridge.run(["start", "--control", control, "--sub-ids", selection.sorted().joined(separator: ",")],
-                                         as: ActionResponse.self, timeout: 600)
+                                         as: ActionResponse.self, timeout: timeout)
             if r.ok {
                 show("识别已启动")
                 selectedQueue = nil

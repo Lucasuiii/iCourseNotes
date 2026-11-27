@@ -36,7 +36,10 @@ struct QueueInfo: Decodable, Identifiable, Hashable {
     var startedDate: Date? { started.map { Date(timeIntervalSince1970: $0) } }
     var isRunning: Bool { coordinatorAlive && status == "running" }
     var canResume: Bool {
-        appManaged && !coordinatorAlive && lectures.contains { $0.status == "paused" }
+        appManaged && !coordinatorAlive && (
+            lectures.contains { $0.status == "paused" } ||
+            (["not_started", "interrupted"].contains(status) && lectures.contains { $0.status == "pending" })
+        )
     }
     var canRetryFailed: Bool {
         appManaged && !coordinatorAlive && lectures.contains { $0.status == "failed" }

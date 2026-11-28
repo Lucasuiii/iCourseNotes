@@ -27,6 +27,7 @@ cp "$ROOT/docs/upstream-permission.md" "$APP/Contents/Resources/UPSTREAM.md"
 cp -R "$HERE/web" "$APP/Contents/Resources/web"
 mkdir -p "$APP/Contents/Resources/bridge/templates"
 cp "$HERE/bridge/app_bridge.py" "$APP/Contents/Resources/bridge/"
+cp "$HERE/bridge/local_library.py" "$APP/Contents/Resources/bridge/"
 cp "$HERE/bridge/templates/"*.py "$APP/Contents/Resources/bridge/templates/"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

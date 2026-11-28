@@ -87,7 +87,10 @@ struct NotesScreen: View {
             }
         }
         .onChange(of: model.selectedNote) { _, row in
-            if let row { Task { await load(row) } } else { payload = nil }
+            if let row {
+                if row.isArchive { chosenTerm = row.termLabel }
+                Task { await load(row) }
+            } else { payload = nil }
             // Opening a note (e.g. from 待处理) reveals it once; a later manual collapse is kept.
             if let row, !row.isLocal {
                 var state = expansionState; state[row.termLabel + "|" + row.courseTitle] = true
@@ -187,6 +190,9 @@ struct NotesScreen: View {
             for r in byTerm[term]! {
                 if let i = courses.firstIndex(where: { $0.0 == r.courseTitle }) { courses[i].1.append(r) } else { courses.append((r.courseTitle, [r])) }
             }
+            for i in courses.indices where courses[i].1.allSatisfy(\.isArchive) {
+                courses[i].1.sort { ($0.archiveOrder ?? 0) < ($1.archiveOrder ?? 0) }
+            }
             return (term, courses)
         }
     }
@@ -283,7 +289,13 @@ struct NoteListRow: View {
     let row: NoteRow
     var showCourse = true
     var body: some View {
-        if showCourse {
+        if row.isArchive && row.date.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                if showCourse { Text(row.courseTitle).font(.caption).foregroundStyle(.secondary) }
+                Text(row.title).lineLimit(2)
+            }
+            .padding(.vertical, 3)
+        } else if showCourse {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Circle().fill(courseTint(row.courseId)).frame(width: 5, height: 5)

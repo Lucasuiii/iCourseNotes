@@ -34,7 +34,7 @@ enum MarkdownExporter {
 
     static func baseName(_ row: NoteRow) -> String {
         let session = sessionLabel(row.title, date: row.date)
-        let raw = "\(row.courseTitle) \(row.date)\(session.isEmpty ? "" : " " + session)"
+        let raw = [row.courseTitle, row.date, session].filter { !$0.isEmpty }.joined(separator: " ")
         return sanitizePathComponent(raw)
     }
 
@@ -95,10 +95,11 @@ enum MarkdownExporter {
             markdown = trimmedBody + "\n"
         } else {
             let session = sessionLabel(row.title, date: row.date)
-            let heading = "# \(row.courseTitle) · \(row.date)\(session.isEmpty ? "" : " \(session)")"
+            let detail = [row.date, session].filter { !$0.isEmpty }.joined(separator: " ")
+            let heading = detail.isEmpty ? "# \(row.courseTitle)" : "# \(row.courseTitle) · \(detail)"
             let wd = weekday(row.date)
             let datePart = wd.isEmpty ? row.date : "\(row.date) \(wd)"
-            let metaLine = "> 学期：\(row.termLabel) · 日期：\(datePart)"
+            let metaLine = datePart.isEmpty ? "> 学期：\(row.termLabel)" : "> 学期：\(row.termLabel) · 日期：\(datePart)"
             markdown = trimmedBody.isEmpty
                 ? "\(heading)\n\n\(metaLine)\n"
                 : "\(heading)\n\n\(metaLine)\n\n\(trimmedBody)\n"

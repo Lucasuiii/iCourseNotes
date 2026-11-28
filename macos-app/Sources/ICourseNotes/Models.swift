@@ -190,6 +190,8 @@ struct NoteIndex: Decodable, Hashable, Identifiable {
     let summaryChars: Int?
     let term: String?
     let termLabel: String?
+    let source: String?
+    let order: Int?
 }
 
 struct LocalNoteIndex: Decodable, Hashable, Identifiable {
@@ -253,8 +255,8 @@ struct RemoteInfo: Decodable {
 
 /// Unified row for the notes browser.
 struct NoteRow: Hashable, Identifiable {
-    enum Source: Hashable { case data, local(control: String) }
-    var id: String { source == .data ? "d" + subId : "l" + subId }
+    enum Source: Hashable { case data, archive, local(control: String) }
+    var id: String { (isArchive ? "a" : isLocal ? "l" : "d") + subId }
     let subId: String
     let courseId: String
     let courseTitle: String
@@ -267,8 +269,10 @@ struct NoteRow: Hashable, Identifiable {
     var approved = false
     var term = ""
     var termLabel = "其他"
+    var archiveOrder: Int?
 
     var isLocal: Bool { if case .local = source { return true } else { return false } }
+    var isArchive: Bool { source == .archive }
     var control: String? { if case .local(let c) = source { return c } else { return nil } }
 }
 

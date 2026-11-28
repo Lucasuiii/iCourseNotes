@@ -114,8 +114,11 @@ struct BatchExportSheet: View {
             default: return true
             }
         }
-        return rows.sorted { ($0.term, $0.courseTitle, $0.date) < ($1.term, $1.courseTitle, $1.date) }
-            .sorted { $0.term > $1.term }
+        return rows.sorted {
+            if $0.term != $1.term { return $0.term > $1.term }
+            if $0.courseId == $1.courseId, let a = $0.archiveOrder, let b = $1.archiveOrder { return a < b }
+            return ($0.courseTitle, $0.date) < ($1.courseTitle, $1.date)
+        }
     }
 
     private var title: String {
@@ -197,8 +200,11 @@ struct BatchMarkdownExportSheet: View {
             case .all: return true
             }
         }
-        return rows.sorted { ($0.term, $0.courseTitle, $0.date) < ($1.term, $1.courseTitle, $1.date) }
-            .sorted { $0.term > $1.term }
+        return rows.sorted {
+            if $0.term != $1.term { return $0.term > $1.term }
+            if $0.courseId == $1.courseId, let a = $0.archiveOrder, let b = $1.archiveOrder { return a < b }
+            return ($0.courseTitle, $0.date) < ($1.courseTitle, $1.date)
+        }
     }
 
     private var title: String {

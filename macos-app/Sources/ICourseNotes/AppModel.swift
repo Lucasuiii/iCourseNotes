@@ -98,7 +98,7 @@ final class AppModel {
         let d = UserDefaults.standard
         if let s = d.string(forKey: "section").flatMap(AppSection.init(rawValue:)) { section = s }
         Task {
-            await loadInventory(); await loadNotes()
+            await loadNotes(); await loadInventory()
             if let sub = d.string(forKey: "noteSub") { selectedNote = noteRows.first { $0.subId == sub } }
             // Verification hook: export one note and the newest term (merged) without dialogs.
             if let dir = d.string(forKey: "exportTestDir") { await exportSelfTest(URL(fileURLWithPath: dir)) }
@@ -277,10 +277,14 @@ final class AppModel {
         }
         for n in notes?.lectures ?? [] {
             rows.append(NoteRow(subId: n.subId, courseId: n.courseId, courseTitle: n.courseTitle, date: n.date ?? "",
-                                title: n.title ?? "", source: .data, status: "published", figures: n.figures, emailed: n.emailed ?? false,
-                                term: n.term ?? "", termLabel: n.termLabel ?? "其他"))
+                                title: n.title ?? "", source: n.source == "archive" ? .archive : .data,
+                                status: n.source == "archive" ? "imported" : "published", figures: n.figures, emailed: n.emailed ?? false,
+                                term: n.term ?? "", termLabel: n.termLabel ?? "其他", archiveOrder: n.order))
         }
-        return rows.sorted { $0.date == $1.date ? $0.isLocal && !$1.isLocal : $0.date > $1.date }
+        return rows.sorted {
+            if $0.courseId == $1.courseId, let a = $0.archiveOrder, let b = $1.archiveOrder { return a < b }
+            return $0.date == $1.date ? $0.isLocal && !$1.isLocal : $0.date > $1.date
+        }
     }
 
     var courses: [String] {

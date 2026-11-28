@@ -718,6 +718,17 @@ def notes_store():
     return store(STATE/'notes-cache')
 
 
+def library_store():
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    return store(STATE/'imported-notes')
+
+
+def cmd_notes_import(args):
+    from local_library import import_manifest
+    result = import_manifest(library_store(), args.manifest, term_label)
+    out({'ok': True, **result})
+
+
 def figure_payload(raw_meta):
     try:
         state = json.loads(raw_meta) if raw_meta else {}
@@ -874,12 +885,13 @@ def local_lectures():
 
 
 def cmd_notes_list(args):
+    from local_library import lectures
     s = notes_store()
     index = s.read('index.enc') if s.exists('index.enc') else {'lectures': [], 'revision': None, 'synced_at': None}
     published = {x['sub_id'] for x in index['lectures']}
     local = [x for x in local_lectures() if x['sub_id'] not in published or x['status'] not in ('completed', 'delivered')]
     out({'ok': True, 'revision': safe_code(index.get('revision')), 'synced_at': index.get('synced_at'),
-         'lectures': index['lectures'], 'local': local})
+         'lectures': index['lectures'] + lectures(library_store()), 'local': local})
 
 
 def local_note(control):
@@ -968,6 +980,9 @@ def local_note(control):
 def cmd_note(args):
     if args.control:
         out({'ok': True, 'note': local_note(args.control)}); return
+    if (args.sub_id or '').startswith('archive-'):
+        from local_library import note
+        out({'ok': True, 'note': note(library_store(), args.sub_id)}); return
     if not ID.match(args.sub_id or ''):
         raise Refused('课次编号无效')
     s = notes_store(); name = 'lecture-'+args.sub_id+'.enc'
@@ -1312,6 +1327,7 @@ def main():
     s = sub.add_parser('resume'); s.add_argument('--control', required=True); s.add_argument('--retry-failed', action='store_true')
     s = sub.add_parser('publish-claims'); s.add_argument('--control', required=True)
     sub.add_parser('notes-sync'); sub.add_parser('notes-list')
+    s = sub.add_parser('notes-import'); s.add_argument('--manifest', required=True)
     s = sub.add_parser('note'); s.add_argument('--sub-id'); s.add_argument('--control')
     s = sub.add_parser('approve'); s.add_argument('--control', required=True); s.add_argument('--summary-sha256', required=True)
     s.add_argument('--checks'); s.add_argument('--confirm', action='store_true'); s.add_argument('--notes')
@@ -1327,6 +1343,7 @@ def main():
     try:
         {'status': cmd_status, 'scan': cmd_scan, 'inventory': cmd_inventory, 'start': cmd_start, 'pause': cmd_pause,
          'resume': cmd_resume, 'publish-claims': cmd_publish_claims, 'notes-sync': cmd_notes_sync, 'notes-list': cmd_notes_list, 'note': cmd_note,
+         'notes-import': cmd_notes_import,
          'approve': cmd_approve, 'unapprove': cmd_unapprove, 'push': cmd_push, 'remote': cmd_remote,
          'compare': cmd_compare, 'keep-remote': cmd_keep_remote,
          'push-many': cmd_push_many, 'push-batch-status': cmd_push_batch_status, 'cloud': cmd_cloud}[args.command](args)

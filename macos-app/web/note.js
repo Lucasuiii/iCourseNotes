@@ -22,16 +22,19 @@
   function header() {
     var figs = (note.figures && note.figures.figures) || [];
     var session = (note.title || '').replace(note.date || '', '').trim();
-    var meta = [esc(note.date) + ' ' + weekday(note.date)];
+    var imported = note.source === 'archive';
+    var meta = imported ? [esc(note.term_label)] : [esc(note.date) + ' ' + weekday(note.date)];
+    if (imported && note.date) meta.push(esc(note.date) + ' ' + weekday(note.date));
     if (figs.length) meta.push(figs.length + ' 张课堂配图');
     if (note.figures && note.figures.status && note.figures.status !== 'complete')
       meta.push('<span class="warn">配图' + (note.figures.status === 'failed' ? '未生成' : '状态 ' + esc(note.figures.status)) + '</span>');
     if (note.review && note.review.status === 'passed') meta.push('<span class="good">理论审核通过</span>');
     else if (note.review && note.review.status === 'revised') meta.push('<span class="quiet">按审核意见修订一次</span>');
     if (note.coverage && note.coverage.missing_seconds) meta.push('<span class="warn">识别缺口 ' + note.coverage.missing_seconds + ' 秒</span>');
-    meta.push(note.source === 'local' ? '本机结果' : '已发布');
+    meta.push(imported ? '本地导入' : note.source === 'local' ? '本机结果' : '已发布');
+    if (imported && note.order_inferred) meta.push('推定课序');
     return '<header class="note-head"><div class="note-kicker">' + esc(note.course_title) + '</div>' +
-      '<h1 class="note-title">' + chineseDate(note.date) + (session ? '　' + esc(session) : '') + '</h1>' +
+      '<h1 class="note-title">' + (note.date ? chineseDate(note.date) + (session ? '　' + esc(session) : '') : esc(session)) + '</h1>' +
       '<div class="note-meta">' + meta.map(function (m) { return '<span>' + m + '</span>'; }).join('') + '</div></header>';
   }
 
@@ -113,10 +116,11 @@
 
   function asrFold(text) {
     if (!text) return '';
-    var re = /^## 块 (\d+) · ([\d.]+)–([\d.]+) 秒\s*$/gm, blocks = [], m, last = null;
+    var re = /^## (?:块 (\d+) · ([\d.]+)–([\d.]+) 秒|(\d{2}:\d{2}:\d{2})–(\d{2}:\d{2}:\d{2}))\s*$/gm, blocks = [], m, last = null;
     while ((m = re.exec(text))) {
       if (last) last.text = text.slice(last.end, m.index).trim();
-      last = { a: m[2], b: m[3], end: re.lastIndex }; blocks.push(last);
+      var start = m[2] || m[4].split(':').reduce(function (seconds, part) { return seconds * 60 + Number(part); }, 0);
+      last = { a: start, end: re.lastIndex }; blocks.push(last);
     }
     if (last) last.text = text.slice(last.end).trim();
     if (!blocks.length) return '';
